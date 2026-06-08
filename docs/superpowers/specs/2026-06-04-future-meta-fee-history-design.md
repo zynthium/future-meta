@@ -15,7 +15,9 @@
 - 单品种页：`https://www.9qihuo.com/qihuoshouxufeisingle?heyue=<code>`
 - CSV 下载：`https://www.9qihuo.com/shouxufeixz?heyue=<code>`
 
-九期网 CSV 返回的是品种当前/近期合约数据；同一个合约可能在同一份 CSV 中出现多行，并用“手续费更新时间”表达不同手续费规则版本。它不是完整的按日期查询历史 API，因此本项目会尽量吸收源 CSV 暴露的版本行，同时不保证源站未返回的更早历史可被准确查询。
+九期网单品种 CSV 返回的是品种当前/近期合约数据；同一个合约可能在同一份 CSV 中出现多行，并用“手续费更新时间”表达不同手续费规则版本。它不是完整的按日期查询历史 API，因此本项目会尽量吸收源 CSV 暴露的版本行，同时不保证源站未返回的更早历史可被准确查询。
+
+最新截面使用总表页 HTML 的 `table#heyuetbl`。该页“下载手续费 Excel 表格”按钮通过浏览器端 `tableToExcel('heyuetbl', ...)` 从 HTML 表格生成文件，不提供稳定的全合约 CSV 下载端点；因此 latest 更新直接解析 HTML 表格，只读取允许字段。
 
 ## 目标
 
@@ -35,6 +37,7 @@
 - 不在 Cloudflare Worker 内运行完整 Rust daemon。
 - 不保证源站 CSV 未返回的更早历史可被准确查询。
 - 第一版不实现 client 端 delta patch；manifest 未变则不下载，manifest 变化则下载完整压缩二进制文件。
+- GitHub Actions 不执行初始全量历史抓取；初始 seed 在本地完成并发布到 Cloudflare。
 
 ## 派生字段存储约束
 
@@ -146,21 +149,32 @@ as-of 查询使用本系统维护的版本区间：
 ## 总体架构
 
 ```text
-GitHub Actions schedule
-  -> future-meta-daemon refresh
+本地初始 seed
+  -> future-meta-daemon seed-history
       -> 拉取九期网总表
-      -> 计算单品种入口级 probe_hash
-      -> 只下载变化入口对应的 CSV
-      -> 解析允许字段
-      -> 写入本地历史库
+      -> 发现全部单品种入口
+      -> 下载每个品种 CSV
+      -> 解析允许字段和源站已暴露版本
+      -> 写入本地 SQLite 历史库
   -> future-meta-daemon export
       -> 导出 FeeArchiveV1
       -> bincode 编码
       -> zstd 压缩
       -> 生成 manifest.json
-  -> 若产物变化
-      -> 部署到 Cloudflare Pages
-      -> 可选同步 GitHub Release
+  -> gzip SQLite 为 ops/future-meta.sqlite.gz
+  -> 部署 public/ 到 Cloudflare Pages
+
+GitHub Actions schedule
+  -> 下载 https://future-meta.pages.dev/ops/future-meta.sqlite.gz
+  -> 解压为 data/future-meta.sqlite
+  -> future-meta-daemon update-latest --require-seed
+      -> 拉取九期网总表
+      -> 解析 table#heyuetbl 最新截面
+      -> 用 seed 中已有合约元数据补齐 latest 行
+      -> 写入新手续费版本
+  -> future-meta-daemon export
+  -> 重新生成 ops/future-meta.sqlite.gz
+  -> 部署 public/ 到 Cloudflare Pages
 
 future-meta client
   -> 拉取 manifest.json
@@ -288,7 +302,7 @@ artifact_builds(
 
 `fetch_runs` 不存原始 CSV，也不存完整响应 hash。`last_probe_hash` 和 `rule_hash` 只基于允许字段计算。
 
-`source_state.source_url` 用于 daemon 追踪上游单品种 CSV 入口，例如 `https://www.9qihuo.com/shouxufeixz?heyue=cu`。它是采集调度键，不进入 client archive 的合约标识模型。
+`source_state.source_url` 用于 daemon 追踪上游采集入口。历史 seed 使用单品种 CSV 入口，例如 `https://www.9qihuo.com/shouxufeixz?heyue=cu`；latest 更新使用总表页 `https://www.9qihuo.com/qihuoshouxufei`，probe key 为 `table#heyuetbl`。这些都是采集调度键，不进入 client archive 的合约标识模型。
 
 ## 手续费字段归一化
 
@@ -318,33 +332,44 @@ FeeSpec {
 
 ## 增量更新策略
 
-上游不提供真正的 delta API，因此第一版实现实用增量。
+上游不提供真正的 delta API，因此第一版区分两种更新模式：
 
-每轮刷新：
+### 本地历史 seed
+
+本地命令 `seed-history` 负责初始化和低频重建历史库：
 
 1. 抓取总表页。
 2. 从总表解析所有单品种入口 URL。
-3. 从总表可见字段中提取允许字段。
-4. 按单品种入口 URL 计算 `probe_hash`。
-5. 对比 `source_state.last_probe_hash`。
-6. 未变化入口跳过 CSV 下载。
-7. 新入口或变化入口下载 CSV。
-8. CSV 解析后按允许字段计算每行 `rule_hash`。
-9. 合约规则未变化则更新 `last_seen_at`。
-10. 合约规则变化则关闭旧 `fee_versions.valid_to`，插入新版本。
-11. 本轮全部完成后计算 `rule_set_hash`。
-12. `rule_set_hash` 与上一产物一致则不生成新 artifact。
+3. 对每个品种下载 `https://www.9qihuo.com/shouxufeixz?heyue=<code>`。
+4. CSV 解析后只保留允许字段。
+5. 按允许字段计算每行 `rule_hash`。
+6. 同一合约的源站历史行进入 `fee_versions`。
+7. 导出 client artifact。
+8. 将 SQLite gzip 为 `public/ops/future-meta.sqlite.gz` 并发布到 Cloudflare Pages。
 
-低频校验：
+本地 seed 可以手动切换代理/IP，应对源站限频或 503。GitHub Actions 不做这个全量历史抓取。
 
-- 每天至少一次强制全品种 CSV 校验，防止总表探测漏掉 CSV 细节变化。
-- 强制校验仍然只保存允许字段。
+### CI latest 更新
+
+GitHub Actions 只负责从 Cloudflare seed 延续更新：
+
+1. 从 `https://future-meta.pages.dev/ops/future-meta.sqlite.gz` 下载 SQLite seed。
+2. 解压后要求 `contracts` 和 `fee_versions` 非空，否则中止。
+3. 抓取总表页 `https://www.9qihuo.com/qihuoshouxufei`。
+4. 解析 `table#heyuetbl` 最新截面。
+5. 费用单元格只取首个非空文本节点，丢弃括号中的每手金额等派生展示值。
+6. 不是普通期货合约的代码跳过，例如源站月均价类 `l2607F`。
+7. latest HTML 不提供上市日、到期日、每手数量、最小跳动时，只从 seed 中已有 `contracts` 元数据补齐。
+8. seed 不认识且页面也没有直接规格字段的新普通期货 `symbol` 跳过；下次本地 seed 后再纳入。
+9. 对补齐后的允许字段集合计算 `rule_set_hash`。
+10. `rule_set_hash` 未变化则只更新 `source_state`。
+11. `rule_set_hash` 变化则写入新手续费版本，导出 artifact，并替换 Cloudflare 上的 SQLite seed。
 
 失败策略：
 
-- 单品种入口失败不影响其他入口。
-- 本轮有失败时不发布新 artifact，除非失败入口与当前产物完全无关且策略显式允许。
-- 连续失败写入 `source_state.last_error_*`，供 GitHub Actions 日志和后续告警查看。
+- seed 缺失或为空时不更新、不发布。
+- latest 表格缺失、解析为空、或所有普通期货行都无法用 seed 补齐时不更新、不发布。
+- 解析失败写入 `source_state.last_error_*`，供 GitHub Actions 日志和后续告警查看。
 
 ## 发布二进制格式
 
@@ -463,19 +488,25 @@ main_contract_by_underlying_symbol -> sorted versions or filtered query
 部署流：
 
 ```text
-GitHub Actions schedule
-  -> cargo test
-  -> future-meta-daemon refresh --db data/future-meta.sqlite
+本地 seed
+  -> future-meta-daemon seed-history --db data/future-meta.sqlite --force-full
   -> future-meta-daemon export --db data/future-meta.sqlite --out public/
-  -> 如果 public/ 内容有变化
-      -> 部署 public/ 到 Cloudflare Pages
+  -> gzip -c data/future-meta.sqlite > public/ops/future-meta.sqlite.gz
+  -> 部署 public/ 到 Cloudflare Pages
+
+GitHub Actions schedule
+  -> 下载 Cloudflare 上的 ops/future-meta.sqlite.gz
+  -> future-meta-daemon update-latest --db data/future-meta.sqlite --require-seed
+  -> future-meta-daemon export --db data/future-meta.sqlite --out public/
+  -> gzip 更新后的 SQLite seed
+  -> 部署 public/ 到 Cloudflare Pages
 ```
 
 免费层约束对应策略：
 
 - Pages 单文件大小限制：artifact 必须保持在限制内；第一版去掉派生字段后预计远小于限制。
 - Pages 每月构建次数有限：只有 `rule_set_hash` 变化时才部署，定时 refresh 不等于每次部署。
-- Pages 文件数量有限：只保留 `latest.fmeta.zst` 和最近 N 个 artifacts。
+- Pages 文件数量有限：只保留 `latest.fmeta.zst`、最近 N 个 artifacts 和 `ops/future-meta.sqlite.gz`。
 - Worker 免费层 CPU 和请求限制：第一版不把查询或 daemon 放到 Worker。
 - R2 免费额度适合后续扩展：当 artifact 超过 Pages 静态限制或需要长期归档时再迁移。
 
@@ -493,7 +524,7 @@ name: update-fee-data
 
 on:
   schedule:
-    - cron: "15 * * * *"
+    - cron: "45 18 * * *"
   workflow_dispatch:
 
 jobs:
@@ -501,23 +532,24 @@ jobs:
     steps:
       - checkout
       - setup rust
-      - restore data cache
       - cargo test --workspace
-      - cargo run -p future-meta-daemon -- refresh --db data/future-meta.sqlite
+      - curl https://future-meta.pages.dev/ops/future-meta.sqlite.gz
+      - gzip -dc /tmp/future-meta.sqlite.gz > data/future-meta.sqlite
+      - cargo run -p future-meta-daemon -- inspect --db data/future-meta.sqlite
+      - cargo run -p future-meta-daemon -- update-latest --db data/future-meta.sqlite --require-seed
       - cargo run -p future-meta-daemon -- export --db data/future-meta.sqlite --out public
-      - compare public manifest/rule_set_hash
-      - deploy to Cloudflare Pages if changed
-      - save data cache
+      - gzip -c data/future-meta.sqlite > public/ops/future-meta.sqlite.gz
+      - deploy public/ to Cloudflare Pages
 ```
 
 SQLite 持久化选择：
 
-- 第一版用 GitHub Actions cache 保存 daemon SQLite。
-- 每次成功发布后，将 SQLite 作为 encrypted/private workflow artifact 保留若干天。
+- 第一版用 Cloudflare Pages 上的 `ops/future-meta.sqlite.gz` 保存 daemon SQLite seed。
+- 每次成功发布后，新的 SQLite seed 随 `public/` 一起替换。
 - 仓库不提交 SQLite 文件。
-- 如果 cache 丢失，daemon 可以从当前源站重新建立新的 `history_start`；旧历史可通过最近 artifact 继续给 client 使用，但 daemon 历史库需要人工恢复才可延续完整版本链。
+- 如果 Cloudflare seed 丢失或损坏，GitHub Actions 必须失败，不允许从空库覆盖生产；需要本地重新执行 `seed-history` 并发布 seed。
 
-为了降低 cache 丢失风险，后续可增加 GitHub Release 私有运维 artifact 或 Cloudflare R2 备份，但第一版不依赖它。
+为了降低 seed 丢失风险，后续可增加 GitHub Release 私有运维 artifact 或 Cloudflare R2 备份，但第一版不依赖它。
 
 ## 命令设计
 
@@ -525,6 +557,8 @@ daemon 命令：
 
 ```text
 future-meta-daemon discover --out sources.json
+future-meta-daemon seed-history --db data/future-meta.sqlite --force-full
+future-meta-daemon update-latest --db data/future-meta.sqlite --require-seed
 future-meta-daemon refresh --db data/future-meta.sqlite
 future-meta-daemon refresh --db data/future-meta.sqlite --force-full
 future-meta-daemon export --db data/future-meta.sqlite --out public
@@ -555,10 +589,14 @@ fixture 测试：
 - 不存在品种只返回表头的 CSV 样本。
 - 派生字段变化但规则字段不变的 CSV 样本。
 - 规则字段变化的 CSV 样本。
+- 总页 `table#heyuetbl` HTML 样本。
+- latest 手续费单元格包含 `<nobr class="js_single_fee">` 派生金额的样本。
 
 集成测试：
 
 - fixture CSV -> daemon SQLite -> export -> client load -> as-of query。
+- latest HTML -> seed 元数据补齐 -> daemon SQLite -> export -> client load。
+- seed 缺失时 `update-latest --require-seed` 失败。
 - manifest sha256 校验失败。
 - manifest 未变时 client 使用缓存。
 - manifest 变化时 client 下载新 artifact。
@@ -584,10 +622,11 @@ fixture 测试：
 - 本轮失败不覆盖旧 artifact。
 - client 保留本地缓存。
 
-GitHub Actions cache 丢失：
+Cloudflare seed 丢失：
 
 - 旧 artifact 继续服务 client。
-- daemon 重新建立历史库会产生新的 `history_start`。
+- GitHub Actions 必须失败，不从空库发布。
+- 本地重新执行 `seed-history` 后发布新的 `ops/future-meta.sqlite.gz`。
 - 后续可增加 R2 或 GitHub Release 运维备份。
 
 Cloudflare Pages 限制：

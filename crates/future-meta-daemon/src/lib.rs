@@ -1,6 +1,7 @@
 pub mod db;
 pub mod export;
 pub mod hash;
+pub mod latest;
 pub mod parse;
 pub mod refresh;
 pub mod source;
@@ -22,11 +23,25 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    SeedHistory {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        force_full: bool,
+    },
+    UpdateLatest {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        require_seed: bool,
+    },
     Refresh {
         #[arg(long)]
         db: PathBuf,
         #[arg(long)]
         force_full: bool,
+        #[arg(long)]
+        require_seed: bool,
     },
     Export {
         #[arg(long)]
@@ -49,7 +64,19 @@ pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Discover { out } => source::discover_to_file(&out),
-        Command::Refresh { db, force_full } => refresh::refresh(&db, force_full),
+        Command::SeedHistory { db, force_full } => refresh::refresh(&db, force_full),
+        Command::UpdateLatest { db, require_seed } => refresh::update_latest(&db, require_seed),
+        Command::Refresh {
+            db,
+            force_full,
+            require_seed,
+        } => refresh::refresh_with_options(
+            &db,
+            refresh::RefreshOptions {
+                force_full,
+                require_seed,
+            },
+        ),
         Command::Export { db, out } => export::export_archive(&db, &out),
         Command::Inspect { db } => db::inspect(&db),
     }

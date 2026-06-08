@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-const TOTAL_URL: &str = "https://www.9qihuo.com/qihuoshouxufei";
+pub(crate) const TOTAL_URL: &str = "https://www.9qihuo.com/qihuoshouxufei";
 const DETAIL_BASE_URL: &str = "https://www.9qihuo.com/qihuoshouxufeisingle";
 const CSV_BASE_URL: &str = "https://www.9qihuo.com/shouxufeixz";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(8);

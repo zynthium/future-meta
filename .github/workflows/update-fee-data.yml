@@ -2,14 +2,13 @@ name: update-fee-data
 
 on:
   schedule:
-    - cron: "15 * * * *"
     - cron: "45 18 * * *"
   workflow_dispatch:
-    inputs:
-      force_full:
-        description: "Force full CSV refresh"
-        required: false
-        default: "false"
+
+env:
+  DB_PATH: data/future-meta.sqlite
+  SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
+  SEED_ARCHIVE: public/ops/future-meta.sqlite.gz
 
 jobs:
   update:
@@ -23,33 +22,29 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Restore daemon database cache
-        uses: actions/cache@v4
-        with:
-          path: data/future-meta.sqlite
-          key: future-meta-db-v1-${{ github.run_id }}
-          restore-keys: |
-            future-meta-db-v1-
-
       - name: Test
         run: cargo test --workspace && cargo test -p future-meta --features download
 
+      - name: Restore Cloudflare daemon seed
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$DB_PATH")"
+          curl --fail --location --show-error "$SEED_URL" --output /tmp/future-meta.sqlite.gz
+          gzip -dc /tmp/future-meta.sqlite.gz > "$DB_PATH"
+          cargo run -p future-meta-daemon -- inspect --db "$DB_PATH"
+
       - name: Refresh data
         timeout-minutes: 20
-        run: |
-          FORCE_FULL="${{ github.event.inputs.force_full }}"
-          if [ "${{ github.event.schedule }}" = "45 18 * * *" ]; then
-            FORCE_FULL="true"
-          fi
-
-          if [ "$FORCE_FULL" = "true" ]; then
-            cargo run -p future-meta-daemon -- refresh --db data/future-meta.sqlite --force-full
-          else
-            cargo run -p future-meta-daemon -- refresh --db data/future-meta.sqlite
-          fi
+        run: cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed
 
       - name: Export Pages artifact
-        run: cargo run -p future-meta-daemon -- export --db data/future-meta.sqlite --out public
+        run: cargo run -p future-meta-daemon -- export --db "$DB_PATH" --out public
+
+      - name: Publish updated daemon seed
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SEED_ARCHIVE")"
+          gzip -c "$DB_PATH" > "$SEED_ARCHIVE"
 
       - name: Compute artifact hash
         id: artifact

@@ -1,6 +1,7 @@
 //! `SQLite` schema and version maintenance.
 
 use crate::hash::row_rule_hash;
+use crate::latest::LatestRow;
 use crate::parse::AllowedRow;
 use anyhow::{Result, anyhow};
 use future_meta::model::{FeeSpec, TradingStatus};
@@ -9,6 +10,20 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+
+/// Minimal history table counts used by update safety checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryCounts {
+    pub contracts: i64,
+    pub fee_versions: i64,
+}
+
+/// Result of completing latest table rows with persisted contract metadata.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LatestCompletion {
+    pub rows: Vec<AllowedRow>,
+    pub skipped_missing_metadata: usize,
+}
 
 /// Open a `SQLite` connection, creating the database parent directory first.
 ///
@@ -99,6 +114,22 @@ pub fn source_probe_hash(conn: &Connection, source_url: &str) -> Result<Option<S
     Ok(conn
         .query_row(
             "select last_probe_hash from source_state where source_url = ?1",
+            params![source_url],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Return the last successful rule-set hash for a source URL.
+///
+/// # Errors
+///
+/// Returns an error when the source state query fails.
+pub fn source_rule_set_hash(conn: &Connection, source_url: &str) -> Result<Option<String>> {
+    ensure_schema(conn)?;
+    Ok(conn
+        .query_row(
+            "select last_rule_set_hash from source_state where source_url = ?1",
             params![source_url],
             |row| row.get(0),
         )
@@ -206,6 +237,110 @@ pub fn upsert_allowed_rows(
     }
 
     tx.commit()?;
+    Ok(())
+}
+
+/// Complete latest total-page rows with persisted contract metadata.
+///
+/// The total page currently exposes fee and margin rules but not all static
+/// contract metadata. Missing static metadata is inherited only from existing
+/// seeded contracts; rows that still lack required lot/tick values are skipped.
+///
+/// # Errors
+///
+/// Returns an error when schema creation or metadata lookup fails.
+pub fn complete_latest_rows(conn: &Connection, rows: &[LatestRow]) -> Result<LatestCompletion> {
+    ensure_schema(conn)?;
+    let mut completed = Vec::new();
+    let mut skipped_missing_metadata = 0usize;
+
+    for row in rows {
+        let metadata = load_contract_metadata(conn, &row.symbol)?;
+        let listing_date = row.listing_date.clone().or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|value| value.listing_date.clone())
+        });
+        let expiry_date = row.expiry_date.clone().or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|value| value.expiry_date.clone())
+        });
+        let lot_size = row
+            .lot_size
+            .or_else(|| metadata.as_ref().map(|value| value.lot_size));
+        let tick_size = row
+            .tick_size
+            .or_else(|| metadata.as_ref().map(|value| value.tick_size));
+        let (Some(lot_size), Some(tick_size)) = (lot_size, tick_size) else {
+            skipped_missing_metadata += 1;
+            continue;
+        };
+        if !lot_size.is_finite() || lot_size <= 0.0 {
+            return Err(anyhow!(
+                "invalid latest lot_size for {}: {}",
+                row.symbol,
+                lot_size
+            ));
+        }
+        if !tick_size.is_finite() || tick_size <= 0.0 {
+            return Err(anyhow!(
+                "invalid latest tick_size for {}: {}",
+                row.symbol,
+                tick_size
+            ));
+        }
+
+        completed.push(AllowedRow {
+            symbol: row.symbol.clone(),
+            listing_date,
+            expiry_date,
+            trading_status: row.trading_status.clone(),
+            buy_margin_rate: row.buy_margin_rate,
+            sell_margin_rate: row.sell_margin_rate,
+            open_fee: row.open_fee.clone(),
+            close_yesterday_fee: row.close_yesterday_fee.clone(),
+            close_today_fee: row.close_today_fee.clone(),
+            lot_size,
+            tick_size,
+            source_updated_at: row.source_updated_at.clone(),
+            is_main_contract: row.is_main_contract,
+        });
+    }
+
+    Ok(LatestCompletion {
+        rows: completed,
+        skipped_missing_metadata,
+    })
+}
+
+/// Return current history table counts.
+///
+/// # Errors
+///
+/// Returns an error when schema creation or count queries fail.
+pub fn history_counts(conn: &Connection) -> Result<HistoryCounts> {
+    ensure_schema(conn)?;
+    let contracts = conn.query_row("select count(*) from contracts", [], |row| row.get(0))?;
+    let fee_versions = conn.query_row("select count(*) from fee_versions", [], |row| row.get(0))?;
+    Ok(HistoryCounts {
+        contracts,
+        fee_versions,
+    })
+}
+
+/// Fail if a daemon update is about to run without a local seed/history base.
+///
+/// # Errors
+///
+/// Returns an error when the database has no contract or fee history rows.
+pub fn ensure_seeded(conn: &Connection) -> Result<()> {
+    let counts = history_counts(conn)?;
+    if counts.contracts == 0 || counts.fee_versions == 0 {
+        return Err(anyhow!(
+            "seeded daemon database is required before update; run a local full seed and publish ops/future-meta.sqlite.gz first"
+        ));
+    }
     Ok(())
 }
 
@@ -469,11 +604,11 @@ fn parse_source_updated_at(value: &str) -> Result<OffsetDateTime> {
 /// Returns an error if inspection fails.
 pub fn inspect(db: &Path) -> Result<()> {
     let conn = connect(db)?;
-    ensure_schema(&conn)?;
-    let contracts: i64 = conn.query_row("select count(*) from contracts", [], |row| row.get(0))?;
-    let versions: i64 =
-        conn.query_row("select count(*) from fee_versions", [], |row| row.get(0))?;
-    println!("contracts={contracts} fee_versions={versions}");
+    let counts = history_counts(&conn)?;
+    println!(
+        "contracts={} fee_versions={}",
+        counts.contracts, counts.fee_versions
+    );
     Ok(())
 }
 
@@ -481,6 +616,31 @@ fn non_empty_parent(path: &Path) -> Option<PathBuf> {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .map(Path::to_path_buf)
+}
+
+#[derive(Debug)]
+struct ContractMetadata {
+    listing_date: Option<String>,
+    expiry_date: Option<String>,
+    lot_size: f64,
+    tick_size: f64,
+}
+
+fn load_contract_metadata(conn: &Connection, symbol: &str) -> Result<Option<ContractMetadata>> {
+    conn.query_row(
+        "select listing_date, expiry_date, lot_size, tick_size from contracts where symbol = ?1",
+        params![symbol],
+        |row| {
+            Ok(ContractMetadata {
+                listing_date: row.get(0)?,
+                expiry_date: row.get(1)?,
+                lot_size: row.get(2)?,
+                tick_size: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
 }
 
 fn upsert_contract(tx: &Transaction<'_>, row: &AllowedRow, observed_at: &str) -> Result<i64> {
