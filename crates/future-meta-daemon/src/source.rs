@@ -12,7 +12,7 @@ use std::time::Duration;
 pub(crate) const TOTAL_URL: &str = "https://www.9qihuo.com/qihuoshouxufei";
 const DETAIL_BASE_URL: &str = "https://www.9qihuo.com/qihuoshouxufeisingle";
 const CSV_BASE_URL: &str = "https://www.9qihuo.com/shouxufeixz";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
 const HTTP_MAX_ATTEMPTS: usize = 3;
 
 /// Downloadable source discovered from the 9qihuo total fee page.
@@ -52,6 +52,10 @@ pub fn discover_sources_from_html(html: &str) -> Result<Vec<SourceEntry>> {
                 heyue,
             },
         );
+    }
+
+    if entries.is_empty() {
+        bail!("no 9qihuo variety sources discovered from total page");
     }
 
     Ok(entries.into_values().collect())
@@ -137,7 +141,14 @@ pub(crate) fn fetch_text(client: &reqwest::blocking::Client, url: &str) -> Resul
 
     for attempt in 0..HTTP_MAX_ATTEMPTS {
         match client.get(url).send() {
-            Ok(response) if response.status().is_success() => return Ok(response.text()?),
+            Ok(response) if response.status().is_success() => match response.text() {
+                Ok(text) => return Ok(text),
+                Err(err) if attempt + 1 < HTTP_MAX_ATTEMPTS => {
+                    last_error = Some(err);
+                    std::thread::sleep(retry_delay(attempt));
+                }
+                Err(err) => return Err(err.into()),
+            },
             Ok(response) if should_retry(response.status()) && attempt + 1 < HTTP_MAX_ATTEMPTS => {
                 drop(response);
                 std::thread::sleep(retry_delay(attempt));

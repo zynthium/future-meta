@@ -372,6 +372,19 @@ fn discovery_rejects_non_target_and_ambiguous_sources() {
 }
 
 #[test]
+fn discovery_rejects_empty_source_list() {
+    let html = r#"
+      <html><body>
+        <script>window.location.href = "/qihuoshouxufei";</script>
+      </body></html>
+    "#;
+
+    let err = discover_sources_from_html(html).unwrap_err();
+
+    assert!(err.to_string().contains("no 9qihuo variety sources"));
+}
+
+#[test]
 fn exports_archive_loadable_by_client() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
