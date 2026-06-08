@@ -14,6 +14,9 @@ pub enum FutureMetaError {
     /// The requested contract is unknown.
     #[error("unknown contract: {0}")]
     UnknownContract(String),
+    /// The supplied pre-resolved contract handle does not belong to this client.
+    #[error("invalid contract handle")]
+    InvalidContractHandle,
     /// The requested underlying product symbol is unknown.
     #[error("unknown underlying symbol: {0}")]
     UnknownUnderlyingSymbol(String),

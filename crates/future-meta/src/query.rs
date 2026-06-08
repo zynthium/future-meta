@@ -13,14 +13,31 @@ use time::{Date, Month, OffsetDateTime, UtcOffset};
 pub struct FutureMeta {
     archive: FeeArchiveV1,
     history_start: OffsetDateTime,
-    contract_by_symbol: HashMap<String, u32>,
-    contract_index_by_id: HashMap<u32, ContractIndex>,
-    fees_by_contract: HashMap<u32, Vec<FeeVersionIndex>>,
-    contracts_by_underlying: HashMap<String, Vec<u32>>,
+    history_start_date: Date,
+    contract_by_symbol: HashMap<String, ContractHandle>,
+    contract_indexes: Vec<ContractIndex>,
+    fee_indexes_by_contract: Vec<Vec<FeeVersionIndex>>,
+    contracts_by_underlying: HashMap<String, Vec<ContractHandle>>,
+}
+
+/// Pre-resolved contract reference for high-frequency query paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContractHandle {
+    index: usize,
+    contract_id: u32,
+}
+
+impl ContractHandle {
+    /// Return the archive-local contract id.
+    #[must_use]
+    pub const fn contract_id(self) -> u32 {
+        self.contract_id
+    }
 }
 
 #[derive(Debug, Clone)]
 struct ContractIndex {
+    contract_id: u32,
     listing_date: Option<Date>,
     expiry_date: Option<Date>,
 }
@@ -30,6 +47,8 @@ struct FeeVersionIndex {
     archive_index: usize,
     valid_from: OffsetDateTime,
     valid_to: Option<OffsetDateTime>,
+    valid_from_date: Date,
+    valid_to_date: Option<Date>,
 }
 
 impl FutureMeta {
@@ -41,47 +60,59 @@ impl FutureMeta {
     /// supported futures underlying symbol.
     pub fn from_archive(archive: FeeArchiveV1) -> Result<Self, FutureMetaError> {
         let history_start = parse_archive_timestamp("history_start", &archive.history_start)?;
-        let mut contract_by_symbol = HashMap::new();
-        let mut contract_index_by_id = HashMap::new();
-        let mut contracts_by_underlying: HashMap<String, Vec<u32>> = HashMap::new();
+        let history_start_date = exchange_date(history_start);
+        let mut contract_by_symbol = HashMap::with_capacity(archive.contracts.len());
+        let mut contract_indexes = Vec::with_capacity(archive.contracts.len());
+        let mut contract_handle_by_id = HashMap::with_capacity(archive.contracts.len());
+        let mut contracts_by_underlying: HashMap<String, Vec<ContractHandle>> = HashMap::new();
 
-        for contract in &archive.contracts {
-            contract_by_symbol.insert(contract.symbol.clone(), contract.id);
-            contract_index_by_id.insert(
-                contract.id,
-                ContractIndex {
-                    listing_date: parse_optional_archive_date(
-                        "listing_date",
-                        contract.listing_date.as_deref(),
-                    )?,
-                    expiry_date: parse_optional_archive_date(
-                        "expiry_date",
-                        contract.expiry_date.as_deref(),
-                    )?,
-                },
-            );
+        for (index, contract) in archive.contracts.iter().enumerate() {
+            let handle = ContractHandle {
+                index,
+                contract_id: contract.id,
+            };
+            contract_by_symbol.insert(contract.symbol.clone(), handle);
+            contract_handle_by_id.insert(contract.id, handle);
+            contract_indexes.push(ContractIndex {
+                contract_id: contract.id,
+                listing_date: parse_optional_archive_date(
+                    "listing_date",
+                    contract.listing_date.as_deref(),
+                )?,
+                expiry_date: parse_optional_archive_date(
+                    "expiry_date",
+                    contract.expiry_date.as_deref(),
+                )?,
+            });
             let underlying = derive_underlying_symbol(&contract.symbol)?;
             contracts_by_underlying
                 .entry(underlying)
                 .or_default()
-                .push(contract.id);
+                .push(handle);
         }
 
-        let mut fees_by_contract: HashMap<u32, Vec<FeeVersionIndex>> = HashMap::new();
+        let mut fee_indexes_by_contract = vec![Vec::new(); archive.contracts.len()];
         for (index, fee) in archive.fee_versions.iter().enumerate() {
-            fees_by_contract
-                .entry(fee.contract_id)
-                .or_default()
-                .push(FeeVersionIndex {
-                    archive_index: index,
-                    valid_from: parse_archive_timestamp("valid_from", &fee.valid_from)?,
-                    valid_to: parse_optional_archive_timestamp(
-                        "valid_to",
-                        fee.valid_to.as_deref(),
-                    )?,
-                });
+            let handle = contract_handle_by_id
+                .get(&fee.contract_id)
+                .copied()
+                .ok_or_else(|| {
+                    FutureMetaError::CorruptArchive(format!(
+                        "fee version references unknown contract id {}",
+                        fee.contract_id
+                    ))
+                })?;
+            let valid_from = parse_archive_timestamp("valid_from", &fee.valid_from)?;
+            let valid_to = parse_optional_archive_timestamp("valid_to", fee.valid_to.as_deref())?;
+            fee_indexes_by_contract[handle.index].push(FeeVersionIndex {
+                archive_index: index,
+                valid_from,
+                valid_to,
+                valid_from_date: exchange_date(valid_from),
+                valid_to_date: valid_to.map(exchange_date),
+            });
         }
-        for indexes in fees_by_contract.values_mut() {
+        for indexes in &mut fee_indexes_by_contract {
             indexes.sort_by(|left, right| {
                 left.valid_from
                     .cmp(&right.valid_from)
@@ -92,9 +123,10 @@ impl FutureMeta {
         Ok(Self {
             archive,
             history_start,
+            history_start_date,
             contract_by_symbol,
-            contract_index_by_id,
-            fees_by_contract,
+            contract_indexes,
+            fee_indexes_by_contract,
             contracts_by_underlying,
         })
     }
@@ -124,18 +156,100 @@ impl FutureMeta {
         at: &str,
     ) -> Result<&ContractFee, FutureMetaError> {
         let at = parse_query_timestamp(at)?;
-        if at < self.history_start {
-            return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
-        }
+        self.contract_fee_at(symbol, at)
+    }
 
-        let contract_id = self
-            .contract_by_symbol
+    /// Resolve a concrete contract symbol once for repeated hot-path queries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `symbol` is not present in the archive.
+    pub fn resolve_contract(&self, symbol: &str) -> Result<ContractHandle, FutureMetaError> {
+        self.contract_by_symbol
             .get(symbol)
             .copied()
-            .ok_or_else(|| FutureMetaError::UnknownContract(symbol.to_owned()))?;
+            .ok_or_else(|| FutureMetaError::UnknownContract(symbol.to_owned()))
+    }
 
-        self.fee_for_contract_id_asof(contract_id, at)
+    /// Return the fee rule for a concrete contract at a pre-parsed timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `at` predates the archive history, the contract is
+    /// unknown, or no fee version covers `at`.
+    pub fn contract_fee_at(
+        &self,
+        symbol: &str,
+        at: OffsetDateTime,
+    ) -> Result<&ContractFee, FutureMetaError> {
+        self.reject_timestamp_before_history(at)?;
+        let handle = self.resolve_contract(symbol)?;
+        self.fee_for_contract_handle_asof(handle, at)?
             .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
+    }
+
+    /// Return the fee rule for a concrete contract on an exchange-local date.
+    ///
+    /// This is the fastest symbol-based API for callers that already work at
+    /// trading-day granularity. Intraday source timestamps are normalized to the
+    /// exchange-local calendar date in the in-memory index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `trading_date` predates the archive history, the
+    /// contract is unknown, or no fee version covers `trading_date`.
+    pub fn contract_fee_on(
+        &self,
+        symbol: &str,
+        trading_date: Date,
+    ) -> Result<&ContractFee, FutureMetaError> {
+        self.reject_date_before_history(trading_date)?;
+        let handle = self.resolve_contract(symbol)?;
+        self.fee_for_contract_handle_on(handle, trading_date)?
+            .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
+    }
+
+    /// Return the fee rule for a pre-resolved contract at a pre-parsed timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `at` predates the archive history, the handle is
+    /// invalid for this client, or no fee version covers `at`.
+    pub fn contract_fee_for_handle_at(
+        &self,
+        handle: ContractHandle,
+        at: OffsetDateTime,
+    ) -> Result<&ContractFee, FutureMetaError> {
+        self.reject_timestamp_before_history(at)?;
+        if let Some(fee) = self.fee_for_contract_handle_asof(handle, at)? {
+            return Ok(fee);
+        }
+
+        Err(FutureMetaError::NoVersionAt(
+            self.contract_symbol(handle)?.to_owned(),
+        ))
+    }
+
+    /// Return the fee rule for a pre-resolved contract on an exchange-local date.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `trading_date` predates the archive history, the
+    /// handle is invalid for this client, or no fee version covers
+    /// `trading_date`.
+    pub fn contract_fee_for_handle_on(
+        &self,
+        handle: ContractHandle,
+        trading_date: Date,
+    ) -> Result<&ContractFee, FutureMetaError> {
+        self.reject_date_before_history(trading_date)?;
+        if let Some(fee) = self.fee_for_contract_handle_on(handle, trading_date)? {
+            return Ok(fee);
+        }
+
+        Err(FutureMetaError::NoVersionAt(
+            self.contract_symbol(handle)?.to_owned(),
+        ))
     }
 
     /// Return all underlying contract fee rules available at the requested time.
@@ -150,20 +264,18 @@ impl FutureMeta {
         at: &str,
     ) -> Result<Vec<&ContractFee>, FutureMetaError> {
         let at = parse_query_timestamp(at)?;
-        if at < self.history_start {
-            return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
-        }
+        self.reject_timestamp_before_history(at)?;
 
-        let contract_ids = self
+        let handles = self
             .contracts_by_underlying
             .get(underlying_symbol)
             .ok_or_else(|| {
                 FutureMetaError::UnknownUnderlyingSymbol(underlying_symbol.to_owned())
             })?;
 
-        Ok(contract_ids
+        Ok(handles
             .iter()
-            .filter_map(|contract_id| self.contract_fee_for_underlying_asof(*contract_id, at))
+            .filter_map(|handle| self.contract_fee_for_underlying_asof(*handle, at))
             .collect())
     }
 
@@ -199,37 +311,97 @@ impl FutureMeta {
         &self.archive.contracts
     }
 
-    fn fee_for_contract_id_asof(
+    fn reject_timestamp_before_history(&self, at: OffsetDateTime) -> Result<(), FutureMetaError> {
+        if at < self.history_start {
+            return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
+        }
+        Ok(())
+    }
+
+    fn reject_date_before_history(&self, trading_date: Date) -> Result<(), FutureMetaError> {
+        if trading_date < self.history_start_date {
+            return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
+        }
+        Ok(())
+    }
+
+    fn contract_index(&self, handle: ContractHandle) -> Result<&ContractIndex, FutureMetaError> {
+        self.contract_indexes
+            .get(handle.index)
+            .filter(|index| index.contract_id == handle.contract_id)
+            .ok_or(FutureMetaError::InvalidContractHandle)
+    }
+
+    fn contract_symbol(&self, handle: ContractHandle) -> Result<&str, FutureMetaError> {
+        self.contract_index(handle)?;
+        self.archive
+            .contracts
+            .get(handle.index)
+            .map(|contract| contract.symbol.as_str())
+            .ok_or(FutureMetaError::InvalidContractHandle)
+    }
+
+    fn fee_indexes_for_handle(
         &self,
-        contract_id: u32,
+        handle: ContractHandle,
+    ) -> Result<&[FeeVersionIndex], FutureMetaError> {
+        self.contract_index(handle)?;
+        self.fee_indexes_by_contract
+            .get(handle.index)
+            .map(Vec::as_slice)
+            .ok_or(FutureMetaError::InvalidContractHandle)
+    }
+
+    fn fee_for_contract_handle_asof(
+        &self,
+        handle: ContractHandle,
         at: OffsetDateTime,
-    ) -> Option<&ContractFee> {
-        let indexes = self.fees_by_contract.get(&contract_id)?;
+    ) -> Result<Option<&ContractFee>, FutureMetaError> {
+        let indexes = self.fee_indexes_for_handle(handle)?;
         let position = indexes.partition_point(|index| index.valid_from <= at);
         if position == 0 {
-            return None;
+            return Ok(None);
         }
 
         let index = &indexes[position - 1];
         let fee = &self.archive.fee_versions[index.archive_index];
         if index.valid_to.is_none_or(|end| at < end) {
-            Some(fee)
+            Ok(Some(fee))
         } else {
-            None
+            Ok(None)
         }
+    }
+
+    fn fee_for_contract_handle_on(
+        &self,
+        handle: ContractHandle,
+        trading_date: Date,
+    ) -> Result<Option<&ContractFee>, FutureMetaError> {
+        let indexes = self.fee_indexes_for_handle(handle)?;
+        let fee = indexes.iter().rev().find_map(|index| {
+            if index.valid_from_date <= trading_date
+                && index.valid_to_date.is_none_or(|end| trading_date < end)
+            {
+                Some(&self.archive.fee_versions[index.archive_index])
+            } else {
+                None
+            }
+        });
+
+        Ok(fee)
     }
 
     fn contract_fee_for_underlying_asof(
         &self,
-        contract_id: u32,
+        handle: ContractHandle,
         at: OffsetDateTime,
     ) -> Option<&ContractFee> {
-        let contract = self.contract_index_by_id.get(&contract_id)?;
+        let contract = self.contract_index(handle).ok()?;
         if !contract_is_listed_at(contract, exchange_date(at)) {
             return None;
         }
 
-        let fee = self.fee_for_contract_id_asof(contract_id, at)?;
+        let fee = self.fee_for_contract_handle_asof(handle, at).ok()??;
         if fee.trading_status == TradingStatus::Trading {
             Some(fee)
         } else {

@@ -4,6 +4,8 @@ use future_meta::model::{
     Contract, ContractFee, FeeArchiveV1, FeeKind, FeeSpec, SCHEMA_VERSION, TradingStatus,
 };
 use future_meta::query::FutureMeta;
+use time::format_description::well_known::Rfc3339;
+use time::{Date, Month, OffsetDateTime};
 
 fn sample_archive() -> FeeArchiveV1 {
     FeeArchiveV1 {
@@ -134,6 +136,42 @@ fn queries_contract_fee_asof_with_equivalent_utc_timestamp() {
 }
 
 #[test]
+fn queries_contract_fee_with_preparsed_timestamp() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+    let at = OffsetDateTime::parse("2026-06-04T04:00:00Z", &Rfc3339).unwrap();
+
+    let fee = meta.contract_fee_at("SHFE.cu2607", at).unwrap();
+
+    assert_eq!(fee.rule_hash, "abc");
+}
+
+#[test]
+fn queries_contract_fee_on_trading_date() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
+
+    let fee = meta.contract_fee_on("SHFE.cu2607", trading_date).unwrap();
+
+    assert_eq!(fee.rule_hash, "abc");
+}
+
+#[test]
+fn queries_contract_fee_with_resolved_handle() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+    let handle = meta.resolve_contract("SHFE.cu2607").unwrap();
+    let at = OffsetDateTime::parse("2026-06-04T04:00:00Z", &Rfc3339).unwrap();
+    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
+
+    let fee_at = meta.contract_fee_for_handle_at(handle, at).unwrap();
+    let fee_on = meta
+        .contract_fee_for_handle_on(handle, trading_date)
+        .unwrap();
+
+    assert_eq!(fee_at.rule_hash, "abc");
+    assert_eq!(fee_on.rule_hash, "abc");
+}
+
+#[test]
 fn queries_underlying_and_main_continuous() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let fees = meta
@@ -193,6 +231,12 @@ fn rejects_unknown_contract_and_underlying() {
         .unwrap_err();
     assert!(matches!(
         contract_err,
+        FutureMetaError::UnknownContract(symbol) if symbol == "SHFE.al2607"
+    ));
+
+    let handle_err = meta.resolve_contract("SHFE.al2607").unwrap_err();
+    assert!(matches!(
+        handle_err,
         FutureMetaError::UnknownContract(symbol) if symbol == "SHFE.al2607"
     ));
 
