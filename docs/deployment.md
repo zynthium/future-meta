@@ -39,6 +39,8 @@ wrangler pages deploy public --project-name=future-meta --branch=main --commit-d
 
 ## GitHub 定时更新
 
+定时任务每天北京时间 18:45 运行，对应 GitHub Actions cron `45 10 * * *`。
+
 GitHub Actions 不从零构建历史库。每次运行：
 
 1. 从 Cloudflare 下载 `ops/future-meta.sqlite.gz`。

@@ -2,7 +2,8 @@ name: update-fee-data
 
 on:
   schedule:
-    - cron: "45 18 * * *"
+    # 18:45 Asia/Shanghai.
+    - cron: "45 10 * * *"
   workflow_dispatch:
 
 env:
