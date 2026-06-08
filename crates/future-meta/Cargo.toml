@@ -8,6 +8,11 @@ repository.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[[example]]
+name = "online_smoke"
+path = "examples/online_smoke.rs"
+required-features = ["download"]
+
 [features]
 default = []
 download = ["dep:reqwest", "dep:tokio"]
