@@ -12,7 +12,8 @@ use std::time::Duration;
 pub(crate) const TOTAL_URL: &str = "https://www.9qihuo.com/qihuoshouxufei";
 const DETAIL_BASE_URL: &str = "https://www.9qihuo.com/qihuoshouxufeisingle";
 const CSV_BASE_URL: &str = "https://www.9qihuo.com/shouxufeixz";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(90);
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const HTTP_MAX_ATTEMPTS: usize = 3;
 
 /// Downloadable source discovered from the 9qihuo total fee page.
@@ -130,8 +131,9 @@ pub(crate) fn http_client() -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .default_headers(headers)
         .cookie_store(true)
+        .http1_only()
         .timeout(HTTP_TIMEOUT)
-        .connect_timeout(HTTP_TIMEOUT)
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
         .build()
         .map_err(Into::into)
 }
