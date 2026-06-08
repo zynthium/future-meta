@@ -36,6 +36,10 @@ pub fn refresh(db: &Path, force_full: bool) -> Result<()> {
             continue;
         }
         attempted += 1;
+        eprintln!(
+            "refreshing source {attempted}: heyue={} url={}",
+            source.heyue, source.csv_url
+        );
 
         match refresh_source(
             &mut conn,
@@ -45,7 +49,10 @@ pub fn refresh(db: &Path, force_full: bool) -> Result<()> {
             &observed_at,
             force_full,
         ) {
-            Ok(RefreshedSource::UpdatedOrEmpty) => succeeded += 1,
+            Ok(RefreshedSource::UpdatedOrEmpty) => {
+                succeeded += 1;
+                eprintln!("source refresh succeeded for {}", source.csv_url);
+            }
             Ok(RefreshedSource::SkippedEmpty) => {}
             Err(err) => {
                 failed += 1;

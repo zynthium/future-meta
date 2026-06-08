@@ -35,6 +35,7 @@ jobs:
         run: cargo test --workspace && cargo test -p future-meta --features download
 
       - name: Refresh data
+        timeout-minutes: 20
         run: |
           FORCE_FULL="${{ github.event.inputs.force_full }}"
           if [ "${{ github.event.schedule }}" = "45 18 * * *" ]; then

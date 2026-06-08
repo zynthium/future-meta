@@ -12,8 +12,8 @@ use std::time::Duration;
 const TOTAL_URL: &str = "https://www.9qihuo.com/qihuoshouxufei";
 const DETAIL_BASE_URL: &str = "https://www.9qihuo.com/qihuoshouxufeisingle";
 const CSV_BASE_URL: &str = "https://www.9qihuo.com/shouxufeixz";
-const HTTP_TIMEOUT: Duration = Duration::from_secs(20);
-const HTTP_MAX_ATTEMPTS: usize = 5;
+const HTTP_TIMEOUT: Duration = Duration::from_secs(8);
+const HTTP_MAX_ATTEMPTS: usize = 3;
 
 /// Downloadable source discovered from the 9qihuo total fee page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -165,5 +165,5 @@ fn should_retry(status: StatusCode) -> bool {
 }
 
 fn retry_delay(attempt: usize) -> Duration {
-    Duration::from_millis(500 * 2_u64.saturating_pow(u32::try_from(attempt).unwrap_or(u32::MAX)))
+    Duration::from_millis(500 * 2_u64.saturating_pow(u32::try_from(attempt).unwrap_or(0)))
 }
