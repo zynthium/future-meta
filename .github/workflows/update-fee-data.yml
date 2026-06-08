@@ -10,6 +10,7 @@ env:
   DB_PATH: data/future-meta.sqlite
   SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
   SEED_ARCHIVE: public/ops/future-meta.sqlite.gz
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   update:
@@ -17,7 +18,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -52,7 +53,7 @@ jobs:
         run: echo "sha=$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
