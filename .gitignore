@@ -1,0 +1,8 @@
+/target
+/data
+/public
+/.env
+/.codex
+/.mcp.json
+**/*.rs.bk
+.DS_Store

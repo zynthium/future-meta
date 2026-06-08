@@ -1,0 +1,62 @@
+name: update-fee-data
+
+on:
+  schedule:
+    - cron: "15 * * * *"
+    - cron: "45 18 * * *"
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: "Force full CSV refresh"
+        required: false
+        default: "false"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Restore daemon database cache
+        uses: actions/cache@v4
+        with:
+          path: data/future-meta.sqlite
+          key: future-meta-db-v1-${{ github.run_id }}
+          restore-keys: |
+            future-meta-db-v1-
+
+      - name: Test
+        run: cargo test --workspace && cargo test -p future-meta --features download
+
+      - name: Refresh data
+        run: |
+          FORCE_FULL="${{ github.event.inputs.force_full }}"
+          if [ "${{ github.event.schedule }}" = "45 18 * * *" ]; then
+            FORCE_FULL="true"
+          fi
+
+          if [ "$FORCE_FULL" = "true" ]; then
+            cargo run -p future-meta-daemon -- refresh --db data/future-meta.sqlite --force-full
+          else
+            cargo run -p future-meta-daemon -- refresh --db data/future-meta.sqlite
+          fi
+
+      - name: Export Pages artifact
+        run: cargo run -p future-meta-daemon -- export --db data/future-meta.sqlite --out public
+
+      - name: Compute artifact hash
+        id: artifact
+        run: echo "sha=$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy public --project-name=future-meta --branch=main --commit-dirty=true
