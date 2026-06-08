@@ -132,6 +132,29 @@ pub fn update_source_success(
     Ok(())
 }
 
+/// Record a failed source refresh without clearing the last successful state.
+///
+/// # Errors
+///
+/// Returns an error when the source state update fails.
+pub fn update_source_error(
+    conn: &Connection,
+    source_url: &str,
+    observed_at: &str,
+    message: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    conn.execute(
+        "insert into source_state(source_url, last_error_at, last_error_message)
+         values (?1, ?2, ?3)
+         on conflict(source_url) do update set
+           last_error_at = excluded.last_error_at,
+           last_error_message = excluded.last_error_message",
+        params![source_url, observed_at, message],
+    )?;
+    Ok(())
+}
+
 /// Insert or update allowed rows while preserving fee-rule history.
 ///
 /// # Errors
