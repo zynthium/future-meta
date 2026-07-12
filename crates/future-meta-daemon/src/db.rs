@@ -8,8 +8,8 @@ use future_meta::model::{FeeSpec, TradingStatus};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::{OffsetDateTime, UtcOffset};
 
 /// Minimal history table counts used by update safety checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -565,7 +565,7 @@ fn prepare_rows(rows: &[AllowedRow], observed_at: &str) -> Result<Vec<PreparedRo
 }
 
 fn row_valid_from(row: &AllowedRow, observed_at: &str) -> Result<(String, OffsetDateTime)> {
-    let valid_from_at = row
+    let source_or_observed_at = row
         .source_updated_at
         .as_deref()
         .map(parse_source_updated_at)
@@ -574,7 +574,19 @@ fn row_valid_from(row: &AllowedRow, observed_at: &str) -> Result<(String, Offset
             parse_timestamp("observed_at", observed_at)
                 .expect("observed_at should have been validated before row preparation")
         });
+    let valid_from_at = exchange_day_start(source_or_observed_at);
     Ok((valid_from_at.format(&Rfc3339)?, valid_from_at))
+}
+
+fn exchange_day_start(at: OffsetDateTime) -> OffsetDateTime {
+    at.to_offset(exchange_offset())
+        .date()
+        .midnight()
+        .assume_offset(exchange_offset())
+}
+
+fn exchange_offset() -> UtcOffset {
+    UtcOffset::from_hms(8, 0, 0).expect("valid exchange offset")
 }
 
 fn parse_source_updated_at(value: &str) -> Result<OffsetDateTime> {

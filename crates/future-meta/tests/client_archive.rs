@@ -153,6 +153,29 @@ fn queries_contract_fee_with_preparsed_timestamp() {
 }
 
 #[test]
+fn timestamp_queries_use_exchange_local_date_not_wall_clock_time() {
+    let mut archive = sample_archive();
+    let mut same_day_fee = archive.fee_versions[0].clone();
+    archive.fee_versions[0].valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
+    same_day_fee.rule_hash = "same-day-latest".to_owned();
+    same_day_fee.open_fee.value = Some(0.2);
+    same_day_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
+    same_day_fee.valid_to = None;
+    archive.fee_versions.push(same_day_fee);
+
+    let meta = FutureMeta::from_archive(archive).unwrap();
+    let morning = meta
+        .contract_fee_asof("SHFE.cu2607", "2026-06-04T09:00:00+08:00")
+        .unwrap();
+    let afternoon = meta
+        .contract_fee_asof("SHFE.cu2607", "2026-06-04T14:00:00+08:00")
+        .unwrap();
+
+    assert_eq!(morning.rule_hash, "same-day-latest");
+    assert_eq!(afternoon.rule_hash, "same-day-latest");
+}
+
+#[test]
 fn queries_contract_fee_on_trading_date() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
@@ -353,7 +376,7 @@ fn rejects_index_for_main_contract_query() {
 fn rejects_queries_before_history_start() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let err = meta
-        .contract_fee_asof("SHFE.cu2607", "2026-06-04T11:59:59+08:00")
+        .contract_fee_asof("SHFE.cu2607", "2026-06-03T23:59:59+08:00")
         .unwrap_err();
 
     assert!(matches!(
@@ -403,18 +426,18 @@ fn rejects_unknown_contract_and_underlying() {
 fn treats_valid_to_as_exclusive() {
     let mut archive = sample_archive();
     let mut next_fee = archive.fee_versions[0].clone();
-    archive.fee_versions[0].valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
+    archive.fee_versions[0].valid_to = Some("2026-06-05T00:00:00+08:00".to_owned());
     next_fee.rule_hash = "def".to_owned();
-    next_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
+    next_fee.valid_from = "2026-06-05T00:00:00+08:00".to_owned();
     next_fee.valid_to = None;
     archive.fee_versions.push(next_fee);
 
     let meta = FutureMeta::from_archive(archive).unwrap();
     let before_boundary = meta
-        .contract_fee_asof("SHFE.cu2607", "2026-06-04T12:59:59+08:00")
+        .contract_fee_asof("SHFE.cu2607", "2026-06-04T23:59:59+08:00")
         .unwrap();
     let at_boundary = meta
-        .contract_fee_asof("SHFE.cu2607", "2026-06-04T13:00:00+08:00")
+        .contract_fee_asof("SHFE.cu2607", "2026-06-05T00:00:00+08:00")
         .unwrap();
 
     assert_eq!(before_boundary.rule_hash, "abc");
@@ -422,57 +445,58 @@ fn treats_valid_to_as_exclusive() {
 }
 
 #[test]
-fn fee_cursor_supports_exact_intraday_fee_boundaries() {
+fn prepared_fee_cursors_change_only_at_trading_day_boundary() {
     let mut archive = sample_archive();
-    let mut next_fee = archive.fee_versions[0].clone();
+    let mut same_day_fee = archive.fee_versions[0].clone();
     archive.fee_versions[0].valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
-    next_fee.rule_hash = "def".to_owned();
-    next_fee.open_fee.value = Some(0.2);
-    next_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
-    next_fee.valid_to = None;
-    archive.fee_versions.push(next_fee);
+    same_day_fee.rule_hash = "same-day-latest".to_owned();
+    same_day_fee.open_fee.value = Some(0.2);
+    same_day_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
+    same_day_fee.valid_to = None;
+    archive.fee_versions.push(same_day_fee);
 
     let meta = FutureMeta::from_archive(archive).unwrap();
+    let handle = meta.resolve_contract("SHFE.cu2607").unwrap();
     let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
-    let day = meta.for_trading_day(trading_date).unwrap();
-    let handle = day.resolve_contract("SHFE.cu2607").unwrap();
-    let before_boundary = OffsetDateTime::parse("2026-06-04T12:59:59+08:00", &Rfc3339).unwrap();
-    let at_boundary = OffsetDateTime::parse("2026-06-04T13:00:00+08:00", &Rfc3339).unwrap();
-    let after_boundary = OffsetDateTime::parse("2026-06-04T13:00:01+08:00", &Rfc3339).unwrap();
+    let start = OffsetDateTime::parse("2026-06-04T12:00:00+08:00", &Rfc3339).unwrap();
+    let later = OffsetDateTime::parse("2026-06-04T14:00:00+08:00", &Rfc3339).unwrap();
+    let next_day_start = OffsetDateTime::parse("2026-06-05T00:00:00+08:00", &Rfc3339).unwrap();
+    let start_unix_nanos = i64::try_from(start.unix_timestamp_nanos()).unwrap();
+    let later_unix_nanos = i64::try_from(later.unix_timestamp_nanos()).unwrap();
+    let next_day_start_unix_nanos = i64::try_from(next_day_start.unix_timestamp_nanos()).unwrap();
 
-    let mut cursor = day.prepare_fee_cursor_at(handle, before_boundary).unwrap();
-    assert_amount(cursor.current().open_amount(70_000.0, 1.0), 0.1);
+    let mut cursors = meta
+        .prepare_fee_cursors([handle], trading_date, start_unix_nanos)
+        .unwrap();
 
-    assert_eq!(
-        cursor.next_change_unix_nanos(),
-        i64::try_from(at_boundary.unix_timestamp_nanos()).unwrap()
-    );
+    assert_eq!(cursors.next_change_unix_nanos(), next_day_start_unix_nanos);
+    assert_amount(cursors.current(0).unwrap().open_amount(70_000.0, 1.0), 0.2);
 
-    cursor.advance_to(at_boundary).unwrap();
-    assert_amount(cursor.current().open_amount(70_000.0, 1.0), 0.2);
+    cursors.advance_to(trading_date, later_unix_nanos).unwrap();
 
-    let cached_amount = cursor.current().open_amount(70_000.0, 1.0);
-    cursor.advance_to(after_boundary).unwrap();
-    assert_amount(cursor.current().open_amount(70_000.0, 1.0), cached_amount);
+    assert_eq!(cursors.next_change_unix_nanos(), next_day_start_unix_nanos);
+    assert_amount(cursors.current(0).unwrap().open_amount(70_000.0, 1.0), 0.2);
 }
 
 #[test]
-fn fee_cursor_rejects_timestamp_before_trading_day_start() {
+fn prepared_fee_cursors_reject_timestamp_before_trading_day_start() {
     let mut archive = sample_archive();
     archive.history_start = "2026-06-03T12:00:00+08:00".to_owned();
     archive.fee_versions[0].valid_from = "2026-06-03T12:00:00+08:00".to_owned();
 
     let meta = FutureMeta::from_archive(archive).unwrap();
+    let handle = meta.resolve_contract("SHFE.cu2607").unwrap();
     let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
-    let day = meta.for_trading_day(trading_date).unwrap();
-    let handle = day.resolve_contract("SHFE.cu2607").unwrap();
     let start = OffsetDateTime::parse("2026-06-04T12:00:00+08:00", &Rfc3339).unwrap();
     let before_day = OffsetDateTime::parse("2026-06-03T23:59:59+08:00", &Rfc3339).unwrap();
+    let start_unix_nanos = i64::try_from(start.unix_timestamp_nanos()).unwrap();
     let before_day_unix_nanos = i64::try_from(before_day.unix_timestamp_nanos()).unwrap();
 
-    let mut cursor = day.prepare_fee_cursor_at(handle, start).unwrap();
-    let err = cursor
-        .advance_and_get_unix_nanos(before_day_unix_nanos)
+    let mut cursors = meta
+        .prepare_fee_cursors([handle], trading_date, start_unix_nanos)
+        .unwrap();
+    let err = cursors
+        .advance_and_get_unix_nanos(0, before_day_unix_nanos)
         .unwrap_err();
 
     assert!(matches!(err, FutureMetaError::InvalidTimestamp(_)));
@@ -561,40 +585,6 @@ fn prepared_fee_cursors_advance_across_trading_days() {
 }
 
 #[test]
-fn prepared_fee_cursors_advance_intraday_boundaries() {
-    let mut archive = sample_archive();
-    let mut next_fee = archive.fee_versions[0].clone();
-    archive.fee_versions[0].valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
-    next_fee.rule_hash = "intraday".to_owned();
-    next_fee.open_fee.value = Some(0.4);
-    next_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
-    next_fee.valid_to = None;
-    archive.fee_versions.push(next_fee);
-
-    let meta = FutureMeta::from_archive(archive).unwrap();
-    let handle = meta.resolve_contract("SHFE.cu2607").unwrap();
-    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
-    let start = OffsetDateTime::parse("2026-06-04T12:00:00+08:00", &Rfc3339).unwrap();
-    let boundary = OffsetDateTime::parse("2026-06-04T13:00:00+08:00", &Rfc3339).unwrap();
-    let start_unix_nanos = i64::try_from(start.unix_timestamp_nanos()).unwrap();
-    let boundary_unix_nanos = i64::try_from(boundary.unix_timestamp_nanos()).unwrap();
-
-    let mut cursors = meta
-        .prepare_fee_cursors([handle], trading_date, start_unix_nanos)
-        .unwrap();
-
-    assert_eq!(cursors.next_change_unix_nanos(), boundary_unix_nanos);
-    assert_amount(cursors.current(0).unwrap().open_amount(70_000.0, 1.0), 0.1);
-
-    cursors
-        .advance_to(trading_date, boundary_unix_nanos)
-        .unwrap();
-
-    assert_eq!(cursors.current_trading_date(), trading_date);
-    assert_amount(cursors.current(0).unwrap().open_amount(70_000.0, 1.0), 0.4);
-}
-
-#[test]
 fn prepared_fee_cursors_reject_backwards_ticks() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let handle = meta.resolve_contract("SHFE.cu2607").unwrap();
@@ -634,70 +624,18 @@ fn prepared_fee_cursors_validate_empty_table_start_timestamp() {
 }
 
 #[test]
-fn prepared_fee_cursors_leave_table_unchanged_when_same_day_advance_fails() {
-    let mut archive = sample_archive();
-    archive.contracts.push(Contract {
-        id: 2,
-        symbol: "SHFE.cu2608".to_owned(),
-        listing_date: Some("20250716".to_owned()),
-        expiry_date: Some("20260715".to_owned()),
-        lot_size: 5.0,
-        tick_size: 10.0,
-        active: true,
-    });
-
-    let mut first_next_fee = archive.fee_versions[0].clone();
-    archive.fee_versions[0].valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
-    first_next_fee.rule_hash = "first-next".to_owned();
-    first_next_fee.open_fee.value = Some(0.2);
-    first_next_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
-    first_next_fee.valid_to = None;
-
-    let mut second_fee = archive.fee_versions[0].clone();
-    second_fee.contract_id = 2;
-    second_fee.rule_hash = "second".to_owned();
-    second_fee.valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
-
-    archive.fee_versions.extend([first_next_fee, second_fee]);
-
-    let meta = FutureMeta::from_archive(archive).unwrap();
-    let cu2607 = meta.resolve_contract("SHFE.cu2607").unwrap();
-    let cu2608 = meta.resolve_contract("SHFE.cu2608").unwrap();
-    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
-    let start = OffsetDateTime::parse("2026-06-04T12:00:00+08:00", &Rfc3339).unwrap();
-    let boundary = OffsetDateTime::parse("2026-06-04T13:00:00+08:00", &Rfc3339).unwrap();
-    let start_unix_nanos = i64::try_from(start.unix_timestamp_nanos()).unwrap();
-    let boundary_unix_nanos = i64::try_from(boundary.unix_timestamp_nanos()).unwrap();
-
-    let mut cursors = meta
-        .prepare_fee_cursors([cu2607, cu2608], trading_date, start_unix_nanos)
-        .unwrap();
-
-    let err = cursors
-        .advance_to(trading_date, boundary_unix_nanos)
-        .unwrap_err();
-
-    assert!(matches!(
-        err,
-        FutureMetaError::NoVersionAt(symbol) if symbol == "SHFE.cu2608"
-    ));
-    assert_amount(cursors.current(0).unwrap().open_amount(70_000.0, 1.0), 0.1);
-    assert_eq!(cursors.next_change_unix_nanos(), boundary_unix_nanos);
-}
-
-#[test]
 fn treats_valid_to_as_exclusive_with_equivalent_utc_timestamp() {
     let mut archive = sample_archive();
     let mut next_fee = archive.fee_versions[0].clone();
-    archive.fee_versions[0].valid_to = Some("2026-06-04T13:00:00+08:00".to_owned());
+    archive.fee_versions[0].valid_to = Some("2026-06-05T00:00:00+08:00".to_owned());
     next_fee.rule_hash = "def".to_owned();
-    next_fee.valid_from = "2026-06-04T13:00:00+08:00".to_owned();
+    next_fee.valid_from = "2026-06-05T00:00:00+08:00".to_owned();
     next_fee.valid_to = None;
     archive.fee_versions.push(next_fee);
 
     let meta = FutureMeta::from_archive(archive).unwrap();
     let at_boundary = meta
-        .contract_fee_asof("SHFE.cu2607", "2026-06-04T05:00:00Z")
+        .contract_fee_asof("SHFE.cu2607", "2026-06-04T16:00:00Z")
         .unwrap();
 
     assert_eq!(at_boundary.rule_hash, "def");

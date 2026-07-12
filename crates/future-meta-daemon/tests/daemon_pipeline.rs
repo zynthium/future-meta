@@ -101,7 +101,7 @@ fn upsert_creates_new_fee_version_only_for_rule_changes() {
 
     assert_eq!(contract_count, 1);
     assert_eq!(fee_version_count, 2);
-    assert_eq!(closed_valid_to, "2026-03-28T22:56:54+08:00");
+    assert_eq!(closed_valid_to, "2026-03-28T00:00:00+08:00");
     assert_eq!(closed_last_seen_at, "2026-06-04T13:00:00+08:00");
     assert_eq!(open_count, 1);
 }
@@ -193,7 +193,7 @@ fn latest_rows_complete_from_seed_metadata() {
 }
 
 #[test]
-fn duplicate_symbol_with_distinct_source_times_creates_history() {
+fn duplicate_symbol_with_distinct_source_dates_creates_history() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
     let mut conn = connect(&db_path).unwrap();
@@ -219,7 +219,7 @@ fn duplicate_symbol_with_distinct_source_times_creates_history() {
 
     assert_eq!(contract_count, 1);
     assert_eq!(fee_version_count, 2);
-    assert_eq!(closed_valid_to, "2026-03-28T22:56:54+08:00");
+    assert_eq!(closed_valid_to, "2026-03-28T00:00:00+08:00");
 }
 
 #[test]
@@ -249,14 +249,14 @@ fn rejects_non_monotonic_observed_times() {
 }
 
 #[test]
-fn rejects_conflicting_rules_at_same_source_timestamp() {
+fn rejects_conflicting_rules_on_same_effective_date() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
     let mut conn = connect(&db_path).unwrap();
     ensure_schema(&conn).unwrap();
 
     let mut rows = parse_csv(CSV_V1).unwrap();
-    let same_source_time = CSV_V2.replace("2026-03-28 22:56:54", "2026-03-27 22:56:54");
+    let same_source_time = CSV_V2.replace("2026-03-28 22:56:54", "2026-03-27 23:30:00");
     rows.push(parse_csv(&same_source_time).unwrap().remove(0));
 
     let err = upsert_allowed_rows(&mut conn, &rows, "2026-06-04T13:00:00+08:00").unwrap_err();

@@ -14,8 +14,6 @@ use time::{Date, Month, OffsetDateTime, UtcOffset};
 pub struct FutureMeta {
     archive: FeeArchiveV1,
     handle_token: u64,
-    history_start: OffsetDateTime,
-    history_start_unix_nanos: i64,
     history_start_date: Date,
     contract_by_symbol: HashMap<String, ContractHandle>,
     contract_indexes: Vec<ContractIndex>,
@@ -128,167 +126,12 @@ impl PreparedFeeBook {
     }
 }
 
-/// Monotonic exact-as-of fee cursor for one contract in one trading day.
-///
-/// Use this when tick timestamps are sorted and intraday fee changes must be
-/// respected. The hot path is one integer comparison against
-/// `next_change_unix_nanos`; call `advance_to_unix_nanos` only when the tick
-/// reaches that boundary. Ticks must be monotonic; this cursor does not validate
-/// every timestamp on the fastest path.
-#[derive(Debug, Clone)]
-pub struct PreparedFeeCursor<'a> {
-    meta: &'a FutureMeta,
-    handle: ContractHandle,
-    fee_indexes: &'a [FeeVersionIndex],
-    position: usize,
-    current: PreparedFee,
-    current_valid_from_unix_nanos: i64,
-    next_change_unix_nanos: i64,
-    trading_day_start_unix_nanos: i64,
-    trading_day_end_unix_nanos: i64,
-}
-
-impl PreparedFeeCursor<'_> {
-    /// Current prepared fee.
-    #[must_use]
-    #[inline]
-    pub const fn current(&self) -> &PreparedFee {
-        &self.current
-    }
-
-    /// Unix timestamp in nanoseconds where current fee may change.
-    ///
-    /// `i64::MAX` means no known change. For cursors built from
-    /// `TradingDayMeta`, this is capped at that trading day's end.
-    #[must_use]
-    #[inline]
-    pub const fn next_change_unix_nanos(&self) -> i64 {
-        self.next_change_unix_nanos
-    }
-
-    /// Advance cursor to a monotonic Unix timestamp in nanoseconds.
-    ///
-    /// Call this only when `unix_nanos >= next_change_unix_nanos()`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the timestamp is before the current fee interval,
-    /// leaves this trading day, or no fee version covers the timestamp.
-    pub fn advance_to_unix_nanos(&mut self, unix_nanos: i64) -> Result<(), FutureMetaError> {
-        if unix_nanos < self.trading_day_start_unix_nanos {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{unix_nanos} is outside cursor trading day"
-            )));
-        }
-
-        if unix_nanos < self.current_valid_from_unix_nanos {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{unix_nanos} is before current fee cursor interval"
-            )));
-        }
-
-        if unix_nanos >= self.trading_day_end_unix_nanos {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{unix_nanos} is outside cursor trading day"
-            )));
-        }
-
-        if unix_nanos < self.next_change_unix_nanos {
-            return Ok(());
-        }
-
-        self.advance_slow_to_unix_nanos(unix_nanos)
-    }
-
-    /// Advance cursor to a pre-parsed timestamp.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the timestamp cannot fit in `i64` nanoseconds, is
-    /// before the current fee interval, leaves this trading day, or no fee
-    /// version covers the timestamp.
-    pub fn advance_to(&mut self, at: OffsetDateTime) -> Result<(), FutureMetaError> {
-        let unix_nanos = query_timestamp_unix_nanos(at)?;
-        self.advance_to_unix_nanos(unix_nanos)
-    }
-
-    /// Advance if needed and return the current fee.
-    ///
-    /// This convenience method keeps the hot-path branch inside the method. For
-    /// absolute minimum overhead, compare `next_change_unix_nanos()` in the
-    /// caller and use `current()` directly.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as `advance_to_unix_nanos`.
-    pub fn advance_and_get_unix_nanos(
-        &mut self,
-        unix_nanos: i64,
-    ) -> Result<&PreparedFee, FutureMetaError> {
-        if unix_nanos < self.trading_day_start_unix_nanos {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{unix_nanos} is outside cursor trading day"
-            )));
-        }
-
-        if unix_nanos < self.current_valid_from_unix_nanos {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{unix_nanos} is before current fee cursor interval"
-            )));
-        }
-
-        if unix_nanos >= self.next_change_unix_nanos {
-            self.advance_to_unix_nanos(unix_nanos)?;
-        }
-        Ok(&self.current)
-    }
-
-    /// Advance if needed and return the current fee.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as `advance_to`.
-    pub fn advance_and_get(&mut self, at: OffsetDateTime) -> Result<&PreparedFee, FutureMetaError> {
-        let unix_nanos = query_timestamp_unix_nanos(at)?;
-        self.advance_and_get_unix_nanos(unix_nanos)
-    }
-
-    fn advance_slow_to_unix_nanos(&mut self, unix_nanos: i64) -> Result<(), FutureMetaError> {
-        let mut position = self.position;
-        while let Some(next) = self.fee_indexes.get(position + 1) {
-            if next.valid_from_unix_nanos > unix_nanos {
-                break;
-            }
-            position += 1;
-        }
-
-        let index = &self.fee_indexes[position];
-        if !fee_index_covers_unix_nanos(index, unix_nanos) {
-            return Err(FutureMetaError::NoVersionAt(
-                self.meta.contract_symbol(self.handle)?.to_owned(),
-            ));
-        }
-
-        if position != self.position {
-            let fee = &self.meta.archive.fee_versions[index.archive_index];
-            self.current = self.meta.prepare_contract_fee(self.handle, fee)?;
-            self.position = position;
-            self.current_valid_from_unix_nanos = index.valid_from_unix_nanos;
-        }
-        self.next_change_unix_nanos =
-            next_change_unix_nanos(self.fee_indexes, position, self.trading_day_end_unix_nanos);
-
-        Ok(())
-    }
-}
-
-/// Dense set of exact-as-of cursors that can advance across trading days.
+/// Dense prepared fee table that can advance across trading days.
 ///
 /// Slot order matches the handles passed to `FutureMeta::prepare_fee_cursors`
-/// or `TradingDayMeta::prepare_fee_cursors`. Prefer constructing it through
-/// `FutureMeta::prepare_fee_cursors` for multi-day tick streams: compare
-/// `next_change_unix_nanos`, call `advance_to` only at that boundary, then read
-/// the current prepared fee by slot.
+/// or `TradingDayMeta::prepare_fee_cursors`. Fees are constant within an
+/// exchange-local trading day, so the only scheduled hot-path boundary is the
+/// current trading day's end.
 #[derive(Debug, Clone)]
 pub struct PreparedFeeCursors<'a> {
     meta: &'a FutureMeta,
@@ -297,11 +140,10 @@ pub struct PreparedFeeCursors<'a> {
     trading_day_start_unix_nanos: i64,
     trading_day_end_unix_nanos: i64,
     last_unix_nanos: i64,
-    next_change_unix_nanos: i64,
-    cursors: Vec<PreparedFeeCursor<'a>>,
+    fees: PreparedFeeBook,
 }
 
-impl<'a> PreparedFeeCursors<'a> {
+impl PreparedFeeCursors<'_> {
     /// Current exchange-local trading date for this cursor table.
     #[must_use]
     pub const fn current_trading_date(&self) -> Date {
@@ -310,30 +152,30 @@ impl<'a> PreparedFeeCursors<'a> {
 
     /// Unix timestamp in nanoseconds where any slot may need to change.
     ///
-    /// This is the minimum of all slot fee-version boundaries and the current
-    /// trading-day end.
+    /// Because exchange fees are day-fixed, this is the current trading day's
+    /// end. Rebuild the table for the next trading date at this boundary.
     #[must_use]
     #[inline]
     pub const fn next_change_unix_nanos(&self) -> i64 {
-        self.next_change_unix_nanos
+        self.trading_day_end_unix_nanos
     }
 
     /// Number of cursor slots.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.cursors.len()
+        self.fees.len()
     }
 
     /// Whether the cursor table contains no slots.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.cursors.is_empty()
+        self.fees.is_empty()
     }
 
-    /// Return a cursor by slot.
+    /// Return the current prepared fee by slot.
     #[must_use]
-    pub fn get(&self, slot: usize) -> Option<&PreparedFeeCursor<'a>> {
-        self.cursors.get(slot)
+    pub fn get(&self, slot: usize) -> Option<&PreparedFee> {
+        self.fees.get(slot)
     }
 
     /// Return the current prepared fee by slot.
@@ -342,29 +184,26 @@ impl<'a> PreparedFeeCursors<'a> {
     ///
     /// Returns an error when `slot` is missing.
     pub fn current(&self, slot: usize) -> Result<&PreparedFee, FutureMetaError> {
-        self.cursors
-            .get(slot)
-            .map(PreparedFeeCursor::current)
-            .ok_or(FutureMetaError::InvalidFeeSlot(slot))
+        self.get(slot).ok_or(FutureMetaError::InvalidFeeSlot(slot))
     }
 
     /// Advance the cursor table to a monotonic timestamp and trading date.
     ///
-    /// Rebuilds the internal day snapshot when `trading_date` changes. Within
-    /// the same day, only slots whose fee boundary has been reached take the
-    /// slow path.
+    /// Rebuilds the internal day snapshot when `trading_date` changes. Within a
+    /// trading day, fees are immutable and this only validates monotonicity and
+    /// day bounds.
     ///
     /// # Errors
     ///
-    /// Returns an error when the timestamp predates history, falls outside the
-    /// supplied trading date, moves outside the current same-day bounds, or any
-    /// slot has no fee version at the requested timestamp.
+    /// Returns an error when the trading date predates history, the timestamp
+    /// falls outside the supplied trading date, moves backward, or any slot has
+    /// no fee version for the requested trading date.
     pub fn advance_to(
         &mut self,
         trading_date: Date,
         unix_nanos: i64,
     ) -> Result<(), FutureMetaError> {
-        self.meta.reject_unix_nanos_before_history(unix_nanos)?;
+        self.meta.reject_date_before_history(trading_date)?;
         if unix_nanos < self.last_unix_nanos {
             return Err(FutureMetaError::InvalidTimestamp(format!(
                 "{unix_nanos} is before current fee cursor table position"
@@ -390,15 +229,6 @@ impl<'a> PreparedFeeCursors<'a> {
             )));
         }
 
-        let mut cursors = self.cursors.clone();
-        for cursor in &mut cursors {
-            if unix_nanos >= cursor.next_change_unix_nanos() {
-                cursor.advance_to_unix_nanos(unix_nanos)?;
-            }
-        }
-        self.cursors = cursors;
-        self.next_change_unix_nanos =
-            next_cursor_table_change_unix_nanos(&self.cursors, self.trading_day_end_unix_nanos);
         self.last_unix_nanos = unix_nanos;
 
         Ok(())
@@ -420,23 +250,25 @@ impl<'a> PreparedFeeCursors<'a> {
         slot: usize,
         unix_nanos: i64,
     ) -> Result<&PreparedFee, FutureMetaError> {
-        if trading_date != self.trading_date
-            || unix_nanos >= self.next_change_unix_nanos
-            || unix_nanos < self.last_unix_nanos
-        {
+        if trading_date != self.trading_date || unix_nanos >= self.trading_day_end_unix_nanos {
             self.advance_to(trading_date, unix_nanos)?;
+        } else if unix_nanos < self.last_unix_nanos {
+            return Err(FutureMetaError::InvalidTimestamp(format!(
+                "{unix_nanos} is before current fee cursor table position"
+            )));
+        } else {
+            self.last_unix_nanos = unix_nanos;
         }
         self.current(slot)
     }
 
-    /// Advance a cursor by slot and return its current fee within the current
-    /// trading day.
+    /// Return a slot fee for a monotonic timestamp within the current trading day.
     ///
     /// # Errors
     ///
-    /// Returns an error when the slot is missing, cursor advancement fails, or
-    /// the timestamp reaches a cross-day boundary. Prefer `advance_and_get` for
-    /// multi-day tick streams.
+    /// Returns an error when the slot is missing, the timestamp moves backward,
+    /// or the timestamp reaches a cross-day boundary. Prefer `advance_and_get`
+    /// for multi-day tick streams.
     pub fn advance_and_get_unix_nanos(
         &mut self,
         slot: usize,
@@ -448,14 +280,13 @@ impl<'a> PreparedFeeCursors<'a> {
             )));
         }
 
-        let cursor = self
-            .cursors
-            .get_mut(slot)
-            .ok_or(FutureMetaError::InvalidFeeSlot(slot))?;
-        if unix_nanos >= cursor.next_change_unix_nanos() {
-            cursor.advance_to_unix_nanos(unix_nanos)?;
-            self.next_change_unix_nanos =
-                next_cursor_table_change_unix_nanos(&self.cursors, self.trading_day_end_unix_nanos);
+        if unix_nanos < self.trading_day_start_unix_nanos
+            || unix_nanos >= self.trading_day_end_unix_nanos
+        {
+            return Err(FutureMetaError::InvalidTimestamp(format!(
+                "{unix_nanos} is outside trading day {}",
+                self.trading_date
+            )));
         }
         self.last_unix_nanos = unix_nanos;
         self.current(slot)
@@ -488,9 +319,6 @@ struct ContractIndex {
 struct FeeVersionIndex {
     archive_index: usize,
     valid_from: OffsetDateTime,
-    valid_to: Option<OffsetDateTime>,
-    valid_from_unix_nanos: i64,
-    valid_to_unix_nanos: Option<i64>,
     valid_from_date: Date,
     valid_to_date: Option<Date>,
 }
@@ -505,8 +333,6 @@ impl FutureMeta {
     pub fn from_archive(archive: FeeArchiveV1) -> Result<Self, FutureMetaError> {
         let handle_token = next_handle_token();
         let history_start = parse_archive_timestamp("history_start", &archive.history_start)?;
-        let history_start_unix_nanos =
-            archive_timestamp_unix_nanos("history_start", history_start)?;
         let history_start_date = exchange_date(history_start);
         let mut contract_by_symbol = HashMap::with_capacity(archive.contracts.len());
         let mut contract_indexes = Vec::with_capacity(archive.contracts.len());
@@ -552,16 +378,9 @@ impl FutureMeta {
                 })?;
             let valid_from = parse_archive_timestamp("valid_from", &fee.valid_from)?;
             let valid_to = parse_optional_archive_timestamp("valid_to", fee.valid_to.as_deref())?;
-            let valid_from_unix_nanos = archive_timestamp_unix_nanos("valid_from", valid_from)?;
-            let valid_to_unix_nanos = valid_to
-                .map(|valid_to| archive_timestamp_unix_nanos("valid_to", valid_to))
-                .transpose()?;
             fee_indexes_by_contract[handle.index].push(FeeVersionIndex {
                 archive_index: index,
                 valid_from,
-                valid_to,
-                valid_from_unix_nanos,
-                valid_to_unix_nanos,
                 valid_from_date: exchange_date(valid_from),
                 valid_to_date: valid_to.map(exchange_date),
             });
@@ -577,8 +396,6 @@ impl FutureMeta {
         Ok(Self {
             archive,
             handle_token,
-            history_start,
-            history_start_unix_nanos,
             history_start_date,
             contract_by_symbol,
             contract_indexes,
@@ -638,9 +455,10 @@ impl FutureMeta {
         symbol: &str,
         at: OffsetDateTime,
     ) -> Result<&ContractFee, FutureMetaError> {
-        self.reject_timestamp_before_history(at)?;
+        let trading_date = exchange_date(at);
+        self.reject_date_before_history(trading_date)?;
         let handle = self.resolve_contract(symbol)?;
-        self.fee_for_contract_handle_asof(handle, at)?
+        self.fee_for_contract_handle_on(handle, trading_date)?
             .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
     }
 
@@ -676,8 +494,9 @@ impl FutureMeta {
         handle: ContractHandle,
         at: OffsetDateTime,
     ) -> Result<&ContractFee, FutureMetaError> {
-        self.reject_timestamp_before_history(at)?;
-        if let Some(fee) = self.fee_for_contract_handle_asof(handle, at)? {
+        let trading_date = exchange_date(at);
+        self.reject_date_before_history(trading_date)?;
+        if let Some(fee) = self.fee_for_contract_handle_on(handle, trading_date)? {
             return Ok(fee);
         }
 
@@ -710,9 +529,8 @@ impl FutureMeta {
 
     /// Build a precomputed fee snapshot for one exchange-local trading date.
     ///
-    /// Use `TradingDayMeta::prepare_fee` for fee rules that are fixed within
-    /// the trading day, or `TradingDayMeta::prepare_fee_cursor` when same-day
-    /// fee boundaries must be respected.
+    /// Fee rules are fixed within the trading day. Use `TradingDayMeta` when the
+    /// caller has already partitioned ticks by exchange-local trading date.
     ///
     /// # Errors
     ///
@@ -748,19 +566,19 @@ impl FutureMeta {
         })
     }
 
-    /// Prepare dense exact-as-of fee cursors for a multi-day tick stream.
+    /// Prepare dense day-fixed fee cursors for a multi-day tick stream.
     ///
     /// This is the preferred high-frequency API when backtests can cross
     /// trading days. Resolve handles once, construct this table once at the
-    /// first tick, then call `PreparedFeeCursors::advance_to` only when
-    /// `next_change_unix_nanos` is reached.
+    /// first tick, then call `PreparedFeeCursors::advance_to` only when the next
+    /// trading-day boundary is reached.
     ///
     /// # Errors
     ///
     /// Returns an error when `trading_date` predates history, `start_unix_nanos`
     /// is outside that trading day, any handle is invalid, any slot has no fee
-    /// version at the start timestamp, or a fee rule cannot be compiled to
-    /// numeric coefficients.
+    /// version for the trading date, or a fee rule cannot be compiled to numeric
+    /// coefficients.
     pub fn prepare_fee_cursors(
         &self,
         handles: impl IntoIterator<Item = ContractHandle>,
@@ -783,7 +601,8 @@ impl FutureMeta {
         at: &str,
     ) -> Result<Vec<&ContractFee>, FutureMetaError> {
         let at = parse_query_timestamp(at)?;
-        self.reject_timestamp_before_history(at)?;
+        let trading_date = exchange_date(at);
+        self.reject_date_before_history(trading_date)?;
 
         let handles = self
             .contracts_by_underlying
@@ -794,7 +613,7 @@ impl FutureMeta {
 
         Ok(handles
             .iter()
-            .filter_map(|handle| self.contract_fee_for_underlying_asof(*handle, at))
+            .filter_map(|handle| self.contract_fee_for_underlying_on(*handle, trading_date))
             .collect())
     }
 
@@ -828,20 +647,6 @@ impl FutureMeta {
     #[must_use]
     pub fn contracts(&self) -> &[Contract] {
         &self.archive.contracts
-    }
-
-    fn reject_timestamp_before_history(&self, at: OffsetDateTime) -> Result<(), FutureMetaError> {
-        if at < self.history_start {
-            return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
-        }
-        Ok(())
-    }
-
-    fn reject_unix_nanos_before_history(&self, unix_nanos: i64) -> Result<(), FutureMetaError> {
-        if unix_nanos < self.history_start_unix_nanos {
-            return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
-        }
-        Ok(())
     }
 
     fn reject_date_before_history(&self, trading_date: Date) -> Result<(), FutureMetaError> {
@@ -880,26 +685,6 @@ impl FutureMeta {
             .ok_or(FutureMetaError::InvalidContractHandle)
     }
 
-    fn fee_for_contract_handle_asof(
-        &self,
-        handle: ContractHandle,
-        at: OffsetDateTime,
-    ) -> Result<Option<&ContractFee>, FutureMetaError> {
-        let indexes = self.fee_indexes_for_handle(handle)?;
-        let position = indexes.partition_point(|index| index.valid_from <= at);
-        if position == 0 {
-            return Ok(None);
-        }
-
-        let index = &indexes[position - 1];
-        let fee = &self.archive.fee_versions[index.archive_index];
-        if index.valid_to.is_none_or(|end| at < end) {
-            Ok(Some(fee))
-        } else {
-            Ok(None)
-        }
-    }
-
     fn fee_for_contract_handle_on(
         &self,
         handle: ContractHandle,
@@ -928,17 +713,19 @@ impl FutureMeta {
         }
     }
 
-    fn contract_fee_for_underlying_asof(
+    fn contract_fee_for_underlying_on(
         &self,
         handle: ContractHandle,
-        at: OffsetDateTime,
+        trading_date: Date,
     ) -> Option<&ContractFee> {
         let contract = self.contract_index(handle).ok()?;
-        if !contract_is_listed_at(contract, exchange_date(at)) {
+        if !contract_is_listed_at(contract, trading_date) {
             return None;
         }
 
-        let fee = self.fee_for_contract_handle_asof(handle, at).ok()??;
+        let fee = self
+            .fee_for_contract_handle_on(handle, trading_date)
+            .ok()??;
         if fee.trading_status == TradingStatus::Trading {
             Some(fee)
         } else {
@@ -1047,90 +834,21 @@ impl<'a> TradingDayMeta<'a> {
         Ok(PreparedFeeBook { fees })
     }
 
-    /// Prepare an exact-as-of fee cursor at a Unix timestamp in nanoseconds.
-    ///
-    /// Ticks passed to the cursor must be monotonic and stay inside this trading
-    /// day. For maximum hot-path performance, store tick timestamps as `i64`
-    /// Unix nanoseconds before entering the backtest loop.
+    /// Prepare dense day-fixed fee cursors in caller-supplied handle order.
     ///
     /// # Errors
     ///
-    /// Returns an error when `start_unix_nanos` predates history, is outside
-    /// this trading day, the handle is invalid, no fee version covers the start
-    /// timestamp, or the fee rule cannot be compiled to numeric coefficients.
-    pub fn prepare_fee_cursor(
-        &self,
-        handle: ContractHandle,
-        start_unix_nanos: i64,
-    ) -> Result<PreparedFeeCursor<'a>, FutureMetaError> {
-        self.meta
-            .reject_unix_nanos_before_history(start_unix_nanos)?;
-        self.reject_unix_nanos_outside_trading_day(start_unix_nanos)?;
-        let fee_indexes = self.meta.fee_indexes_for_handle(handle)?;
-        let symbol = self.meta.contract_symbol(handle)?;
-        let position = fee_position_for_unix_nanos(fee_indexes, start_unix_nanos)
-            .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))?;
-        let index = &fee_indexes[position];
-        let fee = &self.meta.archive.fee_versions[index.archive_index];
-        let current = self.meta.prepare_contract_fee(handle, fee)?;
-        let next_change_unix_nanos =
-            next_change_unix_nanos(fee_indexes, position, self.trading_day_end_unix_nanos);
-
-        Ok(PreparedFeeCursor {
-            meta: self.meta,
-            handle,
-            fee_indexes,
-            position,
-            current,
-            current_valid_from_unix_nanos: index.valid_from_unix_nanos,
-            next_change_unix_nanos,
-            trading_day_start_unix_nanos: self.trading_day_start_unix_nanos,
-            trading_day_end_unix_nanos: self.trading_day_end_unix_nanos,
-        })
-    }
-
-    /// Prepare an exact-as-of fee cursor at a pre-parsed timestamp.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `start` is outside this trading day, cannot fit in
-    /// `i64` nanoseconds, or `prepare_fee_cursor` fails.
-    pub fn prepare_fee_cursor_at(
-        &self,
-        handle: ContractHandle,
-        start: OffsetDateTime,
-    ) -> Result<PreparedFeeCursor<'a>, FutureMetaError> {
-        if exchange_date(start) != self.trading_date {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{start} is outside trading day {}",
-                self.trading_date
-            )));
-        }
-        let start_unix_nanos = query_timestamp_unix_nanos(start)?;
-        self.prepare_fee_cursor(handle, start_unix_nanos)
-    }
-
-    /// Prepare dense exact-as-of fee cursors in caller-supplied handle order.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any cursor cannot be prepared.
+    /// Returns an error when `start_unix_nanos` is outside this trading day or
+    /// any daily fee cannot be prepared.
     pub fn prepare_fee_cursors(
         &self,
         handles: impl IntoIterator<Item = ContractHandle>,
         start_unix_nanos: i64,
     ) -> Result<PreparedFeeCursors<'a>, FutureMetaError> {
-        self.meta
-            .reject_unix_nanos_before_history(start_unix_nanos)?;
+        self.meta.reject_date_before_history(self.trading_date)?;
         self.reject_unix_nanos_outside_trading_day(start_unix_nanos)?;
         let handles = handles.into_iter().collect::<Vec<_>>();
-        let cursors = handles
-            .iter()
-            .copied()
-            .map(|handle| self.prepare_fee_cursor(handle, start_unix_nanos))
-            .collect::<Result<Vec<_>, _>>()?;
-        let next_change_unix_nanos =
-            next_cursor_table_change_unix_nanos(&cursors, self.trading_day_end_unix_nanos);
+        let fees = self.prepare_fee_book(handles.iter().copied())?;
         Ok(PreparedFeeCursors {
             meta: self.meta,
             handles,
@@ -1138,8 +856,7 @@ impl<'a> TradingDayMeta<'a> {
             trading_day_start_unix_nanos: self.trading_day_start_unix_nanos,
             trading_day_end_unix_nanos: self.trading_day_end_unix_nanos,
             last_unix_nanos: start_unix_nanos,
-            next_change_unix_nanos,
-            cursors,
+            fees,
         })
     }
 
@@ -1225,48 +942,6 @@ fn unsupported_fee_rule(symbol: &str, field: &str, spec: &FeeSpec) -> FutureMeta
     ))
 }
 
-fn fee_position_for_unix_nanos(indexes: &[FeeVersionIndex], unix_nanos: i64) -> Option<usize> {
-    let position = indexes.partition_point(|index| index.valid_from_unix_nanos <= unix_nanos);
-    if position == 0 {
-        return None;
-    }
-
-    let index_position = position - 1;
-    let index = &indexes[index_position];
-    fee_index_covers_unix_nanos(index, unix_nanos).then_some(index_position)
-}
-
-fn fee_index_covers_unix_nanos(index: &FeeVersionIndex, unix_nanos: i64) -> bool {
-    index.valid_to_unix_nanos.is_none_or(|end| unix_nanos < end)
-}
-
-fn next_change_unix_nanos(
-    indexes: &[FeeVersionIndex],
-    position: usize,
-    trading_day_end_unix_nanos: i64,
-) -> i64 {
-    let index = &indexes[position];
-    let next_fee_start = indexes
-        .get(position + 1)
-        .map_or(i64::MAX, |next| next.valid_from_unix_nanos);
-    index
-        .valid_to_unix_nanos
-        .unwrap_or(i64::MAX)
-        .min(next_fee_start)
-        .min(trading_day_end_unix_nanos)
-}
-
-fn next_cursor_table_change_unix_nanos(
-    cursors: &[PreparedFeeCursor<'_>],
-    trading_day_end_unix_nanos: i64,
-) -> i64 {
-    cursors
-        .iter()
-        .map(PreparedFeeCursor::next_change_unix_nanos)
-        .min()
-        .unwrap_or(trading_day_end_unix_nanos)
-}
-
 fn contract_is_listed_at(contract: &ContractIndex, at_date: Date) -> bool {
     if contract
         .listing_date
@@ -1293,14 +968,6 @@ fn parse_query_timestamp(value: &str) -> Result<OffsetDateTime, FutureMetaError>
 fn parse_archive_timestamp(field: &str, value: &str) -> Result<OffsetDateTime, FutureMetaError> {
     OffsetDateTime::parse(value, &Rfc3339).map_err(|err| {
         FutureMetaError::CorruptArchive(format!("invalid {field} timestamp {value}: {err}"))
-    })
-}
-
-fn archive_timestamp_unix_nanos(field: &str, at: OffsetDateTime) -> Result<i64, FutureMetaError> {
-    i64::try_from(at.unix_timestamp_nanos()).map_err(|err| {
-        FutureMetaError::CorruptArchive(format!(
-            "{field} timestamp {at} is outside i64 unix nanosecond range: {err}"
-        ))
     })
 }
 

@@ -1,48 +1,143 @@
 ---
 name: future-meta
-description: future-meta Rust 工作区专用流程。用于本仓库内修改客户端 archive/query/download API、手续费解析、高频回测手续费热路径、PreparedFee/PreparedFeeCursor、daemon 抓取/SQLite/export、Cloudflare artifact 文档、测试或性能敏感元数据逻辑时。
+description: 面向 future-meta 客户端用户的接入指南。每当用户想在自己的 Rust 量化研究、交易系统或回测框架中使用 future-meta 查询中国期货手续费、下载或缓存 artifact、处理长期运行期间的元数据刷新、设计实盘开盘前更新流程、选择 contract_fee_* / TradingDayMeta / PreparedFeeCursors API、处理 TqSdk symbol、优化 tick 级高频手续费热路径、设计跨日手续费查询方式时，都应使用此 skill。
 ---
 
-# future-meta
+# future-meta 客户端使用指南
 
-使用此 skill 时，把项目边界放在首位：`future-meta` 客户端只做本地
-archive 解码、索引和低分配查询；`future-meta-daemon` 负责抓取源站、
-维护 SQLite 历史、导出静态 artifact。
+这个 skill 用于帮助客户端用户把 `future-meta` 接入自己的 Rust 程序、
+回测引擎、交易系统或研究工具。回答时优先解决“该用哪个 API、代码怎么写、
+热路径怎么放置数据结构”。
 
-## 开始前
+## 选择 API
 
-- 先确认 `AGENTS.md` 已加载；没有加载就读它。
-- 所有 shell 命令使用 `rtk` 前缀。
-- 编辑前看 worktree；不要回滚无关改动。
-- 不要提交 `data/`、`public/`、`target/`、`.env`、密钥或本地生成物。
+根据用户场景选择最小可用路径：
 
-## 客户端边界
+| 场景 | 推荐 |
+| --- | --- |
+| 偶尔查询某个合约手续费 | `load_or_fetch` + `contract_fee_asof` |
+| 已有 `OffsetDateTime` | `contract_fee_at` |
+| 已经按交易日切分 | `for_trading_day` + `TradingDayMeta::prepare_fee` |
+| tick 级或高频回测，多数会跨日 | `FutureMeta::prepare_fee_cursors` |
+| 多合约混合 tick | 循环外将 symbol 映射为 `ContractHandle` 和整数 slot |
+| 实盘或长期运行需要获取新数据 | 开盘前调用 `load_or_fetch`，替换 `FutureMeta` 快照并重建 handle/cursor |
+| 需要查看源规则字段 | `contract_fee_*` / `fee_rule` 这类 raw rule API |
+| 本地离线 artifact | `FutureMeta::load_file`，或 `decode_archive_bytes` + `FutureMeta::from_archive` |
 
-修改 `crates/future-meta` 时：
+如果用户提到 tick、高频、回测循环、逐笔、性能、跨日、多合约或 CPU cache，
+直接推荐 `PreparedFeeCursors`。
 
-- archive 只保留查询必要基础字段。
-- 不要持久化可从 `symbol` 或上下文派生的字段。
-- 不要写入源站展示用派生字段，例如价格、涨跌停、每手保证金、
-  每跳盈亏、手续费折算金额、开平合计手续费。
-- archive 加载后，查询路径必须是本地读，不允许网络请求。
-- 抓取、HTML/CSV 解析、SQLite、Cloudflare export 逻辑留在 daemon。
-- 改 `SCHEMA_VERSION`、公开模型字段或编码方式时，必须补兼容测试和迁移说明。
+## 安装和加载
 
-## 高频手续费最优路径
+在线自动下载推荐启用 `download` feature：
 
-目标：tick 循环里不要查字符串、不要 `HashMap`、不要解析时间、不要匹配
-`FeeKind`、不要每 tick 二分查找。循环外完成 symbol 解析、交易日快照、
-手续费规则编译和 cursor 初始化。
-
-实际回测通常跨多日。默认按跨日流设计；单日 `TradingDayMeta` 只是内部缓存
-单元，不应要求调用方在策略循环里手工写大量日切换逻辑。
-
-### 跨日回测默认路径
-
-推荐抽象：外层持有“当前交易日缓存 + 当前手续费 cursor/book + 下一次事件时间”。
+```toml
+[dependencies]
+future-meta = { git = "https://github.com/zynthium/future-meta", features = ["download"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+time = "0.3"
+```
 
 ```rust
-let mut fees = meta.prepare_fee_cursors(handles, first_tick.trading_date, first_tick.unix_nanos)?;
+use future_meta::{DownloadConfig, load_or_fetch};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let meta = load_or_fetch(DownloadConfig::default()).await?;
+    let fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")?;
+
+    println!("open={:?}", fee.open_fee);
+    Ok(())
+}
+```
+
+要点：
+
+- 默认 manifest 是 `https://future-meta.pages.dev/manifest.json`。
+- `load_or_fetch` 会下载并缓存已发布 artifact；archive 加载后，查询都在本地内存完成。
+- 可用 `FUTURE_META_CACHE_DIR` 指定缓存目录。
+- 客户端不应该把上游网站当作实时查询 API。
+
+本地 artifact：
+
+```rust
+let meta = future_meta::FutureMeta::load_file("latest.fmeta.zst").await?;
+```
+
+未启用 `download` feature 时：
+
+```rust
+let bytes = std::fs::read("latest.fmeta.zst")?;
+let archive = future_meta::archive::decode_archive_bytes(&bytes)?;
+let meta = future_meta::FutureMeta::from_archive(archive)?;
+```
+
+## 长期运行和实盘更新
+
+`FutureMeta` 是一次加载得到的只读快照，不会在后台自动更新。`load_or_fetch`
+只有在被调用时才检查 manifest；如果远端 artifact 变更，会下载新 artifact，
+然后返回新的 `FutureMeta`。
+
+推荐策略：
+
+- 回测要可复现时，固定使用某个本地 artifact，不要在回测中途刷新。
+- 长期运行的研究或实盘程序，把刷新放在独立调度任务里，绝不要放进 tick 热路径。
+- 实盘交易建议在每个交易时段开盘前几分钟调用 `load_or_fetch`。
+- 手续费不在日内盘中变化；进入交易时段后通常不需要轮询刷新。
+- 刷新成功后，用新的 `FutureMeta` 重新解析 `ContractHandle`，并重新创建
+  `TradingDayMeta`、`PreparedFeeBook` 或 `PreparedFeeCursors`。
+- 不要跨 `FutureMeta` 快照复用旧的 `ContractHandle`、`TradingDayMeta` 或 cursor。
+- 刷新失败时，保留上一份已加载快照并告警；是否继续交易由调用方风控策略决定。
+
+示例形状：
+
+```rust
+use std::sync::Arc;
+
+use future_meta::{DownloadConfig, FutureMeta, load_or_fetch};
+
+async fn refresh_meta() -> Result<Arc<FutureMeta>, Box<dyn std::error::Error>> {
+    let meta = load_or_fetch(DownloadConfig::default()).await?;
+    Ok(Arc::new(meta))
+}
+
+// 由调度器在开盘前几分钟调用：
+let next_meta = refresh_meta().await?;
+
+// 生产系统中用 ArcSwap、RwLock 或消息切换到 next_meta。
+// 切换后基于 next_meta 重建合约 handle 和当天 fee cursor。
+```
+
+## 普通查询
+
+低频查询优先使用可读 API：
+
+```rust
+let fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")?;
+let fee = meta.contract_fee_on("SHFE.cu2607", trading_date)?;
+let main = meta.main_contract_fee_asof("KQ.m@SHFE.cu", "2026-06-08T10:48:06Z")?;
+```
+
+说明：
+
+- `symbol` 使用 TqSdk 风格，例如 `SHFE.cu2607`、`CZCE.SR903`、
+  `KQ.m@SHFE.cu`。
+- 手续费按交易所本地日期生效，不在日内盘中变化。
+- `contract_fee_asof` 会把时间戳映射到交易所本地日期，再选择该日手续费。
+- raw rule API 返回 `ContractFee`，适合展示、核对、审计和低频逻辑。
+
+## 高频回测
+
+tick 循环内避免做字符串查询、时间解析、`HashMap` 查询或手续费类型分支。
+循环外完成 symbol 解析、slot 映射、日级手续费准备和 cursor 初始化。
+
+```rust
+let cu = meta.resolve_contract("SHFE.cu2607")?;
+let mut fees = meta.prepare_fee_cursors(
+    [cu],
+    first_tick.trading_date,
+    first_tick.unix_nanos,
+)?;
 
 for tick in ticks {
     if tick.unix_nanos >= fees.next_change_unix_nanos() {
@@ -50,152 +145,102 @@ for tick in ticks {
     }
 
     let fee = fees.current(tick.fee_slot)?;
-    pnl -= fee.open_amount(tick.price, tick.lots);
+    cost += fee.open_amount(tick.price, tick.lots);
 }
 ```
 
-不要要求调用方每次手写：
+性能要点：
+
+- `PreparedFee` 已把手续费规则编译成数值系数。
+- 正常 tick 路径是一条 `i64` 时间比较和一次整数 slot 读取。
+- 只有到交易日边界时，才慢路径重建当天 fee book。
+- tick 时间必须单调递增；乱序数据应先排序或分段。
+
+更重视简洁时可用：
 
 ```rust
-let day = meta.for_trading_day(trading_date)?;
-let handle = day.resolve_contract("SHFE.cu2607")?;
+let fee = fees.advance_and_get(tick.trading_date, tick.fee_slot, tick.unix_nanos)?;
 ```
 
-跨日包装 API 设计要求：
+## 多合约混合 tick
 
-- 以“tick 按时间单调递增”为前提。
-- 内部按交易日重建 `TradingDayMeta` 和 slot cursor。
-- `next_change_unix_nanos` 应取三者最小值：当前手续费变化时间、当前交易日结束、
-  已知合约/slot 需要重建的下一边界。
-- tick 热路径仍是一次 `i64` 比较 + slot 读当前 `PreparedFee`。
-- 交易日变化时慢路径重建日缓存；复杂度应接近 `O(ticks + fee_changes + days)`。
-- 不要在 tick 循环内调用 `for_trading_day`、`resolve_contract`、symbol 查询或字符串时间解析。
-- 当前项目的 `trading_date` 指交易所本地 calendar date；如上层回测使用夜盘归属交易日，
-  必须在进入 fee API 前明确映射，避免混用概念。
-
-### 日内手续费固定
-
-如果调用方已在外层按日切分，最快路径是每天循环外编译一次 `PreparedFee`，
-日内循环只做数值计算。
+进入循环前建立紧凑 slot 映射，tick 结构里保存 `fee_slot: usize`：
 
 ```rust
-let fee = day.prepare_fee(handle)?;
+let handles = [
+    meta.resolve_contract("SHFE.cu2607")?,
+    meta.resolve_contract("DCE.m2609")?,
+];
+let mut fees = meta.prepare_fee_cursors(
+    handles,
+    first_tick.trading_date,
+    first_tick.unix_nanos,
+)?;
 
 for tick in ticks {
-    pnl -= fee.open_amount(tick.price, tick.lots);
-}
-```
-
-设计要求：
-
-- `CnyPerLot`、`TurnoverRatePerTenThousand`、`Zero` 必须在准备阶段编译成数值系数。
-- `PreparedFee` 热路径只暴露金额计算方法：`open_amount`、
-  `close_today_amount`、`close_yesterday_amount`。
-- 遇到 `Unknown` 或无法编译的手续费，准备阶段返回 `UnsupportedFeeRule`，
-  不要在循环内兜底。
-
-### 日内手续费可能变化
-
-如果调用方已在外层按日切分，最优 exact-asof 路径是使用
-`PreparedFeeCursor`，缓存当前手续费和下一次变化时间。
-
-```rust
-let mut cursor = day.prepare_fee_cursor(handle, first_tick.unix_nanos)?;
-
-for tick in ticks {
-    if tick.unix_nanos >= cursor.next_change_unix_nanos() {
-        cursor.advance_to_unix_nanos(tick.unix_nanos)?;
+    if tick.unix_nanos >= fees.next_change_unix_nanos() {
+        fees.advance_to(tick.trading_date, tick.unix_nanos)?;
     }
 
-    let fee = cursor.current();
-    pnl -= fee.open_amount(tick.price, tick.lots);
-}
-```
-
-设计要求：
-
-- tick 必须按时间单调递增；乱序 tick 不适合 cursor，应改用二分或先排序/分段。
-- `next_change_unix_nanos` 使用 `i64` Unix nanoseconds，避免 `OffsetDateTime` 热路径成本。
-- cursor 只在 fee boundary 或交易日边界慢路径推进，复杂度为
-  `O(ticks + fee_changes)`。
-- cursor 必须拒绝交易日外时间，包含交易日下界和上界。
-- `valid_from` 闭区间，`valid_to` 开区间。
-- 如果回测跨日，不要直接把单日 `PreparedFeeCursor` 暴露给策略循环长期持有；
-  应使用外层跨日 cursor/book 管理日切换。
-
-### 多合约混合 tick
-
-入场前把 symbol 映射成紧凑 slot；tick 循环只使用整数 slot。
-
-```rust
-let mut fees = meta.prepare_fee_cursors(handles, first_tick.trading_date, first_tick.unix_nanos)?;
-
-for tick in ticks {
-    let fee = fees.advance_and_get(tick.trading_date, tick.fee_slot, tick.unix_nanos)?;
+    let fee = fees.current(tick.fee_slot)?;
     pnl -= fee.close_today_amount(tick.price, tick.lots);
 }
 ```
 
-设计要求：
+注意：
 
-- `prepare_fee_cursors` 的 slot 顺序必须等于调用方传入 handles 顺序。
-- slot 越界返回 `InvalidFeeSlot`。
-- `ContractHandle` 只对生成它的 `FutureMeta` 及其 clone 有效；跨 archive/client
-  使用必须返回 `InvalidContractHandle`。
+- slot 顺序等于传给 `prepare_fee_cursors` 的 handle 顺序。
+- slot 越界会返回 `InvalidFeeSlot`。
+- `ContractHandle` 只对创建它的 `FutureMeta` 及其 clone 有效。
 
-## 普通查询 API
+## 已按日切分
 
-非热路径可以继续使用：
+如果用户的回测框架已经按交易日切分，单日 API 更直接：
 
-- `contract_fee_asof(symbol, at)`
-- `contract_fee_at(symbol, at)`
-- `contract_fee_on(symbol, trading_date)`
-- `contract_fee_for_handle_at(handle, at)`
-- `contract_fee_for_handle_on(handle, trading_date)`
-- `TradingDayMeta::fee_rule(handle)`
+```rust
+let day = meta.for_trading_day(trading_date)?;
+let handle = day.resolve_contract("SHFE.cu2607")?;
+let fee = day.prepare_fee(handle)?;
 
-不要把这些 API 推荐为跨日 tick 循环最优解。高频文档优先推荐
-`FutureMeta::prepare_fee_cursors` 和 `PreparedFeeCursors`。
-
-## 测试策略
-
-客户端查询/API 改动：
-
-1. 优先补 `crates/future-meta/tests/client_archive.rs` 行为测试。
-2. 覆盖 `valid_from` inclusive、`valid_to` exclusive、等价 UTC 时间。
-3. 覆盖 no-version、history start、未知合约、stale handle。
-4. 涉及 cursor 时，覆盖日内边界、交易日上下界、slot 顺序。
-5. 涉及 `PreparedFee` 时，覆盖固定费用、成交额费率、零手续费、未知手续费拒绝。
-
-daemon/parser/DB/export 改动：
-
-- 更新 daemon 相关测试，尤其 `daemon_pipeline`。
-- 源站异常、latest 表缺失、空数据必须硬失败；不要发布空或过期 artifact。
-
-## 文档策略
-
-- 用户可见 API 或推荐用法变化：更新 `README.md`。
-- 客户端高频用法、破坏性 API 说明：更新 `docs/client-api.md`。
-- 部署和 GitHub Actions 行为变化：更新 `docs/deployment.md`。
-- 文档写任务用法和取舍，不写无用实现流水账。
-
-## 验证命令
-
-迭代时先跑窄测试。收尾至少运行：
-
-```bash
-rtk cargo fmt --all -- --check
-rtk cargo check --workspace --all-targets
-rtk cargo test --workspace
-rtk cargo test -p future-meta --features download
+for tick in day_ticks {
+    cost += fee.open_amount(tick.price, tick.lots);
+}
 ```
 
-按影响面加跑：
+多个合约时用 `prepare_fee_book(handles)`，循环内按整数 slot 取 `PreparedFee`。
 
-```bash
-rtk cargo test -p future-meta --test client_archive
-rtk cargo test -p future-meta-daemon --test daemon_pipeline
-rtk cargo clippy --workspace --all-targets --all-features
+## 时间和交易日
+
+- `unix_nanos` 是 Unix 纳秒，用于热路径比较。
+- `trading_date` 是交易所本地 calendar date。
+- 如果回测系统使用夜盘归属交易日，应在进入 future-meta API 前完成映射。
+- 不要在 tick 循环里解析 RFC3339 字符串。
+
+## 费用计算
+
+`PreparedFee` 暴露金额计算方法：
+
+```rust
+let open = fee.open_amount(price, lots);
+let close_today = fee.close_today_amount(price, lots);
+let close_yesterday = fee.close_yesterday_amount(price, lots);
 ```
 
-`clippy` 可能有既有 daemon warning；新增/触碰的客户端代码不要引入新 warning。
+不要让用户在热路径里判断手续费类型。`CnyPerLot`、
+`TurnoverRatePerTenThousand` 和 `Zero` 会在准备阶段编译成数值系数。
+无法编译的规则会返回 `UnsupportedFeeRule`。
+
+## 错误处理
+
+- `FutureMetaError` 是 `#[non_exhaustive]`，匹配时保留通配分支。
+- `InvalidSymbol`：symbol 格式不符合 TqSdk 风格。
+- `NoVersionAt`：目标日期没有可用手续费版本。
+- `InvalidFeeSlot`：tick 的 slot 和准备好的 handle 表不一致。
+- `UnsupportedFeeRule`：规则不能编译进 `PreparedFee` 热路径，可用 raw rule API 核对。
+
+## 回答风格
+
+- 先给推荐 API，再给最小代码。
+- 用户问性能时，明确区分循环外准备和循环内热路径。
+- 用户只想查询一次时，不要引入高频架构。
+- 用户问最优设计时，优先推荐跨日 `PreparedFeeCursors`。

@@ -1,4 +1,4 @@
 interface:
   display_name: "future-meta"
-  short_description: "future-meta 项目开发流程"
-  default_prompt: "使用 $future-meta 处理 future-meta Rust 工作区改动。"
+  short_description: "future-meta 客户端接入、刷新与高频手续费查询"
+  default_prompt: "使用 $future-meta 设计客户端接入：加载 artifact、处理开盘前刷新，并优化 tick 级手续费热路径。"

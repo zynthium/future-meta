@@ -137,12 +137,12 @@ as-of 查询使用本系统维护的版本区间：
 
 第一版 `valid_from` 取值规则：
 
-- 当 CSV 行提供 `source_updated_at` 时，将其按中国交易所本地时间 `+08:00` 规范化后作为 `valid_from`。
-- 当 CSV 行缺少 `source_updated_at` 时，回退为 daemon 本次成功解析的 `observed_at`。
+- 当 CSV 行提供 `source_updated_at` 时，将其按中国交易所本地时间 `+08:00` 取日期，并归一到该日 `00:00:00+08:00` 作为 `valid_from`。
+- 当 CSV 行缺少 `source_updated_at` 时，回退为 daemon 本次成功解析的 `observed_at` 所属中国交易所本地日期，并归一到该日 `00:00:00+08:00`。
 - 同一 `symbol`、同一 `valid_from` 出现不同 `rule_hash` 时视为源数据冲突，本批次回滚。
 - 同一 `symbol` 的相邻版本如果 `rule_hash` 相同，则合并为一个版本；`source_updated_at` 不参与 `rule_hash`，只保留为审计字段。
 
-原因：实际源 CSV 会为同一合约返回多条带不同“手续费更新时间”的规则行，例如 `CZCE.AP705` 在 `2026-05-20 22:26:06` 和 `2026-06-05 22:49:34` 两个时间点的平今手续费不同。将这些行作为版本锚点，可以在首次全量加载时获得源站已经暴露的历史。由于源站仍不是完整历史 API，`history_start` 只表示当前 archive 中最早可用版本，不表示市场真实历史的绝对起点。
+原因：手续费按交易所本地日期生效，不在日内盘中切换。实际源 CSV 会为同一合约返回多条带不同“手续费更新时间”的规则行，例如 `CZCE.AP705` 在 `2026-05-20 22:26:06` 和 `2026-06-05 22:49:34` 两个日期的平今手续费不同。将这些日期作为版本锚点，可以在首次全量加载时获得源站已经暴露的历史。由于源站仍不是完整历史 API，`history_start` 只表示当前 archive 中最早可用版本，不表示市场真实历史的绝对起点。
 
 当用户查询早于 `history_start` 的时间时，client 返回 `NotAvailableBeforeHistoryStart`。
 

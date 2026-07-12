@@ -15,7 +15,7 @@
 
 - 使用 TqSdk 风格 `symbol` 作为合约唯一标识，例如 `SHFE.cu2607`、`CZCE.SR903`、`KQ.m@SHFE.cu`。
 - 支持具体合约、品种下全部合约、主连别名的 as-of 手续费查询。
-- 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 exact-asof cursor 表，适合高频回测热路径。
+- 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
 - daemon 使用 SQLite 保存历史版本，按手续费规则变化生成有效期区间。
 - GitHub Actions 每天北京时间 18:45 增量更新，Cloudflare Pages 免费层分发静态文件。
@@ -87,16 +87,15 @@ https://future-meta.pages.dev/manifest.json
 
 | API | 说明 |
 | --- | --- |
-| `contract_fee_asof(symbol, at)` | 查询具体期货合约在某个 RFC3339 时间点的手续费 |
-| `contract_fee_at(symbol, at)` | 使用已解析的 `OffsetDateTime` 查询，适合非热路径 exact-asof |
+| `contract_fee_asof(symbol, at)` | 查询具体期货合约在某个 RFC3339 时间点所属交易所本地日期的手续费 |
+| `contract_fee_at(symbol, at)` | 使用已解析的 `OffsetDateTime` 查询，内部按交易所本地日期选择日级手续费 |
 | `contract_fee_on(symbol, trading_date)` | 使用交易所本地 `Date` 查询，适合手续费盘中不变的场景 |
 | `resolve_contract(symbol)` | 将合约 symbol 预解析为 `ContractHandle` |
-| `prepare_fee_cursors(handles, trading_date, start_unix_nanos)` | 构建跨日 exact-asof cursor 表，是 tick 回测推荐入口 |
+| `prepare_fee_cursors(handles, trading_date, start_unix_nanos)` | 构建跨日 day-fixed cursor 表，是 tick 回测推荐入口 |
 | `for_trading_day(trading_date)` | 构建单日交易快照，适合已经按日切分的高级用法 |
 | `TradingDayMeta::prepare_fee(handle)` | 单日内将手续费编译为紧凑数值结构 |
-| `TradingDayMeta::prepare_fee_cursor(handle, start_unix_nanos)` | 单日内构建 exact-asof cursor |
 | `TradingDayMeta::prepare_fee_book(handles)` | 单日内按 caller slot 顺序构建连续 `PreparedFee` 表 |
-| `TradingDayMeta::prepare_fee_cursors(handles, start_unix_nanos)` | 单日内按 caller slot 顺序构建 cursor 表 |
+| `TradingDayMeta::prepare_fee_cursors(handles, start_unix_nanos)` | 单日内按 caller slot 顺序构建可跨日推进的 cursor 表 |
 | `underlying_fees_asof(underlying_symbol, at)` | 查询某个品种在该时间点可交易合约的手续费列表 |
 | `main_contract_fee_asof("KQ.m@...", at)` | 查询主连别名对应的主力合约手续费 |
 
@@ -140,7 +139,7 @@ for tick in ticks {
 }
 ```
 
-`PreparedFeeCursors` 内部在手续费变化点或交易日边界慢路径更新；正常 tick 路径是一
+`PreparedFeeCursors` 内部只在交易日边界慢路径重建；正常 tick 路径是一
 次 `i64` 比较和一次 slot 读取。交易日快照和 cursor 都只使用加载 archive 后派生的
 内存索引，不会把交易日等派生字段写入 `latest.fmeta.zst`。
 
@@ -155,7 +154,7 @@ for tick in ticks {
 - `valid_from` / `valid_to`
 
 > [!NOTE]
-> `valid_from` 为闭区间起点，`valid_to` 为开区间终点。`valid_to = None` 表示当前仍有效。
+> `valid_from` 为闭区间起点，`valid_to` 为开区间终点。手续费按交易所本地日期生效，不在日内盘中切换；时间戳查询会先映射到交易所本地日期。`valid_to = None` 表示当前仍有效。
 
 ## 数据来源与边界
 
@@ -235,7 +234,7 @@ cargo test -p future-meta --features download
 cargo run --release -p future-meta --example perf_smoke -- public/latest.fmeta.zst 1000000 100
 ```
 
-高频回测热路径应使用 `FutureMeta::prepare_fee_cursors`。它统一处理日内固定手续费、日内变化、跨日重建和多合约 slot；循环内通常只有一次 `i64` 时间比较和一次 `current()` 读取。
+高频回测热路径应使用 `FutureMeta::prepare_fee_cursors`。它统一处理日级固定手续费、跨日重建和多合约 slot；循环内通常只有一次 `i64` 时间比较和一次 `current()` 读取。
 
 定向测试：
 

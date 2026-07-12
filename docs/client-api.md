@@ -40,8 +40,10 @@ for tick in ticks {
 ```
 
 The normal tick path is one `i64` comparison plus a slot lookup. The slow path
-runs only at a fee boundary or trading-day boundary. `PreparedFee` stores only
-numeric coefficients, so the loop does not branch on `FeeKind`.
+runs only at a trading-day boundary. Futures fees are day-fixed; timestamp
+queries are normalized to the exchange-local date before selecting the fee
+version. `PreparedFee` stores only numeric coefficients, so the loop does not
+branch on `FeeKind`.
 
 ### Single-Day Advanced APIs
 
@@ -55,20 +57,9 @@ let cu = day.resolve_contract("SHFE.cu2607")?;
 let fee = day.prepare_fee(cu)?;
 ```
 
-For exact single-day intraday fee changes:
-
-```rust
-let mut cursor = day.prepare_fee_cursor(cu, first_tick.unix_nanos)?;
-
-for tick in ticks {
-    if tick.unix_nanos >= cursor.next_change_unix_nanos() {
-        cursor.advance_to_unix_nanos(tick.unix_nanos)?;
-    }
-
-    let fee = cursor.current();
-    cost += fee.close_today_amount(tick.price, tick.lots);
-}
-```
+Fees do not change within the trading day, so keep the `PreparedFee` or
+`PreparedFeeBook` outside the tick loop and reuse it for every tick in that
+day.
 
 For lower-volume cross-day loops, use the convenience method:
 
@@ -109,8 +100,9 @@ let exact = meta.contract_fee_asof("SHFE.cu2607", "2026-06-04T12:00:00+08:00")?;
 Existing raw `FutureMeta::contract_fee_*` and
 `FutureMeta::contract_fee_for_handle_*` APIs remain available for source-level
 rule access. Hot tick loops should move to `FutureMeta::prepare_fee_cursors`,
-which handles day-fixed fees, intraday fee boundaries, mixed contracts, and
-cross-day rebuilds behind one API.
+which handles day-fixed fees, mixed contracts, and cross-day rebuilds behind
+one API. `PreparedFeeCursor` and `TradingDayMeta::prepare_fee_cursor` were
+removed because they encoded an invalid same-day-change assumption.
 
 `TradingDayMeta` raw accessors are named `fee_rule` and `fee_rule_by_symbol` to
 separate raw source rules from compiled hot-path fees.
