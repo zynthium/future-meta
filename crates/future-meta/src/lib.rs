@@ -13,7 +13,10 @@ pub mod symbol;
 pub use crate::download::{DownloadConfig, load_or_fetch};
 pub use crate::error::{AsOfError, FutureMetaError};
 pub use crate::model::{Contract, ContractFee, FeeArchiveV1, FeeSpec, Manifest};
-pub use crate::query::{ContractHandle, FutureMeta};
+pub use crate::query::{
+    ContractHandle, FutureMeta, PreparedFee, PreparedFeeBook, PreparedFeeCursor,
+    PreparedFeeCursors, TradingDayMeta,
+};
 
 /// Crate version exported for clients and compatibility checks.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

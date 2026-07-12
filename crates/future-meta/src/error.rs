@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// Error type used by future-meta client APIs.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FutureMetaError {
     /// The supplied symbol could not be parsed.
     #[error("invalid symbol: {0}")]
@@ -17,12 +18,18 @@ pub enum FutureMetaError {
     /// The supplied pre-resolved contract handle does not belong to this client.
     #[error("invalid contract handle")]
     InvalidContractHandle,
+    /// The supplied prepared fee slot does not exist.
+    #[error("invalid fee slot: {0}")]
+    InvalidFeeSlot(usize),
     /// The requested underlying product symbol is unknown.
     #[error("unknown underlying symbol: {0}")]
     UnknownUnderlyingSymbol(String),
     /// No metadata version is available at the requested time.
     #[error("no metadata version available at: {0}")]
     NoVersionAt(String),
+    /// A fee rule cannot be compiled into numeric hot-path coefficients.
+    #[error("unsupported fee rule: {0}")]
+    UnsupportedFeeRule(String),
     /// The supplied as-of timestamp could not be parsed.
     #[error("invalid timestamp: {0}")]
     InvalidTimestamp(String),

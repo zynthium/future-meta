@@ -15,7 +15,7 @@
 
 - 使用 TqSdk 风格 `symbol` 作为合约唯一标识，例如 `SHFE.cu2607`、`CZCE.SR903`、`KQ.m@SHFE.cu`。
 - 支持具体合约、品种下全部合约、主连别名的 as-of 手续费查询。
-- 支持预解析 `ContractHandle` 和交易日查询，适合高频重复查询同一个合约手续费。
+- 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 exact-asof cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
 - daemon 使用 SQLite 保存历史版本，按手续费规则变化生成有效期区间。
 - GitHub Actions 每天北京时间 18:45 增量更新，Cloudflare Pages 免费层分发静态文件。
@@ -83,39 +83,66 @@ https://future-meta.pages.dev/manifest.json
 
 ## 查询 API
 
-`FutureMeta` 当前提供以下查询入口：
+`FutureMeta` 保留通用查询入口；高频回测优先使用跨日预编译 cursor 表：
 
 | API | 说明 |
 | --- | --- |
 | `contract_fee_asof(symbol, at)` | 查询具体期货合约在某个 RFC3339 时间点的手续费 |
-| `contract_fee_at(symbol, at)` | 使用已解析的 `OffsetDateTime` 查询，避免热路径重复解析字符串 |
+| `contract_fee_at(symbol, at)` | 使用已解析的 `OffsetDateTime` 查询，适合非热路径 exact-asof |
 | `contract_fee_on(symbol, trading_date)` | 使用交易所本地 `Date` 查询，适合手续费盘中不变的场景 |
 | `resolve_contract(symbol)` | 将合约 symbol 预解析为 `ContractHandle` |
-| `contract_fee_for_handle_at(handle, at)` | 使用预解析合约和 `OffsetDateTime` 查询 |
-| `contract_fee_for_handle_on(handle, trading_date)` | 使用预解析合约和交易日查询，是单合约重复查询的最快路径 |
+| `prepare_fee_cursors(handles, trading_date, start_unix_nanos)` | 构建跨日 exact-asof cursor 表，是 tick 回测推荐入口 |
+| `for_trading_day(trading_date)` | 构建单日交易快照，适合已经按日切分的高级用法 |
+| `TradingDayMeta::prepare_fee(handle)` | 单日内将手续费编译为紧凑数值结构 |
+| `TradingDayMeta::prepare_fee_cursor(handle, start_unix_nanos)` | 单日内构建 exact-asof cursor |
+| `TradingDayMeta::prepare_fee_book(handles)` | 单日内按 caller slot 顺序构建连续 `PreparedFee` 表 |
+| `TradingDayMeta::prepare_fee_cursors(handles, start_unix_nanos)` | 单日内按 caller slot 顺序构建 cursor 表 |
 | `underlying_fees_asof(underlying_symbol, at)` | 查询某个品种在该时间点可交易合约的手续费列表 |
 | `main_contract_fee_asof("KQ.m@...", at)` | 查询主连别名对应的主力合约手续费 |
 
-高频查询同一个合约时，推荐先解析合约，再按交易日查询：
+tick 回测通常跨多日。推荐先解析合约，再构建跨日 cursor 表：
 
 ```rust
 use future_meta::{DownloadConfig, load_or_fetch};
-use time::{Date, Month};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let meta = load_or_fetch(DownloadConfig::default()).await?;
     let handle = meta.resolve_contract("SHFE.cu2607")?;
-    let trading_date = Date::from_calendar_date(2026, Month::June, 8)?;
+    let mut fees = meta.prepare_fee_cursors(
+        [handle],
+        first_tick.trading_date,
+        first_tick.unix_nanos,
+    )?;
 
-    let fee = meta.contract_fee_for_handle_on(handle, trading_date)?;
-    println!("open={:?}, close_today={:?}", fee.open_fee, fee.close_today_fee);
+    for tick in ticks {
+        if tick.unix_nanos >= fees.next_change_unix_nanos() {
+            fees.advance_to(tick.trading_date, tick.unix_nanos)?;
+        }
+
+        let fee = fees.current(tick.fee_slot)?;
+        let amount = fee.open_amount(tick.price, tick.lots);
+        println!("open fee amount={amount}");
+    }
 
     Ok(())
 }
 ```
 
-`contract_fee_for_handle_on` 使用加载 archive 时派生的内存索引，不会把交易日等派生字段写入 `latest.fmeta.zst`。
+多合约混合 tick 时，预先把 symbol 映射成 slot，循环内只用整数索引。低频路径可直接用便捷方法：
+
+```rust
+let mut fees = meta.prepare_fee_cursors(handles, first_tick.trading_date, first_tick.unix_nanos)?;
+
+for tick in ticks {
+    let fee = fees.advance_and_get(tick.trading_date, tick.fee_slot, tick.unix_nanos)?;
+    pnl -= fee.close_today_amount(tick.price, tick.lots);
+}
+```
+
+`PreparedFeeCursors` 内部在手续费变化点或交易日边界慢路径更新；正常 tick 路径是一
+次 `i64` 比较和一次 slot 读取。交易日快照和 cursor 都只使用加载 archive 后派生的
+内存索引，不会把交易日等派生字段写入 `latest.fmeta.zst`。
 
 手续费字段保留源站规则语义：
 
@@ -208,7 +235,7 @@ cargo test -p future-meta --features download
 cargo run --release -p future-meta --example perf_smoke -- public/latest.fmeta.zst 1000000 100
 ```
 
-在当前 `public/latest.fmeta.zst` 样本上，单合约重复查询的最快路径 `contract_fee_for_handle_on` 约为几十纳秒级；具体数值取决于机器和 artifact 大小。
+高频回测热路径应使用 `FutureMeta::prepare_fee_cursors`。它统一处理日内固定手续费、日内变化、跨日重建和多合约 slot；循环内通常只有一次 `i64` 时间比较和一次 `current()` 读取。
 
 定向测试：
 

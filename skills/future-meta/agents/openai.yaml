@@ -1,0 +1,4 @@
+interface:
+  display_name: "future-meta"
+  short_description: "future-meta 项目开发流程"
+  default_prompt: "使用 $future-meta 处理 future-meta Rust 工作区改动。"
