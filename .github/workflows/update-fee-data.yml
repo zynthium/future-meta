@@ -10,6 +10,7 @@ env:
   DB_PATH: data/future-meta.sqlite
   SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
   SEED_ARCHIVE: public/ops/future-meta.sqlite.gz
+  V11_SEED_ARCHIVE: assets/future-meta-v11-baseline.sqlite.gz
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -33,6 +34,16 @@ jobs:
           mkdir -p "$(dirname "$DB_PATH")"
           curl --fail --location --show-error "$SEED_URL" --output /tmp/future-meta.sqlite.gz
           gzip -dc /tmp/future-meta.sqlite.gz > "$DB_PATH"
+          if ! sqlite3 "$DB_PATH" \
+            "select name from sqlite_master where type = 'table' and name = 'baseline_state';" \
+            | grep -qx baseline_state; then
+            echo "Bootstrapping V11 daemon seed"
+            gzip -dc "$V11_SEED_ARCHIVE" > "$DB_PATH"
+          elif [ "$(sqlite3 "$DB_PATH" \
+            "select baseline_version from baseline_state limit 1;")" != "v11" ]; then
+            echo "Replacing non-V11 daemon seed"
+            gzip -dc "$V11_SEED_ARCHIVE" > "$DB_PATH"
+          fi
           cargo run -p future-meta-daemon -- inspect --db "$DB_PATH"
 
       - name: Refresh data
