@@ -295,7 +295,8 @@ pub fn refresh_with_options(_db: &Path, _options: RefreshOptions) -> Result<()> 
 /// # Errors
 ///
 /// Returns an error if the seed is missing, latest page fetch fails, or parsing
-/// and version maintenance fail.
+/// and version maintenance fail. Unconfirmed 9qihuo fee candidates are retained
+/// as a source error and omitted without preventing a no-change baseline export.
 pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
     let mut conn = connect(db)?;
     ensure_schema(&conn)?;
@@ -349,8 +350,13 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
             "refused {} unconfirmed 9qihuo fee candidates; examples={symbols}",
             verified.rejected.len()
         );
+        // Keep the reviewed baseline publishable when live candidates cannot
+        // be corroborated. The current snapshot still proves which existing
+        // contracts are active, but none of its fee rules may enter history.
+        db::mark_latest_contracts_seen(&mut conn, &completion.rows, &observed_at)?;
         db::update_source_error(&conn, TOTAL_URL, &observed_at, &message)?;
-        return Err(anyhow!(message));
+        eprintln!("{message}; no fee history changes were applied");
+        return Ok(());
     }
 
     let skipped_conflicting_csv_rows =
