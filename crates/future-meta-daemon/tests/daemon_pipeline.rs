@@ -1,7 +1,8 @@
 use future_meta::query::FutureMeta;
 use future_meta_daemon::db::{
     complete_latest_rows, connect, ensure_schema, ensure_seeded, source_probe_hash,
-    source_rule_set_hash, update_source_success, upsert_allowed_rows, upsert_latest_rows,
+    source_rule_set_hash, update_source_error, update_source_success, upsert_allowed_rows,
+    upsert_latest_rows,
 };
 use future_meta_daemon::export::export_archive;
 use future_meta_daemon::latest::parse_latest_html;
@@ -1244,6 +1245,27 @@ fn source_state_tracks_last_successful_probe() {
         .unwrap();
     assert_eq!(rule_set_hash, "rules-v2");
     assert_eq!(success_at, "2026-06-04T13:00:00+08:00");
+}
+
+#[test]
+fn source_rule_set_hash_treats_an_error_only_state_as_not_successful() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    update_source_error(
+        &conn,
+        "https://www.9qihuo.com/qihuoshouxufei",
+        "2026-08-22T12:00:00+08:00",
+        "refused unconfirmed candidate",
+    )
+    .unwrap();
+
+    assert_eq!(
+        source_rule_set_hash(&conn, "https://www.9qihuo.com/qihuoshouxufei").unwrap(),
+        None
+    );
 }
 
 #[test]

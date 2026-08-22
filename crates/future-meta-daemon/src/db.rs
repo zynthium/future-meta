@@ -316,9 +316,10 @@ pub fn source_probe_hash(conn: &Connection, source_url: &str) -> Result<Option<S
         .query_row(
             "select last_probe_hash from source_state where source_url = ?1",
             params![source_url],
-            |row| row.get(0),
+            |row| row.get::<_, Option<String>>(0),
         )
-        .optional()?)
+        .optional()?
+        .flatten())
 }
 
 /// Return the last successful rule-set hash for a source URL.
@@ -332,9 +333,10 @@ pub fn source_rule_set_hash(conn: &Connection, source_url: &str) -> Result<Optio
         .query_row(
             "select last_rule_set_hash from source_state where source_url = ?1",
             params![source_url],
-            |row| row.get(0),
+            |row| row.get::<_, Option<String>>(0),
         )
-        .optional()?)
+        .optional()?
+        .flatten())
 }
 
 /// Record a successful source refresh.
