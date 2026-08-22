@@ -442,6 +442,26 @@ pub fn mark_latest_contracts_seen(
              where symbol = ?2",
             params![observed_at, row.symbol],
         )?;
+        tx.execute(
+            "update fee_versions
+             set buy_margin_rate = ?1,
+                 sell_margin_rate = ?2,
+                 trading_status = ?3,
+                 is_main_contract = ?4,
+                 last_seen_at = case
+                   when julianday(?5) > julianday(last_seen_at) then ?5
+                   else last_seen_at end
+             where contract_id = (select id from contracts where symbol = ?6)
+               and valid_to is null",
+            params![
+                row.buy_margin_rate,
+                row.sell_margin_rate,
+                trading_status_text(&row.trading_status),
+                i64::from(row.is_main_contract),
+                observed_at,
+                row.symbol,
+            ],
+        )?;
     }
     tx.commit()?;
     Ok(())

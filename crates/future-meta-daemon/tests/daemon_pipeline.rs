@@ -651,7 +651,8 @@ fn latest_observation_activates_a_v11_contract_without_creating_a_fee_version() 
     let db_path = dir.path().join("v11.sqlite");
     let mut conn = connect(&db_path).unwrap();
     ensure_schema(&conn).unwrap();
-    let baseline = parse_csv(CSV_V1).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap();
+    baseline[0].is_main_contract = false;
     future_meta_daemon::db::upsert_v11_baseline_rows(
         &mut conn,
         &baseline,
@@ -659,22 +660,26 @@ fn latest_observation_activates_a_v11_contract_without_creating_a_fee_version() 
     )
     .unwrap();
 
+    let mut latest = baseline.clone();
+    latest[0].is_main_contract = true;
     future_meta_daemon::db::mark_latest_contracts_seen(
         &mut conn,
-        &baseline,
+        &latest,
         "2026-06-06T22:00:00+08:00",
     )
     .unwrap();
-    let (active, versions): (i64, i64) = conn
+    let (active, versions, is_main_contract): (i64, i64, i64) = conn
         .query_row(
-            "select active, (select count(*) from fee_versions) from contracts",
+            "select c.active, (select count(*) from fee_versions), v.is_main_contract
+             from contracts c join fee_versions v on v.contract_id = c.id",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
 
     assert_eq!(active, 1);
     assert_eq!(versions, 1);
+    assert_eq!(is_main_contract, 1);
 }
 
 #[test]
