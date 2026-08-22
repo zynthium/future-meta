@@ -158,10 +158,13 @@ for tick in ticks {
 
 ## 数据来源与边界
 
-历史 seed 与增量更新是两条不同路径：
+历史补充与日常增量是两条不同路径：
 
-- 全量历史 seed：本地运行 daemon，按品种下载 `https://www.9qihuo.com/shouxufeixz?heyue=<code>`。
+- 历史手续费事实：只接受交易所原始公告、收费表和结算/业务参数文件。先暂存到独立的官方证据库，不能直接导出或发布；详见 [官方历史证据流程](docs/official-evidence.md)。
 - 每日增量更新：GitHub Actions 拉取 Cloudflare 上的 SQLite seed，解析 `https://www.9qihuo.com/qihuoshouxufei` 的 `table#heyuetbl`，更新最新截面后重新发布 artifact。
+- Jin10 仅作为每日只读交叉核验源。它的快照会与当前生产费率比较并输出差异，但不会写入 `fee_versions`，也不会替代 9qihuo 更新。
+
+`9qihuo` 单品种 CSV、Jin10 和其他第三方衍生数据不再用于补充历史手续费。`seed-history`/`refresh` 会明确拒绝该用途；现有历史记录也不会因此被追溯认定为官方证据。
 
 项目只持久化手续费查询需要的基础字段。不会把源站展示用派生字段写入 client archive，例如价格、涨跌停、每手保证金、每跳盈亏、手续费折算金额等。
 
@@ -173,16 +176,28 @@ for tick in ticks {
 cargo run -p future-meta-daemon -- inspect --db data/future-meta.sqlite
 ```
 
-本地全量构建历史 seed：
+暂存人工复核过的交易所历史材料：
 
 ```bash
-cargo run -p future-meta-daemon -- seed-history --db data/future-meta.sqlite --force-full
+cargo run -p future-meta-daemon -- stage-official \
+  --db data/official-evidence.sqlite \
+  --input path/to/adjustments.json
 ```
 
 在已有 seed 上应用最新截面：
 
 ```bash
 cargo run -p future-meta-daemon -- update-latest --db data/future-meta.sqlite --require-seed
+```
+
+只读核验 Jin10（不会修改手续费历史）：
+
+```bash
+cargo run -p future-meta-daemon -- validate-jin10 \
+  --db data/future-meta.sqlite \
+  --from 2026-08-22 \
+  --to 2026-08-22 \
+  --out /tmp/jin10-validation.json
 ```
 
 导出 Cloudflare Pages artifacts：
@@ -259,7 +274,7 @@ cargo test -p future-meta --features download --test client_archive
 
 **为什么 latest 更新解析 HTML，而不是下载全合约 CSV？**
 
-总页的 Excel 按钮是浏览器端 `tableToExcel('heyuetbl', ...)` 从 HTML 表格生成，目前没有稳定的全合约 CSV 下载端点。单品种历史仍使用 `shouxufeixz?heyue=<code>` CSV。
+总页的 Excel 按钮是浏览器端 `tableToExcel('heyuetbl', ...)` 从 HTML 表格生成，目前没有稳定的全合约 CSV 下载端点。日更继续解析该总表；单品种 CSV 不再作为历史事实源。
 
 **如果新增合约没有静态元数据怎么办？**
 

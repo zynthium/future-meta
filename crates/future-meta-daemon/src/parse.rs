@@ -5,9 +5,10 @@ use csv::StringRecord;
 use future_meta::fee::{parse_fee_spec, parse_optional_f64};
 use future_meta::model::{FeeSpec, TradingStatus};
 use future_meta::symbol::normalize_futures_symbol;
+use serde::Serialize;
 
 /// Source row normalized down to fields allowed for history and publishing.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AllowedRow {
     /// TqSdk-style futures contract symbol.
     pub symbol: String,

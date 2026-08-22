@@ -39,6 +39,18 @@ jobs:
         timeout-minutes: 20
         run: cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed
 
+      - name: Validate Jin10 secondary source
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          SNAPSHOT_DATE="$(TZ=Asia/Shanghai date +%F)"
+          cargo run -p future-meta-daemon -- validate-jin10 \
+            --db "$DB_PATH" \
+            --from "$SNAPSHOT_DATE" \
+            --to "$SNAPSHOT_DATE" \
+            --out /tmp/jin10-validation.json
+          cat /tmp/jin10-validation.json
+
       - name: Export Pages artifact
         run: cargo run -p future-meta-daemon -- export --db "$DB_PATH" --out public
 

@@ -1,6 +1,6 @@
 //! Archive and manifest export.
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use future_meta::archive::{encode_archive_bytes, sha256_hex};
 use future_meta::model::{
     Contract, ContractFee, FeeArchiveV1, FeeSpec, Manifest, SCHEMA_VERSION, TradingStatus,
@@ -16,8 +16,9 @@ use time::format_description::well_known::Rfc3339;
 ///
 /// Returns an error if archive export fails.
 pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
-    std::fs::create_dir_all(out.join("artifacts"))?;
     let conn = Connection::open(db)?;
+    ensure_no_untrusted_jin10_fee_versions(&conn)?;
+    std::fs::create_dir_all(out.join("artifacts"))?;
     let archive = load_archive(&conn)?;
     let bytes = encode_archive_bytes(&archive)?;
     let sha = sha256_hex(&bytes);
@@ -45,6 +46,20 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         out.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,
     )?;
+    Ok(())
+}
+
+fn ensure_no_untrusted_jin10_fee_versions(conn: &Connection) -> Result<()> {
+    let untrusted_versions: i64 = conn.query_row(
+        "select count(*) from fee_versions where source_kind = 'jin10'",
+        [],
+        |row| row.get(0),
+    )?;
+    if untrusted_versions > 0 {
+        return Err(anyhow!(
+            "refusing to export untrusted Jin10 fee versions: {untrusted_versions} present"
+        ));
+    }
     Ok(())
 }
 

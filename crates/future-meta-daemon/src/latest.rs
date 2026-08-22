@@ -60,8 +60,8 @@ pub struct LatestSnapshot {
 pub fn parse_latest_html(html: &str) -> Result<LatestSnapshot> {
     let document = Html::parse_document(html);
     let table_selector = selector("table#heyuetbl")?;
-    let tr_selector = selector("tr")?;
-    let td_selector = selector("td")?;
+    let row_selector = selector("tr")?;
+    let cell_selector = selector("td")?;
     let b_selector = selector("b")?;
     let table = document
         .select(&table_selector)
@@ -72,8 +72,8 @@ pub fn parse_latest_html(html: &str) -> Result<LatestSnapshot> {
     let mut skipped_invalid_symbols = 0usize;
     let mut rows = Vec::new();
 
-    for tr in table.select(&tr_selector) {
-        let cells = tr.select(&td_selector).collect::<Vec<_>>();
+    for table_row in table.select(&row_selector) {
+        let cells = table_row.select(&cell_selector).collect::<Vec<_>>();
         if cells.is_empty() {
             continue;
         }
@@ -97,12 +97,9 @@ pub fn parse_latest_html(html: &str) -> Result<LatestSnapshot> {
             .as_deref()
             .ok_or_else(|| anyhow!("latest table data row appears before exchange section"))?;
         let local = contract_local(contract_cell, &b_selector)?;
-        let symbol = match normalize_futures_symbol(exchange, &local) {
-            Ok(symbol) => symbol,
-            Err(_) => {
-                skipped_invalid_symbols += 1;
-                continue;
-            }
+        let Ok(symbol) = normalize_futures_symbol(exchange, &local) else {
+            skipped_invalid_symbols += 1;
+            continue;
         };
         let row_source_updated_at = contract_cell
             .value()

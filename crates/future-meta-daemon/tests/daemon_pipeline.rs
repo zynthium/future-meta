@@ -1,13 +1,18 @@
 use future_meta::query::FutureMeta;
 use future_meta_daemon::db::{
     complete_latest_rows, connect, ensure_schema, ensure_seeded, source_probe_hash,
-    source_rule_set_hash, update_source_success, upsert_allowed_rows,
+    source_rule_set_hash, update_source_success, upsert_allowed_rows, upsert_latest_rows,
 };
 use future_meta_daemon::export::export_archive;
 use future_meta_daemon::latest::parse_latest_html;
+use future_meta_daemon::official::{
+    EvidenceKind, OfficialEvidence, OfficialFeeAdjustment, OfficialVerification, stage_adjustment,
+    stage_adjustment_json, stage_adjustments_json,
+};
 use future_meta_daemon::parse::parse_csv;
 use future_meta_daemon::refresh::{RefreshOptions, refresh_with_options, update_latest};
 use future_meta_daemon::source::discover_sources_from_html;
+use std::collections::BTreeMap;
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";
 const CSV_V2: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.2元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-28 22:56:54,主力合约\n";
@@ -41,6 +46,312 @@ const LATEST_HTML_CU: &str = r#"
     </tr>
   </table>
 "#;
+
+#[test]
+fn verified_official_adjustment_is_staged_in_an_isolated_evidence_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence_db = dir.path().join("official-evidence.sqlite");
+    let adjustment = OfficialFeeAdjustment {
+        symbol: "INE.sc2604".to_owned(),
+        effective_at: "2026-03-10T00:00:00+08:00".to_owned(),
+        scope: "all listed SC contracts".to_owned(),
+        open_fee: None,
+        close_yesterday_fee: None,
+        close_today_fee: Some(future_meta::model::FeeSpec {
+            kind: future_meta::model::FeeKind::CnyPerLot,
+            value: Some(60.0),
+            raw_text: Some("60元/手".to_owned()),
+        }),
+        evidence: vec![
+            OfficialEvidence {
+                canonical_url:
+                    "https://www.ine.cn/eng/circularnews/circular/202603/t20260306_830603.html"
+                        .to_owned(),
+                mirror_url: Some(
+                    "https://www.ine.cn/publicnotice/notice/202603/t20260306_830600.html"
+                        .to_owned(),
+                ),
+                sha256: "3ec81135a7f0f995de49c39a3178b173a29dbb1ed124b6328f26153498c310c3"
+                    .to_owned(),
+                published_at: "2026-03-06T00:00:00+08:00".to_owned(),
+                kind: EvidenceKind::Notice,
+            },
+            OfficialEvidence {
+                canonical_url:
+                    "https://www.ine.cn/publicnotice/notice/202603/W020260306643830614686.doc"
+                        .to_owned(),
+                mirror_url: None,
+                sha256: "aaf0ad447304c6f0af9543680ab1ae5da6b513e818f43b6f109b1be005004997"
+                    .to_owned(),
+                published_at: "2026-03-06T00:00:00+08:00".to_owned(),
+                kind: EvidenceKind::FeeSchedule,
+            },
+        ],
+    };
+
+    let staged = stage_adjustment(&evidence_db, &adjustment).unwrap();
+
+    assert_eq!(staged.verification, OfficialVerification::Verified);
+    assert_eq!(staged.evidence_count, 2);
+    let conn = rusqlite::Connection::open(&evidence_db).unwrap();
+    let candidate_count: i64 = conn
+        .query_row("select count(*) from official_fee_adjustments", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let production_history_exists: i64 = conn
+        .query_row(
+            "select count(*) from sqlite_master where type = 'table' and name = 'fee_versions'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(candidate_count, 1);
+    assert_eq!(production_history_exists, 0);
+}
+
+#[test]
+fn official_staging_accepts_http_only_for_cffex_primary_domain() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence_db = dir.path().join("official-evidence.sqlite");
+    let adjustment = OfficialFeeAdjustment {
+        symbol: "CFFEX.IF2001".to_owned(),
+        effective_at: "2020-01-01T00:00:00+08:00".to_owned(),
+        scope: "all listed IF contracts".to_owned(),
+        open_fee: Some(future_meta::model::FeeSpec {
+            kind: future_meta::model::FeeKind::TurnoverRatePerTenThousand,
+            value: Some(0.23),
+            raw_text: Some("万分之0.23".to_owned()),
+        }),
+        close_yesterday_fee: Some(future_meta::model::FeeSpec {
+            kind: future_meta::model::FeeKind::TurnoverRatePerTenThousand,
+            value: Some(0.23),
+            raw_text: Some("万分之0.23".to_owned()),
+        }),
+        close_today_fee: Some(future_meta::model::FeeSpec {
+            kind: future_meta::model::FeeKind::TurnoverRatePerTenThousand,
+            value: Some(3.45),
+            raw_text: Some("万分之3.45".to_owned()),
+        }),
+        evidence: vec![
+            OfficialEvidence {
+                canonical_url: "http://www.cffex.com.cn/cn/jystz/20190419/23719.html".to_owned(),
+                mirror_url: None,
+                sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_owned(),
+                published_at: "2019-04-19T00:00:00+08:00".to_owned(),
+                kind: EvidenceKind::Notice,
+            },
+            OfficialEvidence {
+                canonical_url: "http://www.cffex.com.cn/sj/jscs/201912/23/20191223_1.csv"
+                    .to_owned(),
+                mirror_url: None,
+                sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_owned(),
+                published_at: "2019-12-23T00:00:00+08:00".to_owned(),
+                kind: EvidenceKind::SettlementParameter,
+            },
+        ],
+    };
+
+    assert_eq!(
+        stage_adjustment(&evidence_db, &adjustment)
+            .unwrap()
+            .verification,
+        OfficialVerification::Verified
+    );
+
+    let mut insecure_ine = adjustment;
+    insecure_ine.symbol = "INE.sc2001".to_owned();
+    for evidence in &mut insecure_ine.evidence {
+        evidence.canonical_url = evidence.canonical_url.replace("cffex.com.cn", "ine.cn");
+    }
+    assert!(stage_adjustment(&evidence_db, &insecure_ine).is_err());
+}
+
+#[test]
+fn official_adjustment_json_input_uses_the_same_isolated_staging_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence_db = dir.path().join("official-evidence.sqlite");
+    let payload = r#"{
+      "symbol": "INE.lu2604",
+      "effective_at": "2026-03-10T00:00:00+08:00",
+      "scope": "all listed LU contracts",
+      "open_fee": null,
+      "close_yesterday_fee": null,
+      "close_today_fee": {
+        "kind": "TurnoverRatePerTenThousand",
+        "value": 0.3,
+        "raw_text": "成交金额的万分之零点三"
+      },
+      "evidence": [
+        {
+          "canonical_url": "https://www.ine.cn/eng/circularnews/circular/202603/t20260306_830603.html",
+          "mirror_url": "https://www.ine.cn/publicnotice/notice/202603/t20260306_830600.html",
+          "sha256": "3ec81135a7f0f995de49c39a3178b173a29dbb1ed124b6328f26153498c310c3",
+          "published_at": "2026-03-06T00:00:00+08:00",
+          "kind": "notice"
+        },
+        {
+          "canonical_url": "https://www.ine.cn/publicnotice/notice/202603/W020260306643830614686.doc",
+          "mirror_url": null,
+          "sha256": "aaf0ad447304c6f0af9543680ab1ae5da6b513e818f43b6f109b1be005004997",
+          "published_at": "2026-03-06T00:00:00+08:00",
+          "kind": "fee_schedule"
+        }
+      ]
+    }"#;
+
+    let staged = stage_adjustment_json(&evidence_db, payload).unwrap();
+
+    assert_eq!(staged.verification, OfficialVerification::Verified);
+}
+
+#[test]
+fn official_adjustment_batch_json_stages_each_concrete_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence_db = dir.path().join("official-evidence.sqlite");
+    let payload = r#"[
+      {
+        "symbol": "INE.sc2604",
+        "effective_at": "2026-03-11T00:00:00+08:00",
+        "scope": "all listed SC contracts",
+        "open_fee": {"kind": "CnyPerLot", "value": 40.0, "raw_text": "40元/手"},
+        "close_yesterday_fee": {"kind": "CnyPerLot", "value": 40.0, "raw_text": "40元/手"},
+        "close_today_fee": {"kind": "CnyPerLot", "value": 240.0, "raw_text": "240元/手"},
+        "evidence": [
+          {
+            "canonical_url": "https://www.ine.cn/eng/circularnews/circular/202603/t20260309_830636.html",
+            "mirror_url": "https://www.ine.cn/publicnotice/notice/202603/t20260309_830634.html",
+            "sha256": "f8e275edf08767dcc2ecc99239004c75680be62d63c729c91f2d1b358a84afa3",
+            "published_at": "2026-03-09T00:00:00+08:00",
+            "kind": "notice"
+          },
+          {
+            "canonical_url": "https://www.ine.cn/publicnotice/notice/202603/W020260309662330567322.doc",
+            "mirror_url": null,
+            "sha256": "ff1594548d24076c99af4a290541ccda123aaa32b3c276821cdcf15f8dd87cfb",
+            "published_at": "2026-03-09T00:00:00+08:00",
+            "kind": "fee_schedule"
+          }
+        ]
+      },
+      {
+        "symbol": "INE.lu2604",
+        "effective_at": "2026-03-11T00:00:00+08:00",
+        "scope": "all listed LU contracts",
+        "open_fee": {"kind": "TurnoverRatePerTenThousand", "value": 1.0, "raw_text": "成交金额的万分之一"},
+        "close_yesterday_fee": {"kind": "TurnoverRatePerTenThousand", "value": 1.0, "raw_text": "成交金额的万分之一"},
+        "close_today_fee": {"kind": "TurnoverRatePerTenThousand", "value": 3.0, "raw_text": "成交金额的万分之三"},
+        "evidence": [
+          {
+            "canonical_url": "https://www.ine.cn/eng/circularnews/circular/202603/t20260309_830636.html",
+            "mirror_url": "https://www.ine.cn/publicnotice/notice/202603/t20260309_830634.html",
+            "sha256": "f8e275edf08767dcc2ecc99239004c75680be62d63c729c91f2d1b358a84afa3",
+            "published_at": "2026-03-09T00:00:00+08:00",
+            "kind": "notice"
+          },
+          {
+            "canonical_url": "https://www.ine.cn/publicnotice/notice/202603/W020260309662330567322.doc",
+            "mirror_url": null,
+            "sha256": "ff1594548d24076c99af4a290541ccda123aaa32b3c276821cdcf15f8dd87cfb",
+            "published_at": "2026-03-09T00:00:00+08:00",
+            "kind": "fee_schedule"
+          }
+        ]
+      }
+    ]"#;
+
+    let staged = stage_adjustments_json(&evidence_db, payload).unwrap();
+
+    assert_eq!(staged.adjustments, 2);
+    assert_eq!(staged.verified, 2);
+    let conn = rusqlite::Connection::open(&evidence_db).unwrap();
+    let candidate_count: i64 = conn
+        .query_row("select count(*) from official_fee_adjustments", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(candidate_count, 2);
+}
+
+#[test]
+fn restaging_an_official_adjustment_replaces_its_evidence_links() {
+    let dir = tempfile::tempdir().unwrap();
+    let evidence_db = dir.path().join("official-evidence.sqlite");
+    let mut adjustment = OfficialFeeAdjustment {
+        symbol: "INE.sc2604".to_owned(),
+        effective_at: "2026-03-10T00:00:00+08:00".to_owned(),
+        scope: "all listed SC contracts".to_owned(),
+        open_fee: None,
+        close_yesterday_fee: None,
+        close_today_fee: Some(future_meta::model::FeeSpec {
+            kind: future_meta::model::FeeKind::CnyPerLot,
+            value: Some(60.0),
+            raw_text: Some("60元/手".to_owned()),
+        }),
+        evidence: vec![
+            OfficialEvidence {
+                canonical_url: "https://www.ine.cn/notice/first.html".to_owned(),
+                mirror_url: None,
+                sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_owned(),
+                published_at: "2026-03-06T00:00:00+08:00".to_owned(),
+                kind: EvidenceKind::Notice,
+            },
+            OfficialEvidence {
+                canonical_url: "https://www.ine.cn/notice/first.doc".to_owned(),
+                mirror_url: None,
+                sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    .to_owned(),
+                published_at: "2026-03-06T00:00:00+08:00".to_owned(),
+                kind: EvidenceKind::FeeSchedule,
+            },
+        ],
+    };
+    stage_adjustment(&evidence_db, &adjustment).unwrap();
+
+    adjustment.close_today_fee.as_mut().unwrap().value = Some(40.0);
+    adjustment.evidence = vec![
+        OfficialEvidence {
+            canonical_url: "https://www.ine.cn/notice/reviewed.html".to_owned(),
+            mirror_url: None,
+            sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned(),
+            published_at: "2026-03-07T00:00:00+08:00".to_owned(),
+            kind: EvidenceKind::Notice,
+        },
+        OfficialEvidence {
+            canonical_url: "https://www.ine.cn/notice/reviewed.doc".to_owned(),
+            mirror_url: None,
+            sha256: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".to_owned(),
+            published_at: "2026-03-07T00:00:00+08:00".to_owned(),
+            kind: EvidenceKind::FeeSchedule,
+        },
+    ];
+    stage_adjustment(&evidence_db, &adjustment).unwrap();
+
+    let conn = rusqlite::Connection::open(&evidence_db).unwrap();
+    let linked_urls = conn
+        .prepare(
+            "select evidence.canonical_url
+             from official_adjustment_evidence link
+             join official_evidence evidence on evidence.id = link.evidence_id
+             order by evidence.canonical_url",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+
+    assert_eq!(
+        linked_urls,
+        vec![
+            "https://www.ine.cn/notice/reviewed.doc".to_owned(),
+            "https://www.ine.cn/notice/reviewed.html".to_owned(),
+        ]
+    );
+}
 
 #[test]
 fn upsert_creates_new_fee_version_only_for_rule_changes() {
@@ -107,6 +418,407 @@ fn upsert_creates_new_fee_version_only_for_rule_changes() {
 }
 
 #[test]
+fn upsert_does_not_make_fee_queryable_before_contract_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.listing_date = Some("20260320".to_owned());
+    row.source_updated_at = Some("2026-03-19 22:56:54".to_owned());
+
+    upsert_allowed_rows(&mut conn, &[row], "2026-03-20T12:00:00+08:00").unwrap();
+
+    let valid_from: String = conn
+        .query_row("select valid_from from fee_versions", [], |record| {
+            record.get(0)
+        })
+        .unwrap();
+
+    assert_eq!(valid_from, "2026-03-20T00:00:00+08:00");
+}
+
+#[test]
+fn schema_repair_clamps_existing_fee_version_to_contract_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.listing_date = Some("20260320".to_owned());
+    row.source_updated_at = Some("2026-03-20 22:56:54".to_owned());
+    upsert_allowed_rows(&mut conn, &[row], "2026-03-20T23:00:00+08:00").unwrap();
+    conn.execute(
+        "update fee_versions set valid_from = '2026-03-19T00:00:00+08:00'",
+        [],
+    )
+    .unwrap();
+
+    ensure_schema(&conn).unwrap();
+
+    let valid_from: String = conn
+        .query_row("select valid_from from fee_versions", [], |record| {
+            record.get(0)
+        })
+        .unwrap();
+    assert_eq!(valid_from, "2026-03-20T00:00:00+08:00");
+}
+
+#[test]
+fn latest_upsert_skips_same_timestamp_conflicting_with_seeded_csv_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let seeded = parse_csv(CSV_V1).unwrap();
+    upsert_allowed_rows(&mut conn, &seeded, "2026-06-04T12:00:00+08:00").unwrap();
+
+    let mut conflicting = seeded.clone();
+    conflicting[0].open_fee.value = Some(0.2);
+    conflicting[0].open_fee.raw_text = Some("0.2元".to_owned());
+    conflicting[0].source_updated_at = Some("2026-03-27 22:56:54.503".to_owned());
+
+    let skipped = upsert_latest_rows(&mut conn, &conflicting, "2026-06-04T13:00:00+08:00").unwrap();
+    let (versions, open_fee): (i64, String) = conn
+        .query_row(
+            "select count(*), max(open_fee_json) from fee_versions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(skipped, 1);
+    assert_eq!(versions, 1);
+    assert!(open_fee.contains("0.1"));
+}
+
+#[test]
+fn latest_upsert_rejects_fixed_tenth_placeholder_against_percentage_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut seeded = parse_csv(CSV_V1).unwrap().remove(0);
+    for fee in [
+        &mut seeded.open_fee,
+        &mut seeded.close_yesterday_fee,
+        &mut seeded.close_today_fee,
+    ] {
+        fee.kind = future_meta::model::FeeKind::TurnoverRatePerTenThousand;
+        fee.value = Some(0.5);
+        fee.raw_text = Some("0.5/万分之".to_owned());
+    }
+    seeded.source_updated_at = Some("2026-06-05 21:00:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[seeded.clone()], "2026-06-05T22:00:00+08:00").unwrap();
+
+    let mut polluted = seeded;
+    polluted.open_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::CnyPerLot,
+        value: Some(0.1),
+        raw_text: Some("0.1元".to_owned()),
+    };
+    polluted.close_yesterday_fee = polluted.open_fee.clone();
+    polluted.close_today_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::Zero,
+        value: Some(0.0),
+        raw_text: Some("0元".to_owned()),
+    };
+    polluted.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+
+    let skipped = upsert_latest_rows(&mut conn, &[polluted], "2026-06-06T22:00:00+08:00").unwrap();
+    let (versions, percentage_count): (i64, i64) = conn
+        .query_row(
+            "select count(*), sum(json_extract(open_fee_json, '$.kind') = 'TurnoverRatePerTenThousand') from fee_versions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(skipped, 1);
+    assert_eq!(versions, 1);
+    assert_eq!(percentage_count, 1);
+}
+
+#[test]
+fn latest_upsert_does_not_version_margin_or_main_contract_changes_when_fees_match() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let seeded = parse_csv(CSV_V1).unwrap();
+    upsert_allowed_rows(&mut conn, &seeded, "2026-06-05T22:00:00+08:00").unwrap();
+
+    let mut latest = seeded[0].clone();
+    latest.buy_margin_rate = Some(99.0);
+    latest.sell_margin_rate = Some(98.0);
+    latest.is_main_contract = !latest.is_main_contract;
+    latest.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+
+    let skipped = upsert_latest_rows(&mut conn, &[latest], "2026-06-06T22:00:00+08:00").unwrap();
+    let versions: i64 = conn
+        .query_row("select count(*) from fee_versions", [], |row| row.get(0))
+        .unwrap();
+
+    assert_eq!(skipped, 1);
+    assert_eq!(versions, 1);
+}
+
+#[test]
+fn latest_candidate_requires_matching_jin10_fee_tuple_before_acceptance() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let seeded = parse_csv(CSV_V1).unwrap();
+    upsert_allowed_rows(&mut conn, &seeded, "2026-06-05T22:00:00+08:00").unwrap();
+
+    let mut candidate = seeded[0].clone();
+    candidate.open_fee.value = Some(0.2);
+    candidate.open_fee.raw_text = Some("0.2元".to_owned());
+    candidate.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+
+    let accepted = future_meta_daemon::db::cross_verify_latest_candidates(
+        &conn,
+        &[candidate.clone()],
+        &[candidate.clone()],
+    )
+    .unwrap();
+    let rejected =
+        future_meta_daemon::db::cross_verify_latest_candidates(&conn, &[candidate], &seeded)
+            .unwrap();
+
+    assert_eq!(accepted.accepted.len(), 1);
+    assert_eq!(accepted.unchanged, 0);
+    assert_eq!(accepted.rejected.len(), 0);
+    assert!(rejected.accepted.is_empty());
+    assert_eq!(rejected.rejected.len(), 1);
+}
+
+#[test]
+fn imports_v11_baseline_into_an_empty_database_with_a_recorded_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let metadata_db = dir.path().join("metadata.sqlite");
+    let mut metadata = connect(&metadata_db).unwrap();
+    ensure_schema(&metadata).unwrap();
+    upsert_allowed_rows(
+        &mut metadata,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-05T22:00:00+08:00",
+    )
+    .unwrap();
+    drop(metadata);
+
+    let input = dir.path().join("v11.tsv");
+    std::fs::write(
+        &input,
+        concat!(
+            "exchange\tproduct\tsymbol\tvalid_from\tvalid_to\topen_fee\tclose_yesterday_fee\tclose_today_fee\trecord_source\tconfidence\tnotes\n",
+            "SHFE\tCU\tSHFE.cu2607\t2026-03-27T00:00:00+08:00\t2026-03-28T00:00:00+08:00\t{\"kind\":\"CnyPerLot\",\"value\":0.1,\"raw_text\":\"0.1元\"}\t{\"kind\":\"CnyPerLot\",\"value\":0.1,\"raw_text\":\"0.1元\"}\t{\"kind\":\"CnyPerLot\",\"value\":0.1,\"raw_text\":\"0.1元\"}\tofficial_verified\tofficial_verified\tfixture\n",
+            "SHFE\tCU\tSHFE.cu2607\t2026-03-28T00:00:00+08:00\t\t{\"kind\":\"CnyPerLot\",\"value\":0.2,\"raw_text\":\"0.2元\"}\t{\"kind\":\"CnyPerLot\",\"value\":0.1,\"raw_text\":\"0.1元\"}\t{\"kind\":\"CnyPerLot\",\"value\":0.1,\"raw_text\":\"0.1元\"}\tofficial_verified\tofficial_verified\tfixture\n"
+        ),
+    )
+    .unwrap();
+
+    let baseline_db = dir.path().join("v11.sqlite");
+    let result =
+        future_meta_daemon::baseline::import_v11_baseline(&baseline_db, &input, &metadata_db)
+            .unwrap();
+    let conn = connect(&baseline_db).unwrap();
+    future_meta_daemon::baseline::ensure_v11_baseline(&conn).unwrap();
+    let (versions, source_kind): (i64, String) = conn
+        .query_row(
+            "select count(*), max(source_kind) from fee_versions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(result.rows, 2);
+    assert_eq!(result.contracts, 1);
+    assert_eq!(versions, 2);
+    assert_eq!(source_kind, "v11_baseline");
+}
+
+#[test]
+fn latest_observation_activates_a_v11_contract_without_creating_a_fee_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("v11.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let baseline = parse_csv(CSV_V1).unwrap();
+    future_meta_daemon::db::upsert_v11_baseline_rows(
+        &mut conn,
+        &baseline,
+        "2026-06-05T22:00:00+08:00",
+    )
+    .unwrap();
+
+    future_meta_daemon::db::mark_latest_contracts_seen(
+        &mut conn,
+        &baseline,
+        "2026-06-06T22:00:00+08:00",
+    )
+    .unwrap();
+    let (active, versions): (i64, i64) = conn
+        .query_row(
+            "select active, (select count(*) from fee_versions) from contracts",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(active, 1);
+    assert_eq!(versions, 1);
+}
+
+#[test]
+fn latest_upsert_repairs_isolated_tenth_terminal_state_from_product_consensus() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let seed = parse_csv(CSV_V1).unwrap().remove(0);
+    let mut rows = Vec::new();
+    for month in 1..=6 {
+        let mut row = seed.clone();
+        row.symbol = format!("DCE.fb270{month}");
+        row.source_updated_at = Some("2026-08-07 21:00:00".to_owned());
+        if month != 7 {
+            for fee in [
+                &mut row.open_fee,
+                &mut row.close_yesterday_fee,
+                &mut row.close_today_fee,
+            ] {
+                fee.kind = future_meta::model::FeeKind::TurnoverRatePerTenThousand;
+                fee.value = Some(1.0);
+                fee.raw_text = Some("1/万分之".to_owned());
+            }
+        }
+        rows.push(row);
+    }
+    // Reproduce the polluted terminal state on fb2706 while the rest of the
+    // product has the percentage rule.
+    {
+        let target = rows.last_mut().unwrap();
+        target.open_fee = future_meta::model::FeeSpec {
+            kind: future_meta::model::FeeKind::CnyPerLot,
+            value: Some(0.1),
+            raw_text: Some("0.1元".to_owned()),
+        };
+        target.close_yesterday_fee = target.open_fee.clone();
+        target.close_today_fee = target.open_fee.clone();
+    }
+    upsert_allowed_rows(&mut conn, &rows, "2026-08-08T12:00:00+08:00").unwrap();
+
+    let mut current = rows.last().unwrap().clone();
+    for fee in [
+        &mut current.open_fee,
+        &mut current.close_yesterday_fee,
+        &mut current.close_today_fee,
+    ] {
+        fee.kind = future_meta::model::FeeKind::TurnoverRatePerTenThousand;
+        fee.value = Some(1.0);
+        fee.raw_text = Some("1/万分之".to_owned());
+    }
+    current.source_updated_at = Some("2026-08-18 21:00:00".to_owned());
+
+    let skipped = upsert_latest_rows(&mut conn, &[current], "2026-08-18T22:00:00+08:00").unwrap();
+    let (versions, kind, value): (i64, String, f64) = conn
+        .query_row(
+            "select count(*), json_extract(open_fee_json, '$.kind'),
+                    json_extract(open_fee_json, '$.value')
+             from fee_versions join contracts on contracts.id = fee_versions.contract_id
+             where contracts.symbol = 'DCE.fb2706'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+
+    assert_eq!(skipped, 1);
+    assert_eq!(versions, 1);
+    assert_eq!(kind, "TurnoverRatePerTenThousand");
+    assert_eq!(value.to_bits(), 1.0_f64.to_bits());
+}
+
+#[test]
+fn latest_upsert_normalizes_uniform_fixed_collection_offset() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut seeded = parse_csv(CSV_V1).unwrap().remove(0);
+    for fee in [
+        &mut seeded.open_fee,
+        &mut seeded.close_yesterday_fee,
+        &mut seeded.close_today_fee,
+    ] {
+        fee.kind = future_meta::model::FeeKind::CnyPerLot;
+        fee.value = Some(5.0);
+        fee.raw_text = Some("5元".to_owned());
+    }
+    seeded.source_updated_at = Some("2026-06-05 21:00:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[seeded.clone()], "2026-06-05T22:00:00+08:00").unwrap();
+
+    let mut offset = seeded;
+    for fee in [
+        &mut offset.open_fee,
+        &mut offset.close_yesterday_fee,
+        &mut offset.close_today_fee,
+    ] {
+        fee.value = Some(5.1);
+        fee.raw_text = Some("5.1元".to_owned());
+    }
+    offset.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+    upsert_latest_rows(&mut conn, &[offset], "2026-06-06T22:00:00+08:00").unwrap();
+
+    let (versions, open_fee): (i64, String) = conn
+        .query_row(
+            "select count(*), max(open_fee_json) from fee_versions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(versions, 1);
+    assert!(open_fee.contains("5.0"));
+}
+
+#[test]
+fn latest_upsert_rejects_stale_snapshot_that_would_rewrite_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let current = parse_csv(CSV_V2).unwrap();
+    upsert_allowed_rows(&mut conn, &current, "2026-06-06T22:00:00+08:00").unwrap();
+
+    let mut stale = current[0].clone();
+    stale.open_fee.value = Some(0.3);
+    stale.open_fee.raw_text = Some("0.3元".to_owned());
+    stale.source_updated_at = Some("2026-03-27 22:00:00".to_owned());
+    let skipped = upsert_latest_rows(&mut conn, &[stale], "2026-06-07T22:00:00+08:00").unwrap();
+
+    let (versions, open_fee): (i64, String) = conn
+        .query_row(
+            "select count(*), max(open_fee_json) from fee_versions",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(skipped, 1);
+    assert_eq!(versions, 1);
+    assert!(open_fee.contains("0.2"));
+}
+
+#[test]
 fn connect_enables_foreign_keys() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
@@ -138,7 +850,11 @@ fn empty_database_is_not_a_seeded_update_base() {
     let latest_err = update_latest(&db_path, true).unwrap_err();
 
     assert!(seed_err.to_string().contains("seeded daemon database"));
-    assert!(refresh_err.to_string().contains("seeded daemon database"));
+    assert!(
+        refresh_err
+            .to_string()
+            .contains("9qihuo single-variety CSV history refresh is retired")
+    );
     assert!(latest_err.to_string().contains("seeded daemon database"));
 }
 
@@ -180,8 +896,8 @@ fn latest_rows_complete_from_seed_metadata() {
     assert_eq!(row.symbol, "SHFE.cu2607");
     assert_eq!(row.listing_date.as_deref(), Some("20250716"));
     assert_eq!(row.expiry_date.as_deref(), Some("20260715"));
-    assert_eq!(row.lot_size, 5.0);
-    assert_eq!(row.tick_size, 10.0);
+    assert_eq!(row.lot_size.to_bits(), 5.0_f64.to_bits());
+    assert_eq!(row.tick_size.to_bits(), 10.0_f64.to_bits());
     assert_eq!(row.open_fee.value, Some(0.2));
     assert!(row.is_main_contract);
 
@@ -325,6 +1041,46 @@ fn schema_enforces_core_constraints() {
 }
 
 #[test]
+fn schema_removes_legacy_redundant_fee_versions_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    conn.execute_batch(
+        "create index if not exists idx_fee_versions_contract
+           on fee_versions(contract_id, valid_from);",
+    )
+    .unwrap();
+
+    ensure_schema(&conn).unwrap();
+
+    let redundant_index_exists: bool = conn
+        .query_row(
+            "select exists(
+               select 1 from sqlite_master
+               where type = 'index' and name = 'idx_fee_versions_contract'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let unique_index_exists: bool = conn
+        .query_row(
+            "select exists(
+               select 1 from sqlite_master
+               where type = 'index' and name = 'idx_fee_versions_contract_valid_from'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert!(!redundant_index_exists);
+    assert!(unique_index_exists);
+}
+
+#[test]
 fn discovers_single_variety_sources_from_total_page_html() {
     let html = r#"
       <a href="/qihuoshouxufeisingle?heyue=cu">沪铜</a>
@@ -413,6 +1169,31 @@ fn exports_archive_loadable_by_client() {
 }
 
 #[test]
+fn export_refuses_untrusted_jin10_fee_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let out = dir.path().join("public");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    upsert_allowed_rows(
+        &mut conn,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    conn.execute("update fee_versions set source_kind = 'jin10'", [])
+        .unwrap();
+    drop(conn);
+
+    let err = export_archive(&db_path, &out).unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("refusing to export untrusted Jin10 fee versions")
+    );
+}
+
+#[test]
 fn source_state_tracks_last_successful_probe() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
@@ -477,4 +1258,798 @@ fn source_probe_hash_is_stable_and_source_specific() {
 
     assert_eq!(first, same);
     assert_ne!(first, different);
+}
+
+#[test]
+fn jin10_snapshot_uses_verified_close_field_order_and_static_metadata() {
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2025-03-15",
+        "heyue_code": "cu2505",
+        "pub_date_commission": "2025-03-14 23:16:31",
+        "buy_ratio": "9%",
+        "sell_ratio": "9%",
+        "buy_commission": "0.5/万分之(20元)",
+        "sell_cur_commission": "0.5/万分之(20元)",
+        "sell_yesterday_commission": "1/万分之(40元)",
+        "per_ratio": "50",
+        "jys": "上海期货交易所",
+        "status": 1
+      }]
+    }"#;
+    let metadata = BTreeMap::from([(
+        "SHFE.cu".to_owned(),
+        future_meta_daemon::jin10::ContractStaticMetadata {
+            lot_size: 5.0,
+            tick_size: 10.0,
+        },
+    )]);
+
+    let snapshot = future_meta_daemon::jin10::parse_snapshot(payload, &metadata).unwrap();
+
+    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(snapshot.skipped_missing_metadata, 0);
+    let row = &snapshot.rows[0];
+    assert_eq!(row.symbol, "SHFE.cu2505");
+    assert_eq!(row.buy_margin_rate, Some(9.0));
+    assert_eq!(row.open_fee.value, Some(0.5));
+    assert_eq!(row.close_yesterday_fee.value, Some(0.5));
+    assert_eq!(row.close_today_fee.value, Some(1.0));
+    assert_eq!(
+        row.source_updated_at.as_deref(),
+        Some("2025-03-16 00:00:00")
+    );
+}
+
+#[test]
+fn jin10_snapshot_rejects_static_metadata_that_fails_tick_value_check() {
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2025-03-15",
+        "heyue_code": "cu2505",
+        "pub_date_commission": "2025-03-14 23:16:31",
+        "buy_ratio": "9%",
+        "sell_ratio": "9%",
+        "buy_commission": "0.5/万分之(20元)",
+        "sell_cur_commission": "0.5/万分之(20元)",
+        "sell_yesterday_commission": "1/万分之(40元)",
+        "per_ratio": "50",
+        "jys": "上海期货交易所",
+        "status": 1
+      }]
+    }"#;
+    let metadata = BTreeMap::from([(
+        "SHFE.cu".to_owned(),
+        future_meta_daemon::jin10::ContractStaticMetadata {
+            lot_size: 5.0,
+            tick_size: 5.0,
+        },
+    )]);
+
+    let err = future_meta_daemon::jin10::parse_snapshot(payload, &metadata).unwrap_err();
+
+    assert!(err.to_string().contains("per_ratio"));
+}
+
+#[test]
+fn jin10_snapshot_skips_monthly_average_contracts() {
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2025-10-29", "heyue_code": "l2602F",
+        "buy_ratio": "7%", "sell_ratio": "7%",
+        "buy_commission": "1元", "sell_cur_commission": "1元",
+        "sell_yesterday_commission": "1元", "per_ratio": "5",
+        "jys": "大连商品交易所", "status": 1
+      }]
+    }"#;
+
+    let snapshot = future_meta_daemon::jin10::parse_snapshot(payload, &BTreeMap::new()).unwrap();
+
+    assert!(snapshot.rows.is_empty());
+    assert_eq!(snapshot.skipped_missing_metadata, 0);
+    assert_eq!(snapshot.skipped_invalid_symbols, 1);
+}
+
+#[test]
+fn product_static_metadata_is_derived_from_seeded_contracts() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    upsert_allowed_rows(
+        &mut conn,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+
+    let metadata = future_meta_daemon::db::product_static_metadata(&conn).unwrap();
+
+    assert_eq!(
+        metadata.get("SHFE.cu"),
+        Some(&future_meta_daemon::jin10::ContractStaticMetadata {
+            lot_size: 5.0,
+            tick_size: 10.0,
+        })
+    );
+}
+
+#[test]
+fn product_static_metadata_candidates_retain_verified_tick_size_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut old_tick = parse_csv(CSV_V1).unwrap().remove(0);
+    old_tick.symbol = "INE.ec2604".to_owned();
+    old_tick.lot_size = 50.0;
+    old_tick.tick_size = 0.1;
+    let mut new_tick = old_tick.clone();
+    new_tick.symbol = "INE.ec2605".to_owned();
+    new_tick.tick_size = 0.5;
+    upsert_allowed_rows(
+        &mut conn,
+        &[old_tick, new_tick],
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+
+    let metadata = future_meta_daemon::db::product_static_metadata_candidates(&conn).unwrap();
+
+    assert_eq!(
+        metadata.get("INE.ec"),
+        Some(&vec![
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 50.0,
+                tick_size: 0.1,
+            },
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 50.0,
+                tick_size: 0.5,
+            },
+        ])
+    );
+}
+
+#[test]
+fn product_static_metadata_candidates_include_official_pre_change_oil_ticks() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut palm_oil = parse_csv(CSV_V1).unwrap().remove(0);
+    palm_oil.symbol = "DCE.p2605".to_owned();
+    palm_oil.lot_size = 10.0;
+    palm_oil.tick_size = 1.0;
+    let mut soybean_oil = palm_oil.clone();
+    soybean_oil.symbol = "DCE.y2605".to_owned();
+    let mut lithium_carbonate = palm_oil.clone();
+    lithium_carbonate.symbol = "GFEX.lc2605".to_owned();
+    lithium_carbonate.lot_size = 1.0;
+    lithium_carbonate.tick_size = 20.0;
+    upsert_allowed_rows(
+        &mut conn,
+        &[palm_oil, soybean_oil, lithium_carbonate],
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+
+    let metadata = future_meta_daemon::db::product_static_metadata_candidates(&conn).unwrap();
+
+    assert_eq!(
+        metadata.get("DCE.p"),
+        Some(&vec![
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 10.0,
+                tick_size: 1.0,
+            },
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 10.0,
+                tick_size: 2.0,
+            },
+        ])
+    );
+    assert_eq!(
+        metadata.get("DCE.y"),
+        Some(&vec![
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 10.0,
+                tick_size: 1.0,
+            },
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 10.0,
+                tick_size: 2.0,
+            },
+        ])
+    );
+    assert_eq!(
+        metadata.get("GFEX.lc"),
+        Some(&vec![
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 1.0,
+                tick_size: 20.0,
+            },
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 1.0,
+                tick_size: 50.0,
+            },
+        ])
+    );
+}
+
+#[test]
+fn product_static_metadata_candidates_include_verified_delisted_strong_wheat() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let metadata = future_meta_daemon::db::product_static_metadata_candidates(&conn).unwrap();
+
+    assert_eq!(
+        metadata.get("CZCE.WH"),
+        Some(&vec![future_meta_daemon::jin10::ContractStaticMetadata {
+            lot_size: 20.0,
+            tick_size: 1.0,
+        }])
+    );
+}
+
+#[test]
+fn historical_backfill_inserts_before_live_data_without_regressing_contract_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let current = parse_csv(CSV_V1).unwrap();
+    upsert_allowed_rows(&mut conn, &current, "2026-06-04T12:00:00+08:00").unwrap();
+
+    let mut historical = current[0].clone();
+    historical.open_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::CnyPerLot,
+        value: Some(0.2),
+        raw_text: Some("0.2元".to_owned()),
+    };
+    historical.source_updated_at = Some("2026-03-20 22:56:54".to_owned());
+    future_meta_daemon::db::backfill_allowed_rows(
+        &mut conn,
+        &[historical],
+        "2026-03-21T12:00:00+08:00",
+    )
+    .unwrap();
+
+    let (versions, first_seen_at, last_seen_at, active): (i64, String, String, i64) = conn
+        .query_row(
+            "select count(v.id), c.first_seen_at, c.last_seen_at, c.active
+             from contracts c
+             join fee_versions v on v.contract_id = c.id
+             group by c.id",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(versions, 2);
+    assert_eq!(first_seen_at, "2026-03-21T12:00:00+08:00");
+    assert_eq!(last_seen_at, "2026-06-04T12:00:00+08:00");
+    assert_eq!(active, 1);
+}
+
+#[test]
+fn historical_backfill_keeps_later_same_day_source_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut live = parse_csv(CSV_V1).unwrap().remove(0);
+    live.source_updated_at = Some("2026-03-27 21:11:40".to_owned());
+    upsert_allowed_rows(&mut conn, &[live.clone()], "2026-03-27T22:00:00+08:00").unwrap();
+
+    let mut historical = live;
+    historical.source_updated_at = Some("2026-03-27 00:00:00".to_owned());
+    historical.open_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::TurnoverRatePerTenThousand,
+        value: Some(0.23),
+        raw_text: Some("0.23/万分之".to_owned()),
+    };
+    future_meta_daemon::db::backfill_allowed_rows(
+        &mut conn,
+        &[historical],
+        "2026-03-27T00:00:00+08:00",
+    )
+    .unwrap();
+
+    let valid_from = conn
+        .prepare(
+            "select valid_from from fee_versions
+             order by valid_from",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        valid_from,
+        vec![
+            "2026-03-27T00:00:00+08:00".to_owned(),
+            "2026-03-27T21:11:40+08:00".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn historical_backfill_prefers_trading_status_for_same_source_second() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut live = parse_csv(CSV_V1).unwrap().remove(0);
+    live.source_updated_at = Some("2026-03-27 21:11:40".to_owned());
+    upsert_allowed_rows(&mut conn, &[live.clone()], "2026-03-27T22:00:00+08:00").unwrap();
+
+    let mut not_trading = live.clone();
+    not_trading.trading_status = future_meta::model::TradingStatus::NotTrading;
+    not_trading.is_main_contract = false;
+    not_trading.buy_margin_rate = Some(20.0);
+    not_trading.sell_margin_rate = Some(20.0);
+    conn.execute(
+        "update fee_versions
+         set rule_hash = ?1, buy_margin_rate = 20, sell_margin_rate = 20,
+             trading_status = 'NotTrading', is_main_contract = 0,
+             valid_to = '2026-03-27T21:11:40+08:00'",
+        [future_meta_daemon::hash::row_rule_hash(&not_trading)],
+    )
+    .unwrap();
+    conn.execute(
+        "insert into fee_versions(
+             contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
+             open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+             trading_status, is_main_contract, source_updated_at,
+             valid_from, valid_to, first_seen_at, last_seen_at
+         )
+         select contract_id, ?1, 12, 12,
+                open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+                'Trading', 1, source_updated_at,
+                '2026-03-27T21:11:40+08:00', null, first_seen_at, last_seen_at
+         from fee_versions",
+        [future_meta_daemon::hash::row_rule_hash(&live)],
+    )
+    .unwrap();
+
+    let mut historical = live;
+    historical.source_updated_at = Some("2026-03-27 00:00:00".to_owned());
+    historical.open_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::TurnoverRatePerTenThousand,
+        value: Some(0.23),
+        raw_text: Some("0.23/万分之".to_owned()),
+    };
+    future_meta_daemon::db::backfill_allowed_rows(
+        &mut conn,
+        &[historical],
+        "2026-03-27T00:00:00+08:00",
+    )
+    .unwrap();
+
+    let versions = conn
+        .prepare(
+            "select valid_from, trading_status, is_main_contract
+             from fee_versions order by valid_from",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        versions,
+        vec![
+            (
+                "2026-03-27T00:00:00+08:00".to_owned(),
+                "Trading".to_owned(),
+                1,
+            ),
+            (
+                "2026-03-27T21:11:40+08:00".to_owned(),
+                "Trading".to_owned(),
+                1,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn historical_backfill_moves_later_9q_observation_and_audits_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut live = parse_csv(CSV_V1).unwrap().remove(0);
+    live.source_updated_at = Some("2026-04-02 21:19:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[live.clone()], "2026-04-02T22:00:00+08:00").unwrap();
+    conn.execute(
+        "update fee_versions set valid_from = '2026-03-27T00:00:00+08:00'",
+        [],
+    )
+    .unwrap();
+
+    let mut historical = live;
+    historical.source_updated_at = Some("2026-03-27 00:00:00".to_owned());
+    historical.open_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::TurnoverRatePerTenThousand,
+        value: Some(5.0),
+        raw_text: Some("5/万分之".to_owned()),
+    };
+    future_meta_daemon::db::backfill_allowed_rows(
+        &mut conn,
+        &[historical],
+        "2026-03-27T00:00:00+08:00",
+    )
+    .unwrap();
+
+    let valid_from = conn
+        .prepare("select valid_from from fee_versions order by valid_from")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        valid_from,
+        vec![
+            "2026-03-27T00:00:00+08:00".to_owned(),
+            "2026-04-02T21:19:00+08:00".to_owned(),
+        ]
+    );
+
+    let conflict: (String, String, String) = conn
+        .query_row(
+            "select incumbent_source, contender_source, selected_source
+             from fee_rule_conflicts",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        conflict,
+        ("9qihuo".to_owned(), "jin10".to_owned(), "jin10".to_owned())
+    );
+}
+
+#[test]
+fn jin10_response_groups_rows_by_source_snapshot_date() {
+    let payload = r#"{
+      "status": 200,
+      "data": [
+        {
+          "date": "2025-03-14", "heyue_code": "cu2505",
+          "pub_date_commission": "2025-03-13 23:16:31",
+          "buy_ratio": "9%", "sell_ratio": "9%",
+          "buy_commission": "0.5/万分之(20元)",
+          "sell_cur_commission": "0.5/万分之(20元)",
+          "sell_yesterday_commission": "1/万分之(40元)",
+          "per_ratio": "50", "jys": "上海期货交易所", "status": 1
+        },
+        {
+          "date": "2025-03-15", "heyue_code": "cu2505",
+          "pub_date_commission": "2025-03-14 23:16:31",
+          "buy_ratio": "9%", "sell_ratio": "9%",
+          "buy_commission": "0.5/万分之(20元)",
+          "sell_cur_commission": "0.5/万分之(20元)",
+          "sell_yesterday_commission": "1/万分之(40元)",
+          "per_ratio": "50", "jys": "上海期货交易所", "status": 1
+        }
+      ]
+    }"#;
+    let metadata = BTreeMap::from([(
+        "SHFE.cu".to_owned(),
+        future_meta_daemon::jin10::ContractStaticMetadata {
+            lot_size: 5.0,
+            tick_size: 10.0,
+        },
+    )]);
+
+    let snapshots = future_meta_daemon::jin10::parse_snapshots(payload, &metadata).unwrap();
+
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].observed_at, "2025-03-15T00:00:00+08:00");
+    assert_eq!(snapshots[1].observed_at, "2025-03-16T00:00:00+08:00");
+    assert_eq!(snapshots[0].snapshot.rows.len(), 1);
+    assert_eq!(snapshots[1].snapshot.rows.len(), 1);
+    assert_eq!(
+        snapshots[0].snapshot.rows[0].source_updated_at.as_deref(),
+        Some("2025-03-15 00:00:00")
+    );
+    assert_eq!(
+        snapshots[1].snapshot.rows[0].source_updated_at.as_deref(),
+        Some("2025-03-16 00:00:00")
+    );
+}
+
+#[test]
+fn jin10_snapshot_selects_unique_static_candidate_from_per_tick_value() {
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2025-03-15", "heyue_code": "ec2506",
+        "pub_date_commission": "2025-03-14 23:16:31",
+        "buy_ratio": "12%", "sell_ratio": "12%",
+        "buy_commission": "1元", "sell_cur_commission": "1元",
+        "sell_yesterday_commission": "0元", "per_ratio": "5",
+        "jys": "上海国际能源交易中心", "status": 1
+      }]
+    }"#;
+    let metadata = BTreeMap::from([(
+        "INE.ec".to_owned(),
+        vec![
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 50.0,
+                tick_size: 0.1,
+            },
+            future_meta_daemon::jin10::ContractStaticMetadata {
+                lot_size: 50.0,
+                tick_size: 0.5,
+            },
+        ],
+    )]);
+
+    let snapshot =
+        future_meta_daemon::jin10::parse_snapshot_with_candidates(payload, &metadata).unwrap();
+
+    assert_eq!(snapshot.rows[0].lot_size.to_bits(), 50.0_f64.to_bits());
+    assert_eq!(snapshot.rows[0].tick_size.to_bits(), 0.1_f64.to_bits());
+}
+
+#[test]
+fn jin10_payload_does_not_mutate_a_seeded_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    upsert_allowed_rows(
+        &mut conn,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    drop(conn);
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2026-03-20", "heyue_code": "cu2607",
+        "pub_date_commission": "2026-03-20 22:56:54",
+        "buy_ratio": "12%", "sell_ratio": "12%",
+        "buy_commission": "0.2元", "sell_cur_commission": "0.1元",
+        "sell_yesterday_commission": "0.1元", "per_ratio": "50",
+        "jys": "上海期货交易所", "status": 1
+      }]
+    }"#;
+
+    let err = future_meta_daemon::refresh::backfill_jin10_payload(&db_path, payload).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Jin10 historical backfill is retired and cannot be used")
+    );
+
+    let conn = connect(&db_path).unwrap();
+    let versions: i64 = conn
+        .query_row("select count(*) from fee_versions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(versions, 1);
+}
+
+#[test]
+fn jin10_backfill_is_retired_even_for_a_seeded_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    upsert_allowed_rows(
+        &mut conn,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    drop(conn);
+
+    let err = future_meta_daemon::refresh::backfill_jin10_payload(&db_path, "{}").unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Jin10 historical backfill is retired and cannot be used")
+    );
+}
+
+#[test]
+fn jin10_range_backfill_is_retired_before_network_or_input_validation() {
+    let db_path = tempfile::tempdir()
+        .unwrap()
+        .path()
+        .join("future-meta.sqlite");
+
+    let err =
+        future_meta_daemon::refresh::backfill_jin10(&db_path, "not-a-date", "also-not-a-date")
+            .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("Jin10 historical backfill is retired and cannot be used")
+    );
+}
+
+#[test]
+fn nineqihuo_csv_history_refresh_is_retired_before_creating_a_database() {
+    let db_path = tempfile::tempdir()
+        .unwrap()
+        .path()
+        .join("future-meta.sqlite");
+
+    let err = refresh_with_options(
+        &db_path,
+        RefreshOptions {
+            force_full: false,
+            require_seed: true,
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        err.to_string()
+            .contains("9qihuo single-variety CSV history refresh is retired")
+    );
+    assert!(!db_path.exists());
+}
+
+#[test]
+fn jin10_backfill_does_not_record_source_snapshot_coverage() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    upsert_allowed_rows(
+        &mut conn,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    drop(conn);
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2026-03-20", "heyue_code": "cu2607",
+        "buy_ratio": "12%", "sell_ratio": "12%",
+        "buy_commission": "0.2元", "sell_cur_commission": "0.1元",
+        "sell_yesterday_commission": "0.1元", "per_ratio": "50",
+        "jys": "上海期货交易所", "status": 1
+      }]
+    }"#;
+
+    let err = future_meta_daemon::refresh::backfill_jin10_payload(&db_path, payload).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Jin10 historical backfill is retired and cannot be used")
+    );
+
+    let conn = connect(&db_path).unwrap();
+    let snapshots: i64 = conn
+        .query_row("select count(*) from jin10_source_snapshots", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(snapshots, 0);
+}
+
+#[test]
+fn jin10_payload_does_not_add_historical_only_contracts() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    upsert_allowed_rows(
+        &mut conn,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    drop(conn);
+    let payload = r#"{
+      "status": 200,
+      "data": [{
+        "date": "2025-03-15", "heyue_code": "cu2505",
+        "pub_date_commission": "2025-03-14 23:16:31",
+        "buy_ratio": "9%", "sell_ratio": "9%",
+        "buy_commission": "0.5/万分之(20元)",
+        "sell_cur_commission": "0.5/万分之(20元)",
+        "sell_yesterday_commission": "1/万分之(40元)",
+        "per_ratio": "50", "jys": "上海期货交易所", "status": 1
+      }]
+    }"#;
+
+    let err = future_meta_daemon::refresh::backfill_jin10_payload(&db_path, payload).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Jin10 historical backfill is retired and cannot be used")
+    );
+
+    let conn = connect(&db_path).unwrap();
+    let versions: i64 = conn
+        .query_row(
+            "select count(*) from fee_versions v
+             join contracts c on c.id = v.contract_id
+             where c.symbol = 'SHFE.cu2505'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(versions, 0);
+}
+
+#[test]
+fn jin10_snapshot_keeps_latest_duplicate_contract_rule_for_next_day() {
+    let payload = r#"{
+      "status": 200,
+      "data": [
+        {
+          "date": "2024-11-20", "heyue_code": "IC2412",
+          "pub_date_commission": "2024-11-19 22:44:34",
+          "buy_ratio": "12%", "sell_ratio": "12%",
+          "buy_commission": "0.01元", "sell_cur_commission": "0.01元",
+          "sell_yesterday_commission": "0.01元", "per_ratio": "40",
+          "jys": "中国金融期货交易所", "status": 1,
+          "updated_at": "2024-11-20T05:23:05.000Z"
+        },
+        {
+          "date": "2024-11-20", "heyue_code": "IC2412",
+          "pub_date_commission": "2024-11-20 23:48:18",
+          "buy_ratio": "12%", "sell_ratio": "12%",
+          "buy_commission": "0.23/万分之(27元)",
+          "sell_cur_commission": "0.23/万分之(27元)",
+          "sell_yesterday_commission": "2.3/万分之(270.1元)",
+          "per_ratio": "40", "jys": "中国金融期货交易所", "status": 1,
+          "updated_at": "2024-11-20T15:59:02.000Z"
+        }
+      ]
+    }"#;
+    let metadata = BTreeMap::from([(
+        "CFFEX.IC".to_owned(),
+        future_meta_daemon::jin10::ContractStaticMetadata {
+            lot_size: 200.0,
+            tick_size: 0.2,
+        },
+    )]);
+
+    let snapshot = future_meta_daemon::jin10::parse_snapshot(payload, &metadata).unwrap();
+
+    assert_eq!(snapshot.rows.len(), 1);
+    assert_eq!(snapshot.rows[0].open_fee.value, Some(0.23));
+    assert_eq!(
+        snapshot.rows[0].source_updated_at.as_deref(),
+        Some("2024-11-21 00:00:00")
+    );
+}
+
+#[test]
+fn jin10_range_url_uses_exact_source_date_filter() {
+    let url = future_meta_daemon::jin10::range_url("2024-06-11", "2024-06-30").unwrap();
+    let query = url.query_pairs().collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        query.get("tb_name").map(std::convert::AsRef::<str>::as_ref),
+        Some("_vir_26")
+    );
+    assert_eq!(
+        query.get("search").map(std::convert::AsRef::<str>::as_ref),
+        Some(r#"{"range,date":"2024-06-11,2024-06-30","status":1}"#)
+    );
 }
