@@ -3,6 +3,7 @@
 /public
 /.env
 /.codex
+/.worktrees
 /.mcp.json
 **/*.rs.bk
 .DS_Store
