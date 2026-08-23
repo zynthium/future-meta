@@ -1,4 +1,7 @@
 use future_meta::query::FutureMeta;
+use future_meta_daemon::coverage::{
+    CoverageBoundary, CoverageFindingKind, audit_history_coverage, audit_history_coverage_to_path,
+};
 use future_meta_daemon::db::{
     LatestCompletion, apply_official_fee_transition, apply_official_fee_tuple,
     apply_official_listed_contract_fee_tuple, compare_fee_rows_as_of, complete_latest_rows,
@@ -20,6 +23,7 @@ use future_meta_daemon::refresh::{
 use future_meta_daemon::source::discover_sources_from_html;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use time::{Date, Month};
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";
 const CSV_V2: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.2元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-28 22:56:54,主力合约\n";
@@ -3405,4 +3409,300 @@ fn jin10_range_url_uses_exact_source_date_filter() {
         query.get("search").map(std::convert::AsRef::<str>::as_ref),
         Some(r#"{"range,date":"2024-06-11,2024-06-30","status":1}"#)
     );
+}
+
+#[test]
+fn coverage_audit_reports_unknown_lifecycle_and_missing_histories() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    conn.execute(
+        "insert into contracts(
+           symbol, listing_date, expiry_date, lot_size, tick_size,
+           first_seen_at, last_seen_at, active
+         ) values (
+           'SHFE.cu2001', null, null, 5.0, 10.0,
+           '2019-01-01T00:00:00+08:00', '2020-01-15T00:00:00+08:00', 0
+         )",
+        [],
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(
+        &conn,
+        CoverageBoundary {
+            from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+            through: Date::from_calendar_date(2020, Month::December, 31).unwrap(),
+        },
+    )
+    .unwrap();
+    let kinds = report
+        .findings
+        .iter()
+        .map(|finding| finding.kind)
+        .collect::<Vec<_>>();
+
+    assert_eq!(report.contracts, 1);
+    assert_eq!(report.complete_contracts, 0);
+    assert!(kinds.contains(&CoverageFindingKind::MissingListingDate));
+    assert!(kinds.contains(&CoverageFindingKind::MissingExpiryDate));
+    assert!(kinds.contains(&CoverageFindingKind::MissingFeeHistory));
+    assert!(kinds.contains(&CoverageFindingKind::MissingSpecificationHistory));
+}
+
+fn insert_complete_coverage_contract(conn: &rusqlite::Connection) {
+    conn.execute(
+        "insert into contracts(
+           id, symbol, listing_date, expiry_date, lot_size, tick_size,
+           first_seen_at, last_seen_at, active
+         ) values (
+           1, 'SHFE.cu2001', '20200102', '20200131', 5.0, 10.0,
+           '2020-01-02T00:00:00+08:00', '2020-01-31T00:00:00+08:00', 0
+         )",
+        [],
+    )
+    .unwrap();
+    let fee = r#"{"kind":"CnyPerLot","value":5.0,"raw_text":"5元/手"}"#;
+    conn.execute(
+        "insert into fee_versions(
+           contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
+           open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+           trading_status, is_main_contract, source_kind, source_updated_at,
+           valid_from, valid_to, first_seen_at, last_seen_at
+         ) values (
+           1, 'official-rule', null, null, ?1, ?1, ?1,
+           'Trading', 0, 'official', null,
+           '2020-01-02T00:00:00+08:00', null,
+           '2020-01-02T00:00:00+08:00', '2020-01-31T00:00:00+08:00'
+         )",
+        [fee],
+    )
+    .unwrap();
+    conn.execute(
+        "insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         ) values (
+           1, 5.0, 10.0, '2020-01-02T00:00:00+08:00', null,
+           'official', 'https://www.shfe.com.cn/rules/cu.html',
+           '2020-01-02T00:00:00+08:00', '2020-01-31T00:00:00+08:00'
+         )",
+        [],
+    )
+    .unwrap();
+}
+
+fn january_2020_coverage() -> CoverageBoundary {
+    CoverageBoundary {
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        through: Date::from_calendar_date(2020, Month::January, 31).unwrap(),
+    }
+}
+
+#[test]
+fn coverage_audit_accepts_complete_official_interval_chains() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert_eq!(report.contracts, 1);
+    assert_eq!(report.complete_contracts, 1);
+    assert!(report.findings.is_empty());
+}
+
+#[test]
+fn coverage_audit_rejects_fee_chain_starting_after_listing() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute(
+        "update fee_versions set valid_from = '2020-01-03T00:00:00+08:00'",
+        [],
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::FeeCoverageGap })
+    );
+}
+
+#[test]
+fn coverage_audit_rejects_non_official_specification_source() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute(
+        "update contract_spec_versions set source_kind = 'v11_baseline'",
+        [],
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::NonOfficialSpecificationSource })
+    );
+}
+
+#[test]
+fn coverage_audit_rejects_non_official_fee_source() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute("update fee_versions set source_kind = 'v11_baseline'", [])
+        .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.kind == CoverageFindingKind::NonOfficialFeeSource)
+    );
+}
+
+#[test]
+fn coverage_audit_rejects_specification_chain_starting_after_listing() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute(
+        "update contract_spec_versions set valid_from = '2020-01-03T00:00:00+08:00'",
+        [],
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::SpecificationCoverageGap })
+    );
+}
+
+#[test]
+fn coverage_audit_rejects_overlapping_fee_intervals() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute(
+        "update fee_versions set valid_to = '2020-01-20T00:00:00+08:00'",
+        [],
+    )
+    .unwrap();
+    let fee = r#"{"kind":"CnyPerLot","value":6.0,"raw_text":"6元/手"}"#;
+    conn.execute(
+        "insert into fee_versions(
+           contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
+           open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+           trading_status, is_main_contract, source_kind, source_updated_at,
+           valid_from, valid_to, first_seen_at, last_seen_at
+         ) values (
+           1, 'overlap', null, null, ?1, ?1, ?1,
+           'Trading', 0, 'official', null,
+           '2020-01-10T00:00:00+08:00', null,
+           '2020-01-10T00:00:00+08:00', '2020-01-31T00:00:00+08:00'
+         )",
+        [fee],
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.kind == CoverageFindingKind::FeeIntervalOverlap)
+    );
+}
+
+#[test]
+fn coverage_audit_rejects_invalid_contract_specification_value() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute_batch(
+        "pragma ignore_check_constraints = on;
+         update contract_spec_versions set tick_size = 0.0;
+         pragma ignore_check_constraints = off;",
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::InvalidSpecificationValue })
+    );
+}
+
+#[test]
+fn coverage_audit_rejects_unknown_fee_value() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    let unknown = r#"{"kind":"Unknown","value":null,"raw_text":"unknown"}"#;
+    conn.execute(
+        "update fee_versions set close_today_fee_json = ?1",
+        [unknown],
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::InvalidFeeValue })
+    );
+}
+
+#[test]
+fn coverage_report_writes_json_before_strict_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("history.sqlite");
+    let report_path = dir.path().join("coverage.json");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    conn.execute(
+        "insert into contracts(
+           symbol, listing_date, expiry_date, lot_size, tick_size,
+           first_seen_at, last_seen_at, active
+         ) values (
+           'SHFE.cu2001', null, null, 5.0, 10.0,
+           '2020-01-01T00:00:00+08:00', '2020-01-31T00:00:00+08:00', 0
+         )",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let error =
+        audit_history_coverage_to_path(&db_path, january_2020_coverage(), &report_path, true)
+            .unwrap_err();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report_path).unwrap()).unwrap();
+
+    assert!(error.to_string().contains("strict coverage failed"));
+    assert_eq!(json["boundary"]["from"], "2020-01-01");
+    assert_eq!(json["contracts"], 1);
+    assert_eq!(json["complete_contracts"], 0);
+    assert_eq!(json["findings"][0]["symbol"], "SHFE.cu2001");
+    assert_eq!(json["findings"][0]["kind"], "missing_listing_date");
 }

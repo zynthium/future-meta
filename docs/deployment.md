@@ -42,6 +42,20 @@ cargo run -p future-meta-daemon -- apply-verified-official \
 
 该命令不在定时 workflow 中。必须先完成[证据门控更新验证](evidence-gated-update-validation.md)规定的二十四个月回放与十四天影子运行；在此之前不得对生产 SQLite、发布产物或 Cloudflare 部署执行该操作。
 
+审阅副本导出前必须通过严格覆盖审计：
+
+```bash
+cargo run -p future-meta-daemon -- audit-coverage \
+  --db path/to/review-copy.sqlite \
+  --from 2020-01-01 \
+  --through 2026-08-24 \
+  --out /tmp/future-meta-coverage.json \
+  --strict
+```
+
+审计检查范围内合约的官方上市/到期边界、三腿手续费、合约乘数、最小变动价位、
+版本连续性及 `official` 溯源。失败时仍会保留完整 JSON 缺口清单，但不得导出或部署。
+
 ## GitHub 定时更新
 
 定时任务每天北京时间 18:45 运行，对应 GitHub Actions cron `45 10 * * *`。

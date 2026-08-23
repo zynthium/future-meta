@@ -198,6 +198,21 @@ for tick in ticks {
 cargo run -p future-meta-daemon -- inspect --db data/future-meta.sqlite
 ```
 
+生成 2020 年以来五字段历史覆盖报告：
+
+```bash
+cargo run -p future-meta-daemon -- audit-coverage \
+  --db data/future-meta.sqlite \
+  --from 2020-01-01 \
+  --through 2026-08-24 \
+  --out /tmp/future-meta-coverage.json \
+  --strict
+```
+
+`--strict` 要求范围内每个合约都有官方上市日、到期日，以及来源标记为
+`official` 的连续手续费和合约规格区间。任一缺口都会在写出 JSON 报告后返回失败。
+不带 `--strict` 时只生成报告，适合补证据期间查看剩余缺口。
+
 暂存人工复核过的交易所历史材料：
 
 ```bash

@@ -1,5 +1,6 @@
 pub mod announcement;
 pub mod baseline;
+pub mod coverage;
 pub mod db;
 pub mod export;
 pub mod hash;
@@ -120,6 +121,18 @@ enum Command {
     Inspect {
         #[arg(long)]
         db: PathBuf,
+    },
+    AuditCoverage {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        through: String,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        strict: bool,
     },
 }
 
@@ -257,6 +270,24 @@ pub fn run() -> anyhow::Result<()> {
         ),
         Command::Export { db, out } => export::export_archive(&db, &out),
         Command::Inspect { db } => db::inspect(&db),
+        Command::AuditCoverage {
+            db,
+            from,
+            through,
+            out,
+            strict,
+        } => {
+            let boundary = coverage::CoverageBoundary::parse(&from, &through)?;
+            let report = coverage::audit_history_coverage_to_path(&db, boundary, &out, strict)?;
+            eprintln!(
+                "coverage audit: contracts={} complete={} findings={} out={}",
+                report.contracts,
+                report.complete_contracts,
+                report.findings.len(),
+                out.display()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -370,6 +401,41 @@ mod tests {
                 assert_eq!(input, PathBuf::from("/tmp/params.htm"));
             }
             _ => panic!("expected retain-official-snapshot command"),
+        }
+    }
+
+    #[test]
+    fn coverage_cli_requires_boundary_output_and_strict_flag() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "audit-coverage",
+            "--db",
+            "data/future-meta.sqlite",
+            "--from",
+            "2020-01-01",
+            "--through",
+            "2026-08-24",
+            "--out",
+            "coverage.json",
+            "--strict",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::AuditCoverage {
+                db,
+                from,
+                through,
+                out,
+                strict,
+            } => {
+                assert_eq!(db, PathBuf::from("data/future-meta.sqlite"));
+                assert_eq!(from, "2020-01-01");
+                assert_eq!(through, "2026-08-24");
+                assert_eq!(out, PathBuf::from("coverage.json"));
+                assert!(strict);
+            }
+            _ => panic!("expected audit-coverage command"),
         }
     }
 }
