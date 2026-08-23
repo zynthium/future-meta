@@ -1,6 +1,6 @@
 //! Refresh orchestration.
 
-use crate::db::{self, connect, ensure_schema, upsert_latest_rows};
+use crate::db::{self, connect, ensure_schema};
 use crate::hash::{rule_set_hash, source_probe_hash};
 use crate::jin10::{parse_snapshots_with_candidates, range_url};
 use crate::latest::{LATEST_TABLE_PROBE_KEY, parse_latest_html};
@@ -52,6 +52,44 @@ pub struct Jin10Validation {
     pub compared_rows: usize,
     pub mismatch_count: usize,
     pub differences: Vec<db::FeeRuleDifference>,
+}
+
+/// Read-only comparison of the 9qihuo latest table against the current
+/// review baseline and same-day Jin10 observations.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LatestCandidateDiagnosis {
+    pub observed_at: String,
+    pub qihuo_rows: usize,
+    pub skipped_invalid_symbols: usize,
+    pub skipped_missing_metadata: usize,
+    pub diagnostics: Vec<db::LatestCandidateDiagnostic>,
+}
+
+/// Reject third-party fee differences until an exact official adjustment has
+/// already been applied to the local history. `9qihuo` and Jin10 agreement is
+/// useful corroboration, but it is not authority to create a fee version.
+///
+/// # Errors
+///
+/// Returns an error whenever two third-party sources agree on at least one
+/// changed fee tuple that is not yet represented by the approved history.
+pub fn require_official_fee_change_admission(
+    verification: &db::LatestCandidateVerification,
+) -> Result<()> {
+    if verification.accepted.is_empty() {
+        return Ok(());
+    }
+    let symbols = verification
+        .accepted
+        .iter()
+        .take(12)
+        .map(|row| row.symbol.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    Err(anyhow!(
+        "{} third-party fee changes require staged verified official evidence before history write; examples={symbols}",
+        verification.accepted.len()
+    ))
 }
 
 /// Backfill one verified Jin10 JSON payload into an existing 9qihuo seed.
@@ -193,7 +231,8 @@ pub fn validate_jin10(
             validation.jin10_rows += snapshot.snapshot.rows.len();
             validation.skipped_invalid_symbols += snapshot.snapshot.skipped_invalid_symbols;
             validation.skipped_missing_metadata += snapshot.snapshot.skipped_missing_metadata;
-            let (compared, differences) = db::compare_fee_rows(&conn, &snapshot.snapshot.rows)?;
+            let (compared, differences) =
+                db::compare_fee_rows_as_of(&conn, &snapshot.snapshot.rows, &snapshot.observed_at)?;
             validation.compared_rows += compared;
             validation.differences.extend(differences);
         }
@@ -203,6 +242,54 @@ pub fn validate_jin10(
         std::fs::write(out, serde_json::to_vec_pretty(&validation)?)?;
     }
     Ok(validation)
+}
+
+/// Fetch latest third-party observations and write a read-only diagnostic
+/// report. This command deliberately does not update source state, fee
+/// history, or announcement state.
+///
+/// # Errors
+///
+/// Returns an error when the database is not a V11 seed, either source cannot
+/// be fetched or parsed, candidate verification fails, or the report cannot be
+/// written.
+pub fn diagnose_latest(db_path: &Path, out: &Path) -> Result<LatestCandidateDiagnosis> {
+    let conn = connect(db_path)?;
+    ensure_schema(&conn)?;
+    db::ensure_seeded(&conn)?;
+    crate::baseline::ensure_v11_baseline(&conn)?;
+
+    let observed_at = now_string()?;
+    let client = http_client()?;
+    let html = fetch_text(&client, TOTAL_URL)?;
+    let snapshot = parse_latest_html(&html)?;
+    if snapshot.rows.is_empty() {
+        return Err(anyhow!(
+            "latest total-page table returned no allowed rows: {TOTAL_URL}"
+        ));
+    }
+    let completion = db::complete_latest_rows(&conn, &snapshot.rows)?;
+    if completion.rows.is_empty() {
+        return Err(anyhow!(
+            "latest total-page rows could not be completed from seed metadata: parsed={} skipped_invalid_symbols={} skipped_missing_metadata={}",
+            snapshot.rows.len(),
+            snapshot.skipped_invalid_symbols,
+            completion.skipped_missing_metadata
+        ));
+    }
+    let observed_at_parsed = OffsetDateTime::parse(&observed_at, &Rfc3339)?;
+    let jin10_rows = recent_jin10_rows(&conn, observed_at_parsed)?;
+    let diagnostics =
+        db::diagnose_rejected_latest_candidates(&conn, &completion.rows, &jin10_rows)?;
+    let result = LatestCandidateDiagnosis {
+        observed_at,
+        qihuo_rows: completion.rows.len(),
+        skipped_invalid_symbols: snapshot.skipped_invalid_symbols,
+        skipped_missing_metadata: completion.skipped_missing_metadata,
+        diagnostics,
+    };
+    std::fs::write(out, serde_json::to_vec_pretty(&result)?)?;
+    Ok(result)
 }
 
 fn reject_jin10_backfill() -> Result<()> {
@@ -303,6 +390,14 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
     db::ensure_seeded(&conn)?;
     crate::baseline::ensure_v11_baseline(&conn)?;
 
+    let observed_at = now_string()?;
+    let announcement_health = db::announcement_health(&conn, &observed_at)?;
+    eprintln!(
+        "announcement health accepted: fresh_sources={} pending_candidates={}",
+        announcement_health.fresh_sources.join(","),
+        announcement_health.pending_candidates,
+    );
+
     let client = http_client()?;
     let html = fetch_text(&client, TOTAL_URL)?;
     let snapshot = parse_latest_html(&html)?;
@@ -321,7 +416,6 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         ));
     }
 
-    let observed_at = now_string()?;
     let rows_hash = rule_set_hash(&completion.rows);
     let probe_hash = source_probe_hash(TOTAL_URL, LATEST_TABLE_PROBE_KEY);
     if db::source_rule_set_hash(&conn, TOTAL_URL)?.as_deref() == Some(&rows_hash) {
@@ -347,30 +441,26 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
             .collect::<Vec<_>>()
             .join(",");
         let message = format!(
-            "refused {} unconfirmed 9qihuo fee candidates; examples={symbols}",
+            "refused {} latest fee candidates before history write; candidates need Jin10 confirmation or staged official evidence; examples={symbols}",
             verified.rejected.len()
         );
-        // Keep the reviewed baseline publishable when live candidates cannot
-        // be corroborated. The current snapshot still proves which existing
-        // contracts are active, but none of its fee rules may enter history.
-        db::mark_latest_contracts_seen(&mut conn, &completion.rows, &observed_at)?;
         db::update_source_error(&conn, TOTAL_URL, &observed_at, &message)?;
-        eprintln!("{message}; no fee history changes were applied");
-        return Ok(());
+        return Err(anyhow!("{message}; no fee history changes were applied"));
     }
 
-    let skipped_conflicting_csv_rows =
-        upsert_latest_rows(&mut conn, &verified.accepted, &observed_at)?;
+    if let Err(error) = require_official_fee_change_admission(&verified) {
+        db::update_source_error(&conn, TOTAL_URL, &observed_at, &error.to_string())?;
+        return Err(error);
+    }
+
     db::mark_latest_contracts_seen(&mut conn, &completion.rows, &observed_at)?;
     db::update_source_success(&conn, TOTAL_URL, &probe_hash, &rows_hash, &observed_at)?;
     eprintln!(
-        "latest table updated: rows={} unchanged_fee_rows={} jin10_confirmed_fee_changes={} skipped_invalid_symbols={} skipped_missing_metadata={} skipped_conflicting_csv_rows={} url={}",
+        "latest table verified unchanged: rows={} unchanged_fee_rows={} skipped_invalid_symbols={} skipped_missing_metadata={} url={}",
         completion.rows.len(),
         verified.unchanged,
-        verified.accepted.len(),
         snapshot.skipped_invalid_symbols,
         completion.skipped_missing_metadata,
-        skipped_conflicting_csv_rows,
         TOTAL_URL
     );
     Ok(())

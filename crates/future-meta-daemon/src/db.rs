@@ -1,17 +1,27 @@
 //! `SQLite` schema and version maintenance.
 
+use crate::announcement::{AnnouncementCandidate, AnnouncementDocument, AnnouncementSource};
 use crate::hash::row_rule_hash;
 use crate::jin10::ContractStaticMetadata;
 use crate::latest::LatestRow;
 use crate::parse::AllowedRow;
 use anyhow::{Result, anyhow};
-use future_meta::model::{FeeSpec, TradingStatus};
+use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime, UtcOffset};
+
+/// A normal incremental source refresh should only contain a small number of
+/// independently corroborated fee changes. Larger exchange-wide adjustments
+/// must be imported from staged official evidence instead of two display
+/// sources that can share the same upstream defect.
+const MAX_AUTOMATIC_FEE_CHANGES_PER_SNAPSHOT: usize = 12;
+const MAX_ANNOUNCEMENT_SCAN_AGE: Duration = Duration::hours(1);
+const MAX_UNRESOLVED_CANDIDATE_AGE: Duration = Duration::hours(24);
 
 /// Minimal history table counts used by update safety checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +47,10 @@ pub struct FeeRuleDifference {
     pub secondary: [FeeSpec; 3],
 }
 
-/// A 9qihuo latest-table fee candidate that did not receive same-day Jin10
-/// confirmation. Rejections are deliberately kept out of `fee_versions`.
+/// A 9qihuo latest-table fee candidate rejected for missing corroboration or a
+/// safety-sensitive transition. Rejections are deliberately kept out of
+/// `fee_versions` and high-risk candidates must be staged with exchange
+/// original evidence.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LatestCandidateRejection {
     pub symbol: String,
@@ -51,6 +63,30 @@ pub struct LatestCandidateVerification {
     pub accepted: Vec<AllowedRow>,
     pub unchanged: usize,
     pub rejected: Vec<LatestCandidateRejection>,
+}
+
+/// Read-only audit detail for a latest-table candidate rejected by the
+/// two-source admission gate.  This intentionally captures each source's
+/// exact fee tuple so an operator can distinguish a missing observation from
+/// a conflicting observation without querying mutable history tables.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct LatestCandidateDiagnostic {
+    pub symbol: String,
+    pub source_updated_at: Option<String>,
+    pub production: [FeeSpec; 3],
+    pub qihuo: [FeeSpec; 3],
+    pub jin10: Option<[FeeSpec; 3]>,
+    pub jin10_source_updated_at: Option<String>,
+    pub rejection_reason: String,
+}
+
+/// Discovery state required before a third-party latest-table refresh may run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnouncementHealth {
+    /// Broker sources with a current successful scan that has not subsequently failed.
+    pub fresh_sources: Vec<String>,
+    /// Unresolved fee-change candidates that have not yet reached the blocking age.
+    pub pending_candidates: usize,
 }
 
 /// Keep only 9qihuo fee changes corroborated by Jin10 for the same exchange
@@ -75,6 +111,8 @@ pub fn cross_verify_latest_candidates(
         };
         jin10_by_key.insert((row.symbol.clone(), day.to_owned()), row);
     }
+    let product_candidate_counts = product_fee_kind_counts(candidates)?;
+    let current_product_counts = current_product_fee_kind_counts(conn)?;
 
     let mut accepted = Vec::new();
     let mut unchanged = 0usize;
@@ -90,6 +128,26 @@ pub fn cross_verify_latest_candidates(
         };
         if same_fee_rules(&current.fees, &candidate_fees) {
             unchanged += 1;
+            continue;
+        }
+
+        if is_isolated_tenth_placeholder(
+            candidate,
+            &product_candidate_counts,
+            &current_product_counts,
+        )? {
+            rejected.push(LatestCandidateRejection {
+                symbol: candidate.symbol.clone(),
+                reason: "isolated 0.1 CNY candidate requires official evidence".to_owned(),
+            });
+            continue;
+        }
+
+        if let Some(reason) = live_candidate_safety_rejection(&current.fees, &candidate_fees) {
+            rejected.push(LatestCandidateRejection {
+                symbol: candidate.symbol.clone(),
+                reason: reason.to_owned(),
+            });
             continue;
         }
 
@@ -117,11 +175,70 @@ pub fn cross_verify_latest_candidates(
         accepted.push(candidate.clone());
     }
 
+    if accepted.len() > MAX_AUTOMATIC_FEE_CHANGES_PER_SNAPSHOT {
+        for candidate in accepted.drain(..) {
+            rejected.push(LatestCandidateRejection {
+                symbol: candidate.symbol,
+                reason: "large fee-change batch requires staged official evidence".to_owned(),
+            });
+        }
+    }
+
     Ok(LatestCandidateVerification {
         accepted,
         unchanged,
         rejected,
     })
+}
+
+/// Return source-by-source evidence for every latest candidate rejected by
+/// [`cross_verify_latest_candidates`].  This performs no writes.
+///
+/// # Errors
+///
+/// Returns an error when the current fee state cannot be read or candidate
+/// verification encounters malformed source timestamps or fee values.
+pub fn diagnose_rejected_latest_candidates(
+    conn: &Connection,
+    candidates: &[AllowedRow],
+    jin10_rows: &[AllowedRow],
+) -> Result<Vec<LatestCandidateDiagnostic>> {
+    let verification = cross_verify_latest_candidates(conn, candidates, jin10_rows)?;
+    let rejection_reasons = verification
+        .rejected
+        .into_iter()
+        .map(|rejection| (rejection.symbol, rejection.reason))
+        .collect::<BTreeMap<_, _>>();
+    let mut jin10_by_key = BTreeMap::<(String, String), &AllowedRow>::new();
+    for row in jin10_rows {
+        let Some(day) = source_day(row) else {
+            continue;
+        };
+        jin10_by_key.insert((row.symbol.clone(), day.to_owned()), row);
+    }
+
+    let mut diagnostics = Vec::new();
+    for candidate in candidates {
+        let Some(rejection_reason) = rejection_reasons.get(&candidate.symbol) else {
+            continue;
+        };
+        let current = current_fee_rule(conn, &candidate.symbol)?;
+        let jin10 = source_day(candidate).and_then(|day| {
+            jin10_by_key
+                .get(&(candidate.symbol.clone(), day.to_owned()))
+                .copied()
+        });
+        diagnostics.push(LatestCandidateDiagnostic {
+            symbol: candidate.symbol.clone(),
+            source_updated_at: candidate.source_updated_at.clone(),
+            production: current.map_or_else(|| fee_tuple(candidate), |rule| rule.fees),
+            qihuo: fee_tuple(candidate),
+            jin10: jin10.map(fee_tuple),
+            jin10_source_updated_at: jin10.and_then(|row| row.source_updated_at.clone()),
+            rejection_reason: rejection_reason.clone(),
+        });
+    }
+    Ok(diagnostics)
 }
 
 fn source_day(row: &AllowedRow) -> Option<&str> {
@@ -171,6 +288,37 @@ pub fn compare_fee_rows(
     Ok((compared, differences))
 }
 
+/// Compare external fee rows with the production rule effective at a historical
+/// snapshot boundary, without changing the database.
+///
+/// # Errors
+///
+/// Returns an error when the comparison timestamp or fee rules cannot be read.
+pub fn compare_fee_rows_as_of(
+    conn: &Connection,
+    rows: &[AllowedRow],
+    effective_at: &str,
+) -> Result<(usize, Vec<FeeRuleDifference>)> {
+    parse_timestamp("effective_at", effective_at)?;
+    let mut compared = 0usize;
+    let mut differences = Vec::new();
+    for row in rows {
+        let Some(current) = fee_rule_as_of(conn, &row.symbol, effective_at)? else {
+            continue;
+        };
+        compared += 1;
+        let secondary = fee_tuple(row);
+        if !same_fee_rules(&current.fees, &secondary) {
+            differences.push(FeeRuleDifference {
+                symbol: row.symbol.clone(),
+                production: current.fees,
+                secondary,
+            });
+        }
+    }
+    Ok((compared, differences))
+}
+
 /// Open a `SQLite` connection, creating the database parent directory first.
 ///
 /// # Errors
@@ -192,6 +340,7 @@ pub fn connect(path: &Path) -> Result<Connection> {
 /// # Errors
 ///
 /// Returns an error when `SQLite` schema creation fails.
+#[allow(clippy::too_many_lines)]
 pub fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -220,7 +369,7 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           close_today_fee_json text not null check(json_valid(close_today_fee_json)),
           trading_status text not null check(trading_status in ('Trading', 'NotTrading', 'Unknown')),
           is_main_contract integer not null check(is_main_contract in (0, 1)),
-          source_kind text not null default '9qihuo' check(source_kind in ('9qihuo', 'jin10', 'v11_baseline')),
+          source_kind text not null default '9qihuo' check(source_kind in ('9qihuo', 'jin10', 'v11_baseline', 'official')),
           source_updated_at text,
           valid_from text not null,
           valid_to text check(valid_to is null or julianday(valid_to) > julianday(valid_from)),
@@ -275,6 +424,57 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           skipped_invalid_symbols integer not null check(skipped_invalid_symbols >= 0),
           recorded_at text not null
         );
+
+        create table if not exists announcement_source_state(
+          source text primary key,
+          last_success_at text,
+          last_published_at text,
+          last_error_at text,
+          last_error_message text
+        );
+
+        create table if not exists announcement_documents(
+          source text not null,
+          article_id text not null,
+          title text not null,
+          published_at text not null,
+          broker_url text not null,
+          first_seen_at text not null,
+          last_seen_at text not null,
+          primary key(source, article_id)
+        );
+
+        create table if not exists announcement_document_snapshots(
+          id integer primary key,
+          source text not null,
+          article_id text not null,
+          body_sha256 text not null check(length(body_sha256) = 64),
+          body_html text not null,
+          body_text text not null,
+          official_urls_json text not null check(json_valid(official_urls_json)),
+          fetched_at text not null,
+          unique(source, article_id, body_sha256),
+          foreign key(source, article_id) references announcement_documents(source, article_id)
+        );
+
+        create table if not exists announcement_candidates(
+          source text not null,
+          article_id text not null,
+          keywords_json text not null check(json_valid(keywords_json)),
+          official_urls_json text not null check(json_valid(official_urls_json)),
+          detected_at text not null,
+          resolved_at text,
+          primary key(source, article_id),
+          foreign key(source, article_id) references announcement_documents(source, article_id)
+        );
+
+        create table if not exists official_document_snapshots(
+          canonical_url text not null,
+          body_sha256 text not null check(length(body_sha256) = 64),
+          body text not null,
+          fetched_at text not null,
+          primary key(canonical_url, body_sha256)
+        );
         ",
     )?;
 
@@ -300,6 +500,52 @@ fn ensure_fee_version_source_kind_column(conn: &Connection) -> Result<()> {
             "alter table fee_versions
              add column source_kind text not null default '9qihuo'",
             [],
+        )?;
+    }
+    let definition = conn.query_row(
+        "select sql from sqlite_master where type = 'table' and name = 'fee_versions'",
+        [],
+        |row| row.get::<_, String>(0),
+    )?;
+    if !definition.contains("'official'") {
+        conn.execute_batch(
+            "
+            begin;
+            drop index if exists idx_fee_versions_open_contract;
+            drop index if exists idx_fee_versions_contract_valid_from;
+            create table fee_versions_with_official_source(
+              id integer primary key,
+              contract_id integer not null,
+              rule_hash text not null check(length(rule_hash) > 0),
+              buy_margin_rate real,
+              sell_margin_rate real,
+              open_fee_json text not null check(json_valid(open_fee_json)),
+              close_yesterday_fee_json text not null check(json_valid(close_yesterday_fee_json)),
+              close_today_fee_json text not null check(json_valid(close_today_fee_json)),
+              trading_status text not null check(trading_status in ('Trading', 'NotTrading', 'Unknown')),
+              is_main_contract integer not null check(is_main_contract in (0, 1)),
+              source_kind text not null default '9qihuo' check(source_kind in ('9qihuo', 'jin10', 'v11_baseline', 'official')),
+              source_updated_at text,
+              valid_from text not null,
+              valid_to text check(valid_to is null or julianday(valid_to) > julianday(valid_from)),
+              first_seen_at text not null,
+              last_seen_at text not null,
+              foreign key(contract_id) references contracts(id)
+            );
+            insert into fee_versions_with_official_source
+              select id, contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
+                     open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+                     trading_status, is_main_contract, source_kind, source_updated_at,
+                     valid_from, valid_to, first_seen_at, last_seen_at
+              from fee_versions;
+            drop table fee_versions;
+            alter table fee_versions_with_official_source rename to fee_versions;
+            create unique index idx_fee_versions_open_contract
+              on fee_versions(contract_id) where valid_to is null;
+            create unique index idx_fee_versions_contract_valid_from
+              on fee_versions(contract_id, valid_from);
+            commit;
+            ",
         )?;
     }
     Ok(())
@@ -389,6 +635,389 @@ pub fn update_source_error(
     Ok(())
 }
 
+/// Persist a broker document and an immutable selected-body snapshot.
+///
+/// Returns `true` only when the document body introduces a new snapshot.
+/// This never changes fee history.
+///
+/// # Errors
+///
+/// Returns an error when schema creation, serialization, or persistence fails.
+pub fn record_announcement_document(
+    conn: &Connection,
+    document: &AnnouncementDocument,
+    fetched_at: &str,
+) -> Result<bool> {
+    ensure_schema(conn)?;
+    let source = document.item.source.as_str();
+    conn.execute(
+        "insert into announcement_documents(
+            source, article_id, title, published_at, broker_url, first_seen_at, last_seen_at
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+         on conflict(source, article_id) do update set
+           title = excluded.title,
+           published_at = excluded.published_at,
+           broker_url = excluded.broker_url,
+           last_seen_at = excluded.last_seen_at",
+        params![
+            source,
+            document.item.article_id,
+            document.item.title,
+            document.item.published_at,
+            document.item.url,
+            fetched_at,
+        ],
+    )?;
+    let official_urls = serde_json::to_string(&document.official_urls)?;
+    let body_sha256 = content_sha256(&document.body_html);
+    let inserted = conn.execute(
+        "insert or ignore into announcement_document_snapshots(
+            source, article_id, body_sha256, body_html, body_text, official_urls_json, fetched_at
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            source,
+            document.item.article_id,
+            body_sha256,
+            document.body_html,
+            document.body_text,
+            official_urls,
+            fetched_at,
+        ],
+    )?;
+    Ok(inserted == 1)
+}
+
+/// Persist a candidate detected from a selected broker body.
+///
+/// # Errors
+///
+/// Returns an error when the corresponding announcement document is absent or
+/// candidate metadata cannot be serialized.
+pub fn record_announcement_candidate(
+    conn: &Connection,
+    candidate: &AnnouncementCandidate,
+    detected_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    let inherited_resolution = candidate
+        .official_urls
+        .iter()
+        .map(|url| {
+            conn.query_row(
+                "select 1
+                   from announcement_candidates candidate,
+                        json_each(candidate.official_urls_json) official_url
+                  where candidate.resolved_at is not null
+                    and official_url.value = ?1
+                  limit 1",
+                params![url],
+                |_| Ok(()),
+            )
+            .optional()
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .any(|match_| match_.is_some())
+        .then_some(detected_at);
+    conn.execute(
+        "insert into announcement_candidates(
+            source, article_id, keywords_json, official_urls_json, detected_at, resolved_at
+         ) values (?1, ?2, ?3, ?4, ?5, ?6)
+         on conflict(source, article_id) do update set
+           keywords_json = excluded.keywords_json,
+           official_urls_json = excluded.official_urls_json,
+           resolved_at = coalesce(announcement_candidates.resolved_at, excluded.resolved_at)",
+        params![
+            candidate.source.as_str(),
+            candidate.article_id,
+            serde_json::to_string(&candidate.keywords)?,
+            serde_json::to_string(&candidate.official_urls)?,
+            detected_at,
+            inherited_resolution,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Record a successful source scan without clearing persisted evidence.
+///
+/// # Errors
+///
+/// Returns an error when the source state cannot be persisted.
+pub fn record_announcement_source_success(
+    conn: &Connection,
+    source: AnnouncementSource,
+    last_published_at: Option<&str>,
+    observed_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    conn.execute(
+        "insert into announcement_source_state(source, last_success_at, last_published_at)
+         values (?1, ?2, ?3)
+         on conflict(source) do update set
+           last_success_at = excluded.last_success_at,
+           last_published_at = case
+             when excluded.last_published_at is null then announcement_source_state.last_published_at
+             when announcement_source_state.last_published_at is null then excluded.last_published_at
+             when excluded.last_published_at > announcement_source_state.last_published_at
+               then excluded.last_published_at
+             else announcement_source_state.last_published_at
+           end,
+           last_error_at = null,
+           last_error_message = null",
+        params![source.as_str(), observed_at, last_published_at],
+    )?;
+    Ok(())
+}
+
+/// Record an announcement source failure without masking the previous watermark.
+///
+/// # Errors
+///
+/// Returns an error when the source state cannot be persisted.
+pub fn record_announcement_source_error(
+    conn: &Connection,
+    source: AnnouncementSource,
+    message: &str,
+    observed_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    conn.execute(
+        "insert into announcement_source_state(source, last_error_at, last_error_message)
+         values (?1, ?2, ?3)
+         on conflict(source) do update set
+           last_error_at = excluded.last_error_at,
+           last_error_message = excluded.last_error_message",
+        params![source.as_str(), observed_at, message],
+    )?;
+    Ok(())
+}
+
+/// Require a current successful broker-announcement scan and no stale candidate.
+///
+/// A source error supersedes an earlier success from that source. At least one
+/// source must have completed successfully within one hour: CITIC normally,
+/// or HTFC during same-run fallback. A potential fee-adjustment candidate may
+/// remain queued while its exchange original is examined, but it blocks live
+/// source refresh once it has remained unresolved for 24 hours.
+///
+/// # Errors
+///
+/// Returns an error when scan state is missing, stale, superseded by a newer
+/// source error, or when an unresolved candidate has exceeded 24 hours.
+pub fn announcement_health(conn: &Connection, observed_at: &str) -> Result<AnnouncementHealth> {
+    ensure_schema(conn)?;
+    let observed = parse_timestamp("announcement health timestamp", observed_at)?;
+    let fresh_after = observed - MAX_ANNOUNCEMENT_SCAN_AGE;
+    let mut statement = conn.prepare(
+        "select source, last_success_at, last_error_at
+         from announcement_source_state",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut fresh_sources = Vec::new();
+    while let Some(row) = rows.next()? {
+        let source: String = row.get(0)?;
+        let success_at: Option<String> = row.get(1)?;
+        let error_at: Option<String> = row.get(2)?;
+        let Some(success_at) = success_at else {
+            continue;
+        };
+        let success = parse_timestamp("announcement source success", &success_at)?;
+        let superseded_by_error = error_at
+            .as_deref()
+            .map(|value| parse_timestamp("announcement source error", value))
+            .transpose()?
+            .is_some_and(|error| error > success);
+        if success >= fresh_after && !superseded_by_error {
+            fresh_sources.push(source);
+        }
+    }
+    if fresh_sources.is_empty() {
+        return Err(anyhow!(
+            "no fresh successful announcement scan within {} minutes",
+            MAX_ANNOUNCEMENT_SCAN_AGE.whole_minutes()
+        ));
+    }
+
+    let mut statement = conn.prepare(
+        "select source, article_id, detected_at
+         from announcement_candidates
+         where resolved_at is null
+         order by detected_at, source, article_id",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut pending_candidates = 0usize;
+    let mut stale_candidates = Vec::new();
+    while let Some(row) = rows.next()? {
+        let source: String = row.get(0)?;
+        let article_id: String = row.get(1)?;
+        let detected_at: String = row.get(2)?;
+        let detected = parse_timestamp("announcement candidate detected_at", &detected_at)?;
+        if detected + MAX_UNRESOLVED_CANDIDATE_AGE <= observed {
+            stale_candidates.push(format!("{source}:{article_id}"));
+        } else {
+            pending_candidates += 1;
+        }
+    }
+    if !stale_candidates.is_empty() {
+        return Err(anyhow!(
+            "unresolved fee candidate older than {} hours blocks live refresh: {}",
+            MAX_UNRESOLVED_CANDIDATE_AGE.whole_hours(),
+            stale_candidates.join(",")
+        ));
+    }
+
+    Ok(AnnouncementHealth {
+        fresh_sources,
+        pending_candidates,
+    })
+}
+
+/// Persist one immutable exchange-original document snapshot.
+///
+/// Returns `true` when the body hash has not previously been retained for the
+/// canonical URL. A fetch failure is intentionally handled by the caller as
+/// unresolved candidate evidence, not as permission to alter fee history.
+///
+/// # Errors
+///
+/// Returns an error when schema creation or snapshot persistence fails.
+pub fn record_official_document_snapshot(
+    conn: &Connection,
+    canonical_url: &str,
+    body: &str,
+    fetched_at: &str,
+) -> Result<bool> {
+    ensure_schema(conn)?;
+    let inserted = conn.execute(
+        "insert or ignore into official_document_snapshots(
+            canonical_url, body_sha256, body, fetched_at
+         ) values (?1, ?2, ?3, ?4)",
+        params![canonical_url, content_sha256(body), body, fetched_at],
+    )?;
+    Ok(inserted == 1)
+}
+
+/// Resolve broker candidates linked to official documents applied to history.
+///
+/// # Errors
+///
+/// Returns an error when candidate state cannot be updated.
+pub fn resolve_announcement_candidates_for_official_urls(
+    conn: &Connection,
+    official_urls: &[String],
+    resolved_at: &str,
+) -> Result<usize> {
+    ensure_schema(conn)?;
+    let mut resolved = 0usize;
+    for url in official_urls {
+        resolved += conn.execute(
+            "update announcement_candidates set resolved_at = ?1
+             where resolved_at is null and exists (
+               select 1 from json_each(official_urls_json) where value = ?2
+             )",
+            params![resolved_at, url],
+        )?;
+    }
+    Ok(resolved)
+}
+
+/// Return whether a broker article has already had its selected body persisted.
+///
+/// # Errors
+///
+/// Returns an error when the announcement state cannot be queried.
+pub fn announcement_document_exists(
+    conn: &Connection,
+    source: AnnouncementSource,
+    article_id: &str,
+) -> Result<bool> {
+    let exists = conn
+        .query_row(
+            "select 1 from announcement_documents where source = ?1 and article_id = ?2",
+            params![source.as_str(), article_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(exists)
+}
+
+/// Return exchange-original URLs for a candidate that do not yet have a
+/// persisted immutable snapshot.
+///
+/// # Errors
+///
+/// Returns an error when candidate JSON cannot be read or decoded.
+pub fn pending_candidate_official_urls(
+    conn: &Connection,
+    source: AnnouncementSource,
+    article_id: &str,
+) -> Result<Vec<String>> {
+    let urls = conn
+        .query_row(
+            "select official_urls_json from announcement_candidates
+              where source = ?1 and article_id = ?2",
+            params![source.as_str(), article_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(urls) = urls else {
+        return Ok(Vec::new());
+    };
+    let urls = serde_json::from_str::<Vec<String>>(&urls)?;
+    let mut pending = Vec::new();
+    for url in urls {
+        let retained = conn
+            .query_row(
+                "select 1 from official_document_snapshots where canonical_url = ?1 limit 1",
+                [&url],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !retained {
+            pending.push(url);
+        }
+    }
+    Ok(pending)
+}
+
+/// Return the most recent successful publication-date watermark for one broker source.
+///
+/// # Errors
+///
+/// Returns an error when the announcement state cannot be queried.
+pub fn announcement_source_watermark(
+    conn: &Connection,
+    source: AnnouncementSource,
+) -> Result<Option<String>> {
+    conn.query_row(
+        "select last_published_at from announcement_source_state where source = ?1",
+        [source.as_str()],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map(Option::flatten)
+    .map_err(Into::into)
+}
+
+/// Return the newest fee-history effective timestamp, if history exists.
+///
+/// # Errors
+///
+/// Returns an error when fee history cannot be queried.
+pub fn latest_fee_effective_at(conn: &Connection) -> Result<Option<String>> {
+    conn.query_row("select max(valid_from) from fee_versions", [], |row| {
+        row.get::<_, Option<String>>(0)
+    })
+    .map_err(Into::into)
+}
+
+fn content_sha256(value: &str) -> String {
+    hex::encode(Sha256::digest(value.as_bytes()))
+}
+
 /// Insert or update allowed rows while preserving fee-rule history.
 ///
 /// # Errors
@@ -417,6 +1046,370 @@ pub fn upsert_v11_baseline_rows(
     observed_at: &str,
 ) -> Result<()> {
     upsert_rows(conn, rows, observed_at, IngestMode::V11Baseline)
+}
+
+/// Apply one complete, verified official fee tuple as a forward SCD2 version.
+///
+/// The target contract must already exist in the reviewed baseline. Static
+/// metadata and non-fee state are copied from its current approved version;
+/// only the fee tuple and provenance change.
+///
+/// # Errors
+///
+/// Returns an error when the contract is absent, the effective timestamp is
+/// not later than its current version, or the official version cannot be
+/// persisted.
+pub fn apply_official_fee_tuple(
+    conn: &mut Connection,
+    symbol: &str,
+    effective_at: &str,
+    fees: &[FeeSpec; 3],
+    observed_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    let effective = parse_timestamp("official effective_at", effective_at)?;
+    let base = conn
+        .query_row(
+            "select c.listing_date, c.expiry_date, c.lot_size, c.tick_size,
+                    v.buy_margin_rate, v.sell_margin_rate, v.trading_status,
+                    v.is_main_contract, v.valid_from
+             from contracts c
+             join fee_versions v on v.contract_id = c.id
+             where c.symbol = ?1 and v.valid_to is null
+             order by v.valid_from desc, v.id desc
+             limit 1",
+            [symbol],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, Option<f64>>(4)?,
+                    row.get::<_, Option<f64>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            anyhow!("official adjustment contract missing approved baseline: {symbol}")
+        })?;
+    if effective <= parse_timestamp("current fee valid_from", &base.8)? {
+        return Err(anyhow!(
+            "official effective_at must be later than current fee version for {symbol}"
+        ));
+    }
+    let trading_status = match base.6.as_str() {
+        "Trading" => TradingStatus::Trading,
+        "NotTrading" => TradingStatus::NotTrading,
+        "Unknown" => TradingStatus::Unknown,
+        other => return Err(anyhow!("unknown persisted trading status: {other}")),
+    };
+    let row = AllowedRow {
+        symbol: symbol.to_owned(),
+        listing_date: base.0,
+        expiry_date: base.1,
+        trading_status,
+        buy_margin_rate: base.4,
+        sell_margin_rate: base.5,
+        open_fee: fees[0].clone(),
+        close_yesterday_fee: fees[1].clone(),
+        close_today_fee: fees[2].clone(),
+        lot_size: base.2,
+        tick_size: base.3,
+        source_updated_at: Some(effective_at.to_owned()),
+        is_main_contract: base.7 != 0,
+    };
+    upsert_rows(conn, &[row], observed_at, IngestMode::Official)
+}
+
+/// Apply a verified before/after official transition atomically.
+///
+/// In addition to the normal forward case, this narrowly repairs one known
+/// baseline failure mode: a contract whose only version already contains the
+/// post-change tuple but starts before the official effective day. The paired
+/// official parameters must supply both complete tuples, so the premature row
+/// can be split without product-level inference.
+///
+/// # Errors
+///
+/// Returns an error when the open rule matches neither official tuple, when a
+/// premature post-change rule has established predecessors, or when the
+/// transition boundary cannot be persisted atomically.
+#[allow(clippy::too_many_lines)]
+pub fn apply_official_fee_transition(
+    conn: &mut Connection,
+    symbol: &str,
+    effective_at: &str,
+    previous_fees: &[FeeSpec; 3],
+    fees: &[FeeSpec; 3],
+    observed_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    let effective = parse_timestamp("official transition effective_at", effective_at)?;
+    parse_timestamp("official transition observed_at", observed_at)?;
+    let tx = conn.transaction()?;
+    let base = tx
+        .query_row(
+            "select v.id, c.id, c.listing_date, c.expiry_date, c.lot_size, c.tick_size,
+                    v.buy_margin_rate, v.sell_margin_rate, v.open_fee_json,
+                    v.close_yesterday_fee_json, v.close_today_fee_json,
+                    v.trading_status, v.is_main_contract, v.valid_from
+             from contracts c
+             join fee_versions v on v.contract_id = c.id
+             where c.symbol = ?1 and v.valid_to is null
+             order by v.valid_from desc, v.id desc
+             limit 1",
+            [symbol],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, f64>(4)?,
+                    row.get::<_, f64>(5)?,
+                    row.get::<_, Option<f64>>(6)?,
+                    row.get::<_, Option<f64>>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, String>(13)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            anyhow!("official transition contract missing approved baseline: {symbol}")
+        })?;
+    let valid_from = parse_timestamp("current fee valid_from", &base.13)?;
+    let current_fees = [
+        parse_fee_json(&base.8)?,
+        parse_fee_json(&base.9)?,
+        parse_fee_json(&base.10)?,
+    ];
+    if effective == valid_from && same_fee_rules(&current_fees, fees) {
+        tx.execute(
+            "update fee_versions
+             set source_kind = 'official', source_updated_at = ?1, last_seen_at = ?2
+             where id = ?3",
+            params![effective_at, observed_at, base.0],
+        )?;
+        tx.commit()?;
+        return Ok(());
+    }
+    if effective <= valid_from {
+        return Err(anyhow!(
+            "official transition must be later than current fee version for {symbol}"
+        ));
+    }
+
+    let trading_status = match base.11.as_str() {
+        "Trading" => TradingStatus::Trading,
+        "NotTrading" => TradingStatus::NotTrading,
+        "Unknown" => TradingStatus::Unknown,
+        other => return Err(anyhow!("unknown persisted trading status: {other}")),
+    };
+    let row_with_fees = |fee_tuple: &[FeeSpec; 3]| AllowedRow {
+        symbol: symbol.to_owned(),
+        listing_date: base.2.clone(),
+        expiry_date: base.3.clone(),
+        trading_status: trading_status.clone(),
+        buy_margin_rate: base.6,
+        sell_margin_rate: base.7,
+        open_fee: fee_tuple[0].clone(),
+        close_yesterday_fee: fee_tuple[1].clone(),
+        close_today_fee: fee_tuple[2].clone(),
+        lot_size: base.4,
+        tick_size: base.5,
+        source_updated_at: Some(effective_at.to_owned()),
+        is_main_contract: base.12 != 0,
+    };
+
+    if same_fee_rules(&current_fees, fees) {
+        let version_count: i64 = tx.query_row(
+            "select count(*) from fee_versions where contract_id = ?1",
+            [base.1],
+            |row| row.get(0),
+        )?;
+        if version_count != 1 {
+            return Err(anyhow!(
+                "premature official transition repair requires one baseline version: {symbol}"
+            ));
+        }
+        let previous = row_with_fees(previous_fees);
+        tx.execute(
+            "update fee_versions
+             set rule_hash = ?1, open_fee_json = ?2,
+                 close_yesterday_fee_json = ?3, close_today_fee_json = ?4,
+                 source_kind = 'official', last_seen_at = ?5
+             where id = ?6",
+            params![
+                row_rule_hash(&previous),
+                serde_json::to_string(&previous.open_fee)?,
+                serde_json::to_string(&previous.close_yesterday_fee)?,
+                serde_json::to_string(&previous.close_today_fee)?,
+                observed_at,
+                base.0,
+            ],
+        )?;
+    } else if !same_fee_rules(&current_fees, previous_fees) {
+        return Err(anyhow!(
+            "open fee rule matches neither side of official transition: {symbol}"
+        ));
+    }
+
+    tx.execute(
+        "update fee_versions set valid_to = ?1, last_seen_at = ?2 where id = ?3",
+        params![effective_at, observed_at, base.0],
+    )?;
+    let target = row_with_fees(fees);
+    tx.execute(
+        "insert into fee_versions(
+            contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
+            open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+            trading_status, is_main_contract, source_kind, source_updated_at,
+            valid_from, valid_to, first_seen_at, last_seen_at
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'official', ?10, ?10, null, ?11, ?11)",
+        params![
+            base.1,
+            row_rule_hash(&target),
+            target.buy_margin_rate,
+            target.sell_margin_rate,
+            serde_json::to_string(&target.open_fee)?,
+            serde_json::to_string(&target.close_yesterday_fee)?,
+            serde_json::to_string(&target.close_today_fee)?,
+            base.11,
+            base.12,
+            effective_at,
+            observed_at,
+        ],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Apply an official first-listing fee tuple. An existing contract may only be
+/// retimed when its current rule already equals the official tuple and it has
+/// no earlier fee version. A missing contract inherits static metadata only
+/// from a product whose existing metadata is unambiguous.
+///
+/// # Errors
+///
+/// Returns an error when the requested retime would rewrite established
+/// history, or no unambiguous product metadata is available for an insertion.
+pub fn apply_official_listed_contract_fee_tuple(
+    conn: &mut Connection,
+    symbol: &str,
+    effective_at: &str,
+    fees: &[FeeSpec; 3],
+    observed_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    let effective = parse_timestamp("official listing effective_at", effective_at)?;
+
+    if let Some(current) = current_fee_rule(conn, symbol)? {
+        if !same_fee_rules(&current.fees, fees) {
+            return Err(anyhow!(
+                "official listed contract fee tuple conflicts with approved rule: {symbol}"
+            ));
+        }
+        if effective > current.valid_from_at {
+            return apply_official_fee_tuple(conn, symbol, effective_at, fees, observed_at);
+        }
+        if effective < current.valid_from_at {
+            let has_predecessor: bool = conn.query_row(
+                "select exists(
+                    select 1 from fee_versions v
+                    join contracts c on c.id = v.contract_id
+                    where c.symbol = ?1 and julianday(v.valid_from) < julianday(?2)
+                )",
+                params![symbol, current.valid_from_at.format(&Rfc3339)?],
+                |row| row.get(0),
+            )?;
+            if has_predecessor {
+                return Err(anyhow!(
+                    "official listing may only retime the first fee version: {symbol}"
+                ));
+            }
+        }
+        let updated = conn.execute(
+            "update fee_versions
+             set valid_from = ?1, source_kind = 'official', source_updated_at = ?1,
+                 last_seen_at = ?2
+             where id = (
+                 select v.id from fee_versions v
+                 join contracts c on c.id = v.contract_id
+                 where c.symbol = ?3 and julianday(v.valid_from) = julianday(?4)
+                 order by v.id desc limit 1
+             )",
+            params![
+                effective_at,
+                observed_at,
+                symbol,
+                current.valid_from_at.format(&Rfc3339)?,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(anyhow!(
+                "official listing target disappeared while applying: {symbol}"
+            ));
+        }
+        return Ok(());
+    }
+
+    let product = derive_underlying_symbol(symbol)?;
+    let mut statement = conn.prepare("select symbol, lot_size, tick_size from contracts")?;
+    let candidates = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|(candidate, lot_size, tick_size)| {
+            (derive_underlying_symbol(&candidate).ok().as_deref() == Some(product.as_str()))
+                .then_some((lot_size, tick_size))
+        })
+        .collect::<Vec<_>>();
+    drop(statement);
+    let Some((lot_size, tick_size)) = candidates.first().copied() else {
+        return Err(anyhow!(
+            "official listed contract has no product metadata: {symbol}"
+        ));
+    };
+    if candidates.iter().any(|candidate| {
+        candidate.0.to_bits() != lot_size.to_bits() || candidate.1.to_bits() != tick_size.to_bits()
+    }) {
+        return Err(anyhow!(
+            "official listed contract has ambiguous product metadata: {symbol}"
+        ));
+    }
+
+    let row = AllowedRow {
+        symbol: symbol.to_owned(),
+        listing_date: Some(effective.date().to_string().replace('-', "")),
+        expiry_date: None,
+        trading_status: TradingStatus::Unknown,
+        buy_margin_rate: None,
+        sell_margin_rate: None,
+        open_fee: fees[0].clone(),
+        close_yesterday_fee: fees[1].clone(),
+        close_today_fee: fees[2].clone(),
+        lot_size,
+        tick_size,
+        source_updated_at: Some(effective_at.to_owned()),
+        is_main_contract: false,
+    };
+    upsert_rows(conn, &[row], observed_at, IngestMode::Official)
 }
 
 /// Mark contracts observed in a trusted latest snapshot as active without
@@ -589,6 +1582,7 @@ enum IngestMode {
     Live,
     Historical,
     V11Baseline,
+    Official,
 }
 
 impl IngestMode {
@@ -597,6 +1591,7 @@ impl IngestMode {
             Self::Live => FeeSource::NineQihuo,
             Self::Historical => FeeSource::Jin10,
             Self::V11Baseline => FeeSource::V11Baseline,
+            Self::Official => FeeSource::Official,
         }
     }
 }
@@ -645,10 +1640,6 @@ pub fn upsert_latest_rows(
             // The archive is a fee-history store. Margin, trading-state, and
             // main-contract presentation changes must not manufacture a fee
             // version when the three commission terms are unchanged.
-            skipped += 1;
-            continue;
-        }
-        if repair_isolated_tenth_incumbent(conn, &row, &current_product_counts, observed_at)? {
             skipped += 1;
             continue;
         }
@@ -790,65 +1781,6 @@ fn is_isolated_tenth_placeholder(
     Ok(batch_has_competing_type || current_has_competing_type)
 }
 
-fn repair_isolated_tenth_incumbent(
-    conn: &Connection,
-    row: &AllowedRow,
-    current_counts: &BTreeMap<String, BTreeMap<FeeKindSignature, usize>>,
-    observed_at: &str,
-) -> Result<bool> {
-    let Some(current) = current_fee_rule(conn, &row.symbol)? else {
-        return Ok(false);
-    };
-    if !is_uniform_tenth_fixed(&current.fees) {
-        return Ok(false);
-    }
-
-    let product = derive_underlying_symbol(&row.symbol)?;
-    let Some(product_counts) = current_counts.get(&product) else {
-        return Ok(false);
-    };
-    let current_total = product_counts.values().sum::<usize>();
-    let Some((dominant_signature, dominant_count)) =
-        product_counts.iter().max_by_key(|(_, count)| *count)
-    else {
-        return Ok(false);
-    };
-    if current_total < 5
-        || *dominant_count * 5 < current_total * 4
-        || *dominant_signature == fee_kind_signature(&current.fees)
-        || fee_kind_signature(&[
-            row.open_fee.clone(),
-            row.close_yesterday_fee.clone(),
-            row.close_today_fee.clone(),
-        ]) != *dominant_signature
-    {
-        return Ok(false);
-    }
-
-    let open_json = serde_json::to_string(&row.open_fee)?;
-    let close_yesterday_json = serde_json::to_string(&row.close_yesterday_fee)?;
-    let close_today_json = serde_json::to_string(&row.close_today_fee)?;
-    let rule_hash = row_rule_hash(row);
-    conn.execute(
-        "update fee_versions
-         set rule_hash = ?1, open_fee_json = ?2,
-             close_yesterday_fee_json = ?3, close_today_fee_json = ?4,
-             source_updated_at = ?5, last_seen_at = ?6
-         where contract_id = (select id from contracts where symbol = ?7)
-           and valid_to is null",
-        params![
-            rule_hash,
-            open_json,
-            close_yesterday_json,
-            close_today_json,
-            row.source_updated_at,
-            observed_at,
-            row.symbol,
-        ],
-    )?;
-    Ok(true)
-}
-
 #[derive(Debug)]
 struct CurrentFeeRule {
     valid_from_at: OffsetDateTime,
@@ -883,6 +1815,49 @@ fn current_fee_rule(conn: &Connection, symbol: &str) -> Result<Option<CurrentFee
     };
     Ok(Some(CurrentFeeRule {
         valid_from_at: parse_timestamp("current valid_from", &valid_from)?,
+        fees: [
+            parse_fee_json(&open_fee)?,
+            parse_fee_json(&close_yesterday_fee)?,
+            parse_fee_json(&close_today_fee)?,
+        ],
+        source_updated_at,
+    }))
+}
+
+fn fee_rule_as_of(
+    conn: &Connection,
+    symbol: &str,
+    effective_at: &str,
+) -> Result<Option<CurrentFeeRule>> {
+    let raw = conn
+        .query_row(
+            "select v.valid_from, v.open_fee_json, v.close_yesterday_fee_json,
+                    v.close_today_fee_json, v.source_updated_at
+               from fee_versions v
+               join contracts c on c.id = v.contract_id
+              where c.symbol = ?1
+                and julianday(v.valid_from) <= julianday(?2)
+                and (v.valid_to is null or julianday(v.valid_to) > julianday(?2))
+              order by v.valid_from desc, v.id desc
+              limit 1",
+            params![symbol, effective_at],
+            |record| {
+                Ok((
+                    record.get::<_, String>(0)?,
+                    record.get::<_, String>(1)?,
+                    record.get::<_, String>(2)?,
+                    record.get::<_, String>(3)?,
+                    record.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((valid_from, open_fee, close_yesterday_fee, close_today_fee, source_updated_at)) = raw
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CurrentFeeRule {
+        valid_from_at: parse_timestamp("as-of valid_from", &valid_from)?,
         fees: [
             parse_fee_json(&open_fee)?,
             parse_fee_json(&close_yesterday_fee)?,
@@ -934,19 +1909,91 @@ fn sanitize_latest_row(
     if is_known_tenth_placeholder(&candidate_fees, &current.fees) {
         return Ok(None);
     }
-
-    let mut sanitized = row.clone();
-    if has_known_fixed_offset(&candidate_fees, &current.fees) {
-        sanitized.open_fee = current.fees[0].clone();
-        sanitized.close_yesterday_fee = current.fees[1].clone();
-        sanitized.close_today_fee = current.fees[2].clone();
+    if !same_fee_rules(&candidate_fees, &current.fees)
+        && live_candidate_safety_rejection(&current.fees, &candidate_fees).is_some()
+    {
+        return Ok(None);
     }
-    Ok(Some(sanitized))
+    Ok(Some(row.clone()))
 }
 
 fn same_fee_rules(left: &[FeeSpec; 3], right: &[FeeSpec; 3]) -> bool {
-    left.iter().zip(right).all(|(left, right)| {
-        left.kind == right.kind && left.value.map(f64::to_bits) == right.value.map(f64::to_bits)
+    left.iter()
+        .zip(right)
+        .all(|(left, right)| same_fee(left, right))
+}
+
+fn same_fee(left: &FeeSpec, right: &FeeSpec) -> bool {
+    if is_semantically_zero_fee(left) && is_semantically_zero_fee(right) {
+        return true;
+    }
+    left.kind == right.kind && left.value.map(f64::to_bits) == right.value.map(f64::to_bits)
+}
+
+fn is_semantically_zero_fee(fee: &FeeSpec) -> bool {
+    fee.value == Some(0.0)
+        && matches!(
+            fee.kind,
+            FeeKind::CnyPerLot | FeeKind::TurnoverRatePerTenThousand | FeeKind::Zero
+        )
+}
+
+/// Return the reason an automatically ingested latest-table fee change needs
+/// exchange-original evidence. 9qihuo and Jin10 are useful corroborators for
+/// ordinary, same-type adjustments, but both are secondary sources and have
+/// previously propagated the same display/type/column defects.
+fn live_candidate_safety_rejection(
+    incumbent: &[FeeSpec; 3],
+    candidate: &[FeeSpec; 3],
+) -> Option<&'static str> {
+    if candidate
+        .iter()
+        .any(|fee| fee.kind == future_meta::model::FeeKind::Unknown || fee.value.is_none())
+    {
+        return Some("candidate has unknown or missing fee value");
+    }
+    if is_non_identity_fee_permutation(incumbent, candidate) {
+        return Some("fee-field permutation requires official evidence");
+    }
+    if has_known_fixed_offset(candidate, incumbent) {
+        return Some("fixed-fee offset requires official evidence");
+    }
+
+    for (incumbent, candidate) in incumbent.iter().zip(candidate) {
+        let (Some(incumbent_value), Some(candidate_value)) = (incumbent.value, candidate.value)
+        else {
+            return Some("candidate has unknown or missing fee value");
+        };
+        if !incumbent_value.is_finite()
+            || !candidate_value.is_finite()
+            || incumbent_value < 0.0
+            || candidate_value < 0.0
+        {
+            return Some("candidate has invalid fee value");
+        }
+        if is_zero_fee(incumbent) != is_zero_fee(candidate) {
+            return Some("zero-fee transition requires official evidence");
+        }
+        if incumbent.kind != candidate.kind {
+            return Some("fee type transition requires official evidence");
+        }
+        if !is_zero_fee(incumbent)
+            && (candidate_value > incumbent_value * 2.0 || candidate_value * 2.0 < incumbent_value)
+        {
+            return Some("multi-fold fee change requires official evidence");
+        }
+    }
+    None
+}
+
+fn is_non_identity_fee_permutation(incumbent: &[FeeSpec; 3], candidate: &[FeeSpec; 3]) -> bool {
+    const NON_IDENTITY_PERMUTATIONS: [[usize; 3]; 5] =
+        [[0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    NON_IDENTITY_PERMUTATIONS.into_iter().any(|permutation| {
+        candidate
+            .iter()
+            .enumerate()
+            .all(|(index, fee)| same_fee(fee, &incumbent[permutation[index]]))
     })
 }
 
@@ -1224,6 +2271,53 @@ fn add_official_historical_static_candidates(
     let candidates = metadata.entry("CZCE.WH".to_owned()).or_default();
     if !candidates.contains(&strong_wheat) {
         candidates.push(strong_wheat);
+    }
+
+    // CZCE's legacy contract specification pages retain the corresponding
+    // 20/1, 50/1, and 100/0.2 lot/tick pairs. These products no longer occur
+    // in the current 9qihuo seed but are present in the reviewed official
+    // CZCE daily-parameter history.
+    for (product, historical) in [
+        (
+            "CZCE.JR",
+            ContractStaticMetadata {
+                lot_size: 20.0,
+                tick_size: 1.0,
+            },
+        ),
+        (
+            "CZCE.LR",
+            ContractStaticMetadata {
+                lot_size: 20.0,
+                tick_size: 1.0,
+            },
+        ),
+        (
+            "CZCE.PM",
+            ContractStaticMetadata {
+                lot_size: 50.0,
+                tick_size: 1.0,
+            },
+        ),
+        (
+            "CZCE.RI",
+            ContractStaticMetadata {
+                lot_size: 20.0,
+                tick_size: 1.0,
+            },
+        ),
+        (
+            "CZCE.ZC",
+            ContractStaticMetadata {
+                lot_size: 100.0,
+                tick_size: 0.2,
+            },
+        ),
+    ] {
+        let candidates = metadata.entry(product.to_owned()).or_default();
+        if !candidates.contains(&historical) {
+            candidates.push(historical);
+        }
     }
 
     // DCE Notice [2026] No. 32 changed p and y from 2 yuan/tonne to 1 on
@@ -1703,6 +2797,7 @@ enum FeeSource {
     NineQihuo,
     Jin10,
     V11Baseline,
+    Official,
 }
 
 impl FeeSource {
@@ -1711,6 +2806,7 @@ impl FeeSource {
             Self::NineQihuo => "9qihuo",
             Self::Jin10 => "jin10",
             Self::V11Baseline => "v11_baseline",
+            Self::Official => "official",
         }
     }
 }
@@ -1720,6 +2816,7 @@ fn parse_fee_source(value: &str) -> Result<FeeSource> {
         "9qihuo" => Ok(FeeSource::NineQihuo),
         "jin10" => Ok(FeeSource::Jin10),
         "v11_baseline" => Ok(FeeSource::V11Baseline),
+        "official" => Ok(FeeSource::Official),
         other => Err(anyhow!("unknown fee source: {other}")),
     }
 }

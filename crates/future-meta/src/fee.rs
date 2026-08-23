@@ -31,6 +31,11 @@ pub fn parse_fee_spec(text: &str) -> FeeSpec {
 
     if let Some(value_text) = trimmed.strip_suffix("/万分之") {
         return match parse_optional_f64(value_text) {
+            Some(value) if value == 0.0 => FeeSpec {
+                kind: FeeKind::Zero,
+                value: Some(value),
+                raw_text: Some(trimmed.to_owned()),
+            },
             Some(value) => FeeSpec {
                 kind: FeeKind::TurnoverRatePerTenThousand,
                 value: Some(value),
@@ -92,6 +97,15 @@ mod tests {
         assert_eq!(spec.kind, FeeKind::TurnoverRatePerTenThousand);
         assert_eq!(spec.value, Some(0.51));
         assert_eq!(spec.raw_text.as_deref(), Some("0.51/万分之"));
+    }
+
+    #[test]
+    fn parses_zero_turnover_rate_as_zero_fee() {
+        let spec = parse_fee_spec("0/万分之");
+
+        assert_eq!(spec.kind, FeeKind::Zero);
+        assert_eq!(spec.value, Some(0.0));
+        assert_eq!(spec.raw_text.as_deref(), Some("0/万分之"));
     }
 
     #[test]

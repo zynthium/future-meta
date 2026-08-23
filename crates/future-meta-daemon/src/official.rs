@@ -1,5 +1,6 @@
 //! Isolated staging store for manually obtained exchange evidence.
 
+use crate::db;
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec};
 use future_meta::symbol::{SymbolKind, parse_symbol};
@@ -85,6 +86,9 @@ pub struct OfficialFeeAdjustment {
     pub close_yesterday_fee: Option<FeeSpec>,
     /// Adjusted close-today fee, when the document states one.
     pub close_today_fee: Option<FeeSpec>,
+    /// Complete fee tuple from the retained parameter immediately before the
+    /// transition. Present only when repairing a premature baseline boundary.
+    pub previous_fees: Option<[FeeSpec; 3]>,
     /// First-party documents used to verify this adjustment.
     pub evidence: Vec<OfficialEvidence>,
 }
@@ -105,6 +109,130 @@ pub struct StagedAdjustments {
     pub adjustments: usize,
     /// Number of adjustments accompanied by both required official document types.
     pub verified: usize,
+}
+
+/// Apply count returned by [`apply_verified_adjustments`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppliedOfficialAdjustments {
+    /// Number of complete verified adjustments written to fee history.
+    pub adjustments: usize,
+    /// Number of linked broker candidates resolved by the applied evidence.
+    pub resolved_candidates: usize,
+}
+
+/// Materialize complete, verified staged adjustments into a history database.
+///
+/// This command intentionally accepts no third-party source rows. Every
+/// applied adjustment originates in the isolated official-evidence store and
+/// must state the full open/close-yesterday/close-today tuple.
+///
+/// # Errors
+///
+/// Returns an error when a staged adjustment is incomplete, provisional, or
+/// cannot be applied as a forward official version.
+pub fn apply_verified_adjustments(
+    history_db: &Path,
+    evidence_db: &Path,
+    observed_at: &str,
+) -> Result<AppliedOfficialAdjustments> {
+    let evidence = connect(evidence_db)?;
+    ensure_schema(&evidence)?;
+    let mut statement = evidence.prepare(
+        "select id, symbol, effective_at, open_fee_json, close_yesterday_fee_json,
+                close_today_fee_json, previous_fees_json
+         from official_fee_adjustments where verification = 'verified'
+         order by effective_at, symbol, scope",
+    )?;
+    let mut records = statement.query([])?;
+    let mut staged = Vec::new();
+    while let Some(record) = records.next()? {
+        let adjustment_id: i64 = record.get(0)?;
+        let symbol: String = record.get(1)?;
+        let effective_at: String = record.get(2)?;
+        let values = [
+            record.get::<_, Option<String>>(3)?,
+            record.get::<_, Option<String>>(4)?,
+            record.get::<_, Option<String>>(5)?,
+        ];
+        let mut fees = Vec::with_capacity(3);
+        for value in values {
+            let Some(value) = value else {
+                bail!("verified official adjustment requires complete fee tuple: {symbol}");
+            };
+            fees.push(serde_json::from_str::<FeeSpec>(&value)?);
+        }
+        let previous_fees = record
+            .get::<_, Option<String>>(6)?
+            .map(|value| serde_json::from_str::<[FeeSpec; 3]>(&value))
+            .transpose()?;
+        let mut evidence_statement = evidence.prepare(
+            "select e.canonical_url, e.sha256 from official_evidence e
+             join official_adjustment_evidence link on link.evidence_id = e.id
+             where link.adjustment_id = ?1 order by e.canonical_url",
+        )?;
+        let evidence_urls = evidence_statement
+            .query_map([adjustment_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<(String, String)>>>()?;
+        staged.push((
+            symbol,
+            effective_at,
+            [fees.remove(0), fees.remove(0), fees.remove(0)],
+            previous_fees,
+            evidence_urls,
+        ));
+    }
+    if staged.is_empty() {
+        bail!("no verified official adjustments staged");
+    }
+    let mut history = db::connect(history_db)?;
+    db::ensure_schema(&history)?;
+    for (symbol, _, _, _, evidence_urls) in &staged {
+        for (url, sha256) in evidence_urls {
+            let retained = history
+                .query_row(
+                    "select 1 from official_document_snapshots
+                     where canonical_url = ?1 and body_sha256 = ?2",
+                    rusqlite::params![url, sha256],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !retained {
+                bail!(
+                    "official evidence snapshot is missing or hash-mismatched for {symbol}: {url}"
+                );
+            }
+        }
+    }
+    for (symbol, effective_at, fees, previous_fees, _) in &staged {
+        if let Some(previous_fees) = previous_fees {
+            db::apply_official_fee_transition(
+                &mut history,
+                symbol,
+                effective_at,
+                previous_fees,
+                fees,
+                observed_at,
+            )?;
+        } else {
+            db::apply_official_fee_tuple(&mut history, symbol, effective_at, fees, observed_at)?;
+        }
+    }
+    let official_urls = staged
+        .iter()
+        .flat_map(|(_, _, _, _, evidence_urls)| evidence_urls.iter().map(|(url, _)| url.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let resolved_candidates = db::resolve_announcement_candidates_for_official_urls(
+        &history,
+        &official_urls,
+        observed_at,
+    )?;
+    Ok(AppliedOfficialAdjustments {
+        adjustments: staged.len(),
+        resolved_candidates,
+    })
 }
 
 /// Insert or update a manually verified adjustment in the isolated evidence database.
@@ -175,7 +303,7 @@ fn stage_adjustment_in_transaction(
     adjustment: &OfficialFeeAdjustment,
     now: &str,
 ) -> Result<StagedAdjustment> {
-    let verification = verification_for(&adjustment.evidence);
+    let verification = verification_for(adjustment);
     let evidence_count = adjustment.evidence.len();
 
     for evidence in &adjustment.evidence {
@@ -213,13 +341,14 @@ fn stage_adjustment_in_transaction(
     tx.execute(
         "insert into official_fee_adjustments(
             symbol, effective_at, scope,
-            open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+            open_fee_json, close_yesterday_fee_json, close_today_fee_json, previous_fees_json,
             verification, recorded_at
-         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          on conflict(symbol, effective_at, scope) do update set
             open_fee_json = excluded.open_fee_json,
             close_yesterday_fee_json = excluded.close_yesterday_fee_json,
             close_today_fee_json = excluded.close_today_fee_json,
+            previous_fees_json = excluded.previous_fees_json,
             verification = excluded.verification,
             recorded_at = excluded.recorded_at",
         params![
@@ -229,6 +358,11 @@ fn stage_adjustment_in_transaction(
             optional_fee_json(adjustment.open_fee.as_ref())?,
             optional_fee_json(adjustment.close_yesterday_fee.as_ref())?,
             optional_fee_json(adjustment.close_today_fee.as_ref())?,
+            adjustment
+                .previous_fees
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
             verification.as_str(),
             now,
         ],
@@ -319,6 +453,9 @@ fn ensure_schema(conn: &Connection) -> Result<()> {
           close_today_fee_json text check(
             close_today_fee_json is null or json_valid(close_today_fee_json)
           ),
+          previous_fees_json text check(
+            previous_fees_json is null or json_valid(previous_fees_json)
+          ),
           verification text not null check(verification in ('provisional', 'verified')),
           recorded_at text not null,
           unique(symbol, effective_at, scope)
@@ -333,6 +470,19 @@ fn ensure_schema(conn: &Connection) -> Result<()> {
         );
         ",
     )?;
+    let has_previous_fees = conn
+        .prepare("pragma table_info(official_fee_adjustments)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|column| column == "previous_fees_json");
+    if !has_previous_fees {
+        conn.execute(
+            "alter table official_fee_adjustments add column previous_fees_json text
+             check(previous_fees_json is null or json_valid(previous_fees_json))",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -356,6 +506,11 @@ fn validate_adjustment(adjustment: &OfficialFeeAdjustment) -> Result<()> {
     for fee in fees.into_iter().flatten() {
         validate_fee(fee)?;
     }
+    if let Some(previous_fees) = adjustment.previous_fees.as_ref() {
+        for fee in previous_fees {
+            validate_fee(fee)?;
+        }
+    }
 
     let allowed_domain = official_domain_for_exchange(&parsed.exchange)?;
     let mut urls = BTreeSet::new();
@@ -372,6 +527,11 @@ fn validate_adjustment(adjustment: &OfficialFeeAdjustment) -> Result<()> {
     }
     if adjustment.evidence.is_empty() {
         bail!("official adjustment requires at least one document");
+    }
+    if adjustment.previous_fees.is_some()
+        && !paired_settlement_parameters_verify_complete_tuple(adjustment)
+    {
+        bail!("official transition repair requires paired settlement parameters");
     }
     Ok(())
 }
@@ -468,19 +628,66 @@ fn optional_fee_json(fee: Option<&FeeSpec>) -> Result<Option<String>> {
         .map_err(Into::into)
 }
 
-fn verification_for(evidence: &[OfficialEvidence]) -> OfficialVerification {
-    let has_notice = evidence
+fn verification_for(adjustment: &OfficialFeeAdjustment) -> OfficialVerification {
+    let has_notice = adjustment
+        .evidence
         .iter()
         .any(|item| item.kind == EvidenceKind::Notice);
-    let has_schedule = evidence.iter().any(|item| {
+    let has_schedule = adjustment.evidence.iter().any(|item| {
         matches!(
             item.kind,
             EvidenceKind::FeeSchedule | EvidenceKind::SettlementParameter
         )
     });
     if has_notice && has_schedule {
-        OfficialVerification::Verified
-    } else {
-        OfficialVerification::Provisional
+        return OfficialVerification::Verified;
     }
+
+    if paired_settlement_parameters_verify_complete_tuple(adjustment) {
+        return OfficialVerification::Verified;
+    }
+
+    OfficialVerification::Provisional
+}
+
+/// A retained pair of first-party daily settlement parameters can establish a
+/// concrete change when the files bracket its effective exchange day. This is
+/// deliberately narrower than ordinary schedule evidence: it accepts only a
+/// complete fee tuple and never infers a product-wide rule for contracts that
+/// are absent from either parameter file.
+fn paired_settlement_parameters_verify_complete_tuple(adjustment: &OfficialFeeAdjustment) -> bool {
+    if [
+        adjustment.open_fee.as_ref(),
+        adjustment.close_yesterday_fee.as_ref(),
+        adjustment.close_today_fee.as_ref(),
+    ]
+    .iter()
+    .any(Option::is_none)
+    {
+        return false;
+    }
+
+    let Ok(effective_at) = OffsetDateTime::parse(&adjustment.effective_at, &Rfc3339) else {
+        return false;
+    };
+    let effective_date = effective_at.date();
+    let mut dates = BTreeSet::new();
+    let mut has_before = false;
+    let mut has_on_or_after = false;
+
+    for evidence in adjustment
+        .evidence
+        .iter()
+        .filter(|item| item.kind == EvidenceKind::SettlementParameter)
+    {
+        let Ok(published_at) = OffsetDateTime::parse(&evidence.published_at, &Rfc3339) else {
+            return false;
+        };
+        let date = published_at.date();
+        dates.insert(date);
+        has_before |= date < effective_date;
+        has_on_or_after |= date >= effective_date;
+    }
+
+    dates.len() >= 2 && has_before && has_on_or_after
 }

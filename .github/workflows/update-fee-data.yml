@@ -48,7 +48,14 @@ jobs:
 
       - name: Refresh data
         timeout-minutes: 20
-        run: cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed
+        run: |
+          set -euo pipefail
+          if [ "$(TZ=Asia/Shanghai date +%u)" = "5" ]; then
+            cargo run -p future-meta-daemon -- scan-announcements --db "$DB_PATH" --reconcile-htfc
+          else
+            cargo run -p future-meta-daemon -- scan-announcements --db "$DB_PATH"
+          fi
+          cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed
 
       - name: Validate Jin10 secondary source
         continue-on-error: true
