@@ -455,6 +455,45 @@ fn queries_underlying_and_main_continuous() {
 }
 
 #[test]
+fn clone_shares_indexed_storage() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+    let cloned = meta.clone();
+
+    assert!(std::ptr::eq(meta.contracts(), cloned.contracts()));
+}
+
+#[test]
+fn parsed_time_underlying_and_main_queries() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+    let at = OffsetDateTime::parse("2026-06-04T12:00:00+08:00", &Rfc3339).unwrap();
+    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
+
+    let at_fees = meta
+        .underlying_fees_at("SHFE.cu", at)
+        .unwrap()
+        .collect::<Vec<_>>();
+    let on_fees = meta
+        .underlying_fees_on("SHFE.cu", trading_date)
+        .unwrap()
+        .collect::<Vec<_>>();
+
+    assert_eq!(at_fees.len(), 1);
+    assert_eq!(on_fees.len(), 1);
+    assert_eq!(
+        meta.main_contract_fee_at("KQ.m@SHFE.cu", at)
+            .unwrap()
+            .rule_hash,
+        "abc"
+    );
+    assert_eq!(
+        meta.main_contract_fee_on("KQ.m@SHFE.cu", trading_date)
+            .unwrap()
+            .rule_hash,
+        "abc"
+    );
+}
+
+#[test]
 fn rejects_index_for_main_contract_query() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let err = meta

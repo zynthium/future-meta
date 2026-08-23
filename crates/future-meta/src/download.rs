@@ -3,7 +3,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
-use crate::archive::{decode_archive_bytes, sha256_hex};
+use crate::archive::sha256_hex;
 use crate::error::FutureMetaError;
 use crate::model::Manifest;
 use crate::query::FutureMeta;
@@ -54,8 +54,7 @@ pub async fn load_or_fetch(config: DownloadConfig) -> Result<FutureMeta, FutureM
 
     let bytes = load_cached_or_fetch_artifact(&client, &artifact_path, &manifest).await?;
 
-    let archive = decode_archive_bytes(&bytes)?;
-    FutureMeta::from_archive(archive)
+    FutureMeta::from_compressed_bytes(bytes).await
 }
 
 fn artifact_cache_path(cache_dir: &Path, artifact: &str) -> Result<PathBuf, FutureMetaError> {

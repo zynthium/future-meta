@@ -137,6 +137,16 @@ pub fn derive_underlying_symbol(symbol: &str) -> Result<String, FutureMetaError>
     }
 }
 
+pub(crate) fn main_continuous_underlying(raw: &str) -> Result<&str, FutureMetaError> {
+    if let Some(underlying) = raw.strip_prefix("KQ.m@") {
+        validate_underlying_symbol(underlying)?;
+        return Ok(underlying);
+    }
+
+    parse_symbol(raw)?;
+    Err(FutureMetaError::UnsupportedSymbolKind(raw.to_owned()))
+}
+
 fn parse_kq_symbol(raw: &str, local: &str) -> Result<ParsedSymbol, FutureMetaError> {
     let (kind, underlying) = if let Some(underlying) = local.strip_prefix("m@") {
         (SymbolKind::MainContinuous, underlying)

@@ -60,6 +60,9 @@ pub enum FutureMetaError {
     /// Download failed.
     #[error("download failed: {0}")]
     DownloadFailed(String),
+    /// Archive processing worker was cancelled or panicked.
+    #[error("archive processing task failed: {0}")]
+    ArchiveTaskFailed(String),
     /// I/O failure.
     #[error(transparent)]
     Io(#[from] std::io::Error),

@@ -1,6 +1,7 @@
 //! Query API entry points.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::FutureMetaError;
@@ -8,16 +9,21 @@ use crate::model::{
     Contract, ContractFee, ContractSpecVersion, FeeArchiveV2, FeeKind, FeeSpec, SCHEMA_VERSION,
     TradingStatus,
 };
-use crate::symbol::{SymbolKind, derive_underlying_symbol, parse_symbol};
+use crate::symbol::{derive_underlying_symbol, main_continuous_underlying};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Month, OffsetDateTime, UtcOffset};
 
 /// High-performance local future-meta query client.
 #[derive(Debug, Clone)]
 pub struct FutureMeta {
-    archive: FeeArchiveV2,
+    storage: Arc<FutureMetaStorage>,
     handle_token: u64,
     history_start_date: Date,
+}
+
+#[derive(Debug)]
+struct FutureMetaStorage {
+    archive: FeeArchiveV2,
     contract_by_symbol: HashMap<String, ContractHandle>,
     contract_indexes: Vec<ContractIndex>,
     fee_indexes_by_contract: Vec<Vec<FeeVersionIndex>>,
@@ -107,24 +113,28 @@ pub struct PreparedFeeBook {
 impl PreparedFeeBook {
     /// Prepared fees in caller-supplied slot order.
     #[must_use]
+    #[inline]
     pub fn fees(&self) -> &[PreparedFee] {
         &self.fees
     }
 
     /// Return a prepared fee by slot.
     #[must_use]
+    #[inline]
     pub fn get(&self, slot: usize) -> Option<&PreparedFee> {
         self.fees.get(slot)
     }
 
     /// Number of prepared fee slots.
     #[must_use]
+    #[inline]
     pub fn len(&self) -> usize {
         self.fees.len()
     }
 
     /// Whether the book contains no slots.
     #[must_use]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.fees.is_empty()
     }
@@ -145,11 +155,13 @@ pub struct PreparedFeeCursors<'a> {
     trading_day_end_unix_nanos: i64,
     last_unix_nanos: i64,
     fees: PreparedFeeBook,
+    scratch_fees: Vec<PreparedFee>,
 }
 
 impl PreparedFeeCursors<'_> {
     /// Current exchange-local trading date for this cursor table.
     #[must_use]
+    #[inline]
     pub const fn current_trading_date(&self) -> Date {
         self.trading_date
     }
@@ -166,18 +178,21 @@ impl PreparedFeeCursors<'_> {
 
     /// Number of cursor slots.
     #[must_use]
+    #[inline]
     pub fn len(&self) -> usize {
         self.fees.len()
     }
 
     /// Whether the cursor table contains no slots.
     #[must_use]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.fees.is_empty()
     }
 
     /// Return the current prepared fee by slot.
     #[must_use]
+    #[inline]
     pub fn get(&self, slot: usize) -> Option<&PreparedFee> {
         self.fees.get(slot)
     }
@@ -187,6 +202,7 @@ impl PreparedFeeCursors<'_> {
     /// # Errors
     ///
     /// Returns an error when `slot` is missing.
+    #[inline]
     pub fn current(&self, slot: usize) -> Result<&PreparedFee, FutureMetaError> {
         self.get(slot).ok_or(FutureMetaError::InvalidFeeSlot(slot))
     }
@@ -202,6 +218,7 @@ impl PreparedFeeCursors<'_> {
     /// Returns an error when the trading date predates history, the timestamp
     /// falls outside the supplied trading date, moves backward, or any slot has
     /// no fee version for the requested trading date.
+    #[inline]
     pub fn advance_to(
         &mut self,
         trading_date: Date,
@@ -215,12 +232,23 @@ impl PreparedFeeCursors<'_> {
         }
 
         if trading_date != self.trading_date {
-            let next = self.meta.prepare_fee_cursors(
-                self.handles.iter().copied(),
+            let (trading_day_start_unix_nanos, trading_day_end_unix_nanos) =
+                trading_day_bounds(trading_date)?;
+            reject_unix_nanos_outside_trading_day(
                 trading_date,
+                trading_day_start_unix_nanos,
+                trading_day_end_unix_nanos,
                 unix_nanos,
             )?;
-            *self = next;
+
+            self.scratch_fees.clear();
+            self.meta
+                .prepare_fees_on(&self.handles, trading_date, &mut self.scratch_fees)?;
+            std::mem::swap(&mut self.fees.fees, &mut self.scratch_fees);
+            self.trading_date = trading_date;
+            self.trading_day_start_unix_nanos = trading_day_start_unix_nanos;
+            self.trading_day_end_unix_nanos = trading_day_end_unix_nanos;
+            self.last_unix_nanos = unix_nanos;
             return Ok(());
         }
 
@@ -248,6 +276,7 @@ impl PreparedFeeCursors<'_> {
     ///
     /// Returns the same errors as `advance_to`, plus `InvalidFeeSlot` for a
     /// missing slot.
+    #[inline]
     pub fn advance_and_get(
         &mut self,
         trading_date: Date,
@@ -273,6 +302,7 @@ impl PreparedFeeCursors<'_> {
     /// Returns an error when the slot is missing, the timestamp moves backward,
     /// or the timestamp reaches a cross-day boundary. Prefer `advance_and_get`
     /// for multi-day tick streams.
+    #[inline]
     pub fn advance_and_get_unix_nanos(
         &mut self,
         slot: usize,
@@ -463,14 +493,16 @@ impl FutureMeta {
         let spec_indexes_by_contract = build_spec_indexes(&archive, &contract_handle_by_id)?;
 
         Ok(Self {
-            archive,
+            storage: Arc::new(FutureMetaStorage {
+                archive,
+                contract_by_symbol,
+                contract_indexes,
+                fee_indexes_by_contract,
+                spec_indexes_by_contract,
+                contracts_by_underlying,
+            }),
             handle_token,
             history_start_date,
-            contract_by_symbol,
-            contract_indexes,
-            fee_indexes_by_contract,
-            spec_indexes_by_contract,
-            contracts_by_underlying,
         })
     }
 
@@ -483,8 +515,17 @@ impl FutureMeta {
     #[cfg(feature = "download")]
     pub async fn load_file(path: impl AsRef<std::path::Path>) -> Result<Self, FutureMetaError> {
         let bytes = tokio::fs::read(path).await?;
-        let archive = crate::archive::decode_archive_bytes(&bytes)?;
-        Self::from_archive(archive)
+        Self::from_compressed_bytes(bytes).await
+    }
+
+    #[cfg(feature = "download")]
+    pub(crate) async fn from_compressed_bytes(bytes: Vec<u8>) -> Result<Self, FutureMetaError> {
+        tokio::task::spawn_blocking(move || {
+            let archive = crate::archive::decode_archive_bytes(&bytes)?;
+            Self::from_archive(archive)
+        })
+        .await
+        .map_err(|err| FutureMetaError::ArchiveTaskFailed(err.to_string()))?
     }
 
     /// Return the fee rule for a concrete contract at the requested time.
@@ -493,6 +534,7 @@ impl FutureMeta {
     ///
     /// Returns an error when `at` predates the archive history, the contract is
     /// unknown, or no fee version covers `at`.
+    #[inline]
     pub fn contract_fee_asof(
         &self,
         symbol: &str,
@@ -507,8 +549,10 @@ impl FutureMeta {
     /// # Errors
     ///
     /// Returns an error when `symbol` is not present in the archive.
+    #[inline]
     pub fn resolve_contract(&self, symbol: &str) -> Result<ContractHandle, FutureMetaError> {
-        self.contract_by_symbol
+        self.storage
+            .contract_by_symbol
             .get(symbol)
             .copied()
             .ok_or_else(|| FutureMetaError::UnknownContract(symbol.to_owned()))
@@ -535,7 +579,8 @@ impl FutureMeta {
         handle: ContractHandle,
     ) -> Result<&Contract, FutureMetaError> {
         self.contract_index(handle)?;
-        self.archive
+        self.storage
+            .archive
             .contracts
             .get(handle.index)
             .ok_or(FutureMetaError::InvalidContractHandle)
@@ -598,7 +643,7 @@ impl FutureMeta {
         self.reject_date_before_history(exchange_date(at))?;
         let index = self.spec_archive_index_for_handle_at(handle, at)?;
         if let Some(index) = index {
-            return Ok(&self.archive.contract_spec_versions[index]);
+            return Ok(&self.storage.archive.contract_spec_versions[index]);
         }
         Err(FutureMetaError::NoVersionAt(
             self.contract_symbol(handle)?.to_owned(),
@@ -618,7 +663,7 @@ impl FutureMeta {
         self.reject_date_before_history(trading_date)?;
         let index = self.spec_archive_index_for_handle_on(handle, trading_date)?;
         if let Some(index) = index {
-            return Ok(&self.archive.contract_spec_versions[index]);
+            return Ok(&self.storage.archive.contract_spec_versions[index]);
         }
         Err(FutureMetaError::NoVersionAt(
             self.contract_symbol(handle)?.to_owned(),
@@ -631,6 +676,7 @@ impl FutureMeta {
     ///
     /// Returns an error when `at` predates the archive history, the contract is
     /// unknown, or no fee version covers `at`.
+    #[inline]
     pub fn contract_fee_at(
         &self,
         symbol: &str,
@@ -653,6 +699,7 @@ impl FutureMeta {
     ///
     /// Returns an error when `trading_date` predates the archive history, the
     /// contract is unknown, or no fee version covers `trading_date`.
+    #[inline]
     pub fn contract_fee_on(
         &self,
         symbol: &str,
@@ -670,6 +717,7 @@ impl FutureMeta {
     ///
     /// Returns an error when `at` predates the archive history, the handle is
     /// invalid for this client, or no fee version covers `at`.
+    #[inline]
     pub fn contract_fee_for_handle_at(
         &self,
         handle: ContractHandle,
@@ -693,6 +741,7 @@ impl FutureMeta {
     /// Returns an error when `trading_date` predates the archive history, the
     /// handle is invalid for this client, or no fee version covers
     /// `trading_date`.
+    #[inline]
     pub fn contract_fee_for_handle_on(
         &self,
         handle: ContractHandle,
@@ -721,14 +770,12 @@ impl FutureMeta {
         trading_date: Date,
     ) -> Result<TradingDayMeta<'_>, FutureMetaError> {
         self.reject_date_before_history(trading_date)?;
-        let trading_day_start_unix_nanos = exchange_midnight_unix_nanos(trading_date)?;
-        let next_trading_date = trading_date.next_day().ok_or_else(|| {
-            FutureMetaError::InvalidTimestamp(format!("{trading_date} has no next day"))
-        })?;
-        let trading_day_end_unix_nanos = exchange_midnight_unix_nanos(next_trading_date)?;
-        let mut fee_archive_indexes_by_contract = Vec::with_capacity(self.contract_indexes.len());
+        let (trading_day_start_unix_nanos, trading_day_end_unix_nanos) =
+            trading_day_bounds(trading_date)?;
+        let mut fee_archive_indexes_by_contract =
+            Vec::with_capacity(self.storage.contract_indexes.len());
 
-        for (index, contract) in self.contract_indexes.iter().enumerate() {
+        for (index, contract) in self.storage.contract_indexes.iter().enumerate() {
             let handle = ContractHandle {
                 handle_token: self.handle_token,
                 index,
@@ -766,8 +813,31 @@ impl FutureMeta {
         trading_date: Date,
         start_unix_nanos: i64,
     ) -> Result<PreparedFeeCursors<'_>, FutureMetaError> {
-        let day = self.for_trading_day(trading_date)?;
-        day.prepare_fee_cursors(handles, start_unix_nanos)
+        self.reject_date_before_history(trading_date)?;
+        let (trading_day_start_unix_nanos, trading_day_end_unix_nanos) =
+            trading_day_bounds(trading_date)?;
+        reject_unix_nanos_outside_trading_day(
+            trading_date,
+            trading_day_start_unix_nanos,
+            trading_day_end_unix_nanos,
+            start_unix_nanos,
+        )?;
+
+        let handles = handles.into_iter().collect::<Vec<_>>();
+        let mut fees = Vec::with_capacity(handles.len());
+        self.prepare_fees_on(&handles, trading_date, &mut fees)?;
+        let scratch_fees = Vec::with_capacity(handles.len());
+
+        Ok(PreparedFeeCursors {
+            meta: self,
+            handles,
+            trading_date,
+            trading_day_start_unix_nanos,
+            trading_day_end_unix_nanos,
+            last_unix_nanos: start_unix_nanos,
+            fees: PreparedFeeBook { fees },
+            scratch_fees,
+        })
     }
 
     /// Return all underlying contract fee rules available at the requested time.
@@ -782,10 +852,44 @@ impl FutureMeta {
         at: &str,
     ) -> Result<Vec<&ContractFee>, FutureMetaError> {
         let at = parse_query_timestamp(at)?;
-        let trading_date = exchange_date(at);
+        Ok(self.underlying_fees_at(underlying_symbol, at)?.collect())
+    }
+
+    /// Iterate underlying contract fee rules available at a parsed timestamp.
+    ///
+    /// The iterator borrows the client and performs no result allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `at` predates archive history or the underlying
+    /// symbol is unknown.
+    #[inline]
+    pub fn underlying_fees_at<'a>(
+        &'a self,
+        underlying_symbol: &str,
+        at: OffsetDateTime,
+    ) -> Result<impl Iterator<Item = &'a ContractFee> + 'a, FutureMetaError> {
+        self.underlying_fees_on(underlying_symbol, exchange_date(at))
+    }
+
+    /// Iterate underlying contract fee rules available on a trading date.
+    ///
+    /// The iterator borrows the client and performs no result allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `trading_date` predates archive history or the
+    /// underlying symbol is unknown.
+    #[inline]
+    pub fn underlying_fees_on<'a>(
+        &'a self,
+        underlying_symbol: &str,
+        trading_date: Date,
+    ) -> Result<impl Iterator<Item = &'a ContractFee> + 'a, FutureMetaError> {
         self.reject_date_before_history(trading_date)?;
 
         let handles = self
+            .storage
             .contracts_by_underlying
             .get(underlying_symbol)
             .ok_or_else(|| {
@@ -794,8 +898,7 @@ impl FutureMeta {
 
         Ok(handles
             .iter()
-            .filter_map(|handle| self.contract_fee_for_underlying_on(*handle, trading_date))
-            .collect())
+            .filter_map(move |handle| self.contract_fee_for_underlying_on(*handle, trading_date)))
     }
 
     /// Return the main-contract fee rule for a `KQ.m@...` query alias.
@@ -809,17 +912,40 @@ impl FutureMeta {
         symbol: &str,
         at: &str,
     ) -> Result<&ContractFee, FutureMetaError> {
-        let parsed = parse_symbol(symbol)?;
-        if parsed.kind != SymbolKind::MainContinuous {
-            return Err(FutureMetaError::UnsupportedSymbolKind(symbol.to_owned()));
-        }
+        self.main_contract_fee_at(symbol, parse_query_timestamp(at)?)
+    }
 
-        let underlying = parsed
-            .underlying_symbol
-            .ok_or_else(|| FutureMetaError::UnsupportedSymbolKind(symbol.to_owned()))?;
-        let fees = self.underlying_fees_asof(&underlying, at)?;
+    /// Return the main-contract fee rule at a parsed timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `symbol` is not a main-continuous alias, its
+    /// underlying is unknown, or no main fee version covers `at`.
+    #[inline]
+    pub fn main_contract_fee_at(
+        &self,
+        symbol: &str,
+        at: OffsetDateTime,
+    ) -> Result<&ContractFee, FutureMetaError> {
+        self.main_contract_fee_on(symbol, exchange_date(at))
+    }
 
-        fees.into_iter()
+    /// Return the main-contract fee rule on an exchange-local trading date.
+    ///
+    /// This parsed-date tier allocates nothing on successful queries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `symbol` is not a main-continuous alias, its
+    /// underlying is unknown, or no main fee version covers `trading_date`.
+    #[inline]
+    pub fn main_contract_fee_on(
+        &self,
+        symbol: &str,
+        trading_date: Date,
+    ) -> Result<&ContractFee, FutureMetaError> {
+        let underlying = main_continuous_underlying(symbol)?;
+        self.underlying_fees_on(underlying, trading_date)?
             .find(|fee| fee.is_main_contract)
             .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
     }
@@ -827,7 +953,7 @@ impl FutureMeta {
     /// Return contract metadata in archive order.
     #[must_use]
     pub fn contracts(&self) -> &[Contract] {
-        &self.archive.contracts
+        &self.storage.archive.contracts
     }
 
     fn reject_date_before_history(&self, trading_date: Date) -> Result<(), FutureMetaError> {
@@ -838,7 +964,8 @@ impl FutureMeta {
     }
 
     fn contract_index(&self, handle: ContractHandle) -> Result<&ContractIndex, FutureMetaError> {
-        self.contract_indexes
+        self.storage
+            .contract_indexes
             .get(handle.index)
             .filter(|index| {
                 handle.handle_token == self.handle_token && index.contract_id == handle.contract_id
@@ -848,7 +975,8 @@ impl FutureMeta {
 
     fn contract_symbol(&self, handle: ContractHandle) -> Result<&str, FutureMetaError> {
         self.contract_index(handle)?;
-        self.archive
+        self.storage
+            .archive
             .contracts
             .get(handle.index)
             .map(|contract| contract.symbol.as_str())
@@ -860,7 +988,8 @@ impl FutureMeta {
         handle: ContractHandle,
     ) -> Result<&[FeeVersionIndex], FutureMetaError> {
         self.contract_index(handle)?;
-        self.fee_indexes_by_contract
+        self.storage
+            .fee_indexes_by_contract
             .get(handle.index)
             .map(Vec::as_slice)
             .ok_or(FutureMetaError::InvalidContractHandle)
@@ -871,7 +1000,8 @@ impl FutureMeta {
         handle: ContractHandle,
     ) -> Result<&[SpecVersionIndex], FutureMetaError> {
         self.contract_index(handle)?;
-        self.spec_indexes_by_contract
+        self.storage
+            .spec_indexes_by_contract
             .get(handle.index)
             .map(Vec::as_slice)
             .ok_or(FutureMetaError::InvalidContractHandle)
@@ -917,7 +1047,7 @@ impl FutureMeta {
         trading_date: Date,
     ) -> Result<Option<&ContractFee>, FutureMetaError> {
         let archive_index = self.fee_archive_index_for_contract_handle_on(handle, trading_date)?;
-        Ok(archive_index.map(|index| &self.archive.fee_versions[index]))
+        Ok(archive_index.map(|index| &self.storage.archive.fee_versions[index]))
     }
 
     fn fee_archive_index_for_contract_handle_on(
@@ -967,12 +1097,31 @@ impl FutureMeta {
     ) -> Result<PreparedFee, FutureMetaError> {
         self.contract_index(handle)?;
         let contract = self
+            .storage
             .archive
             .contracts
             .get(handle.index)
             .ok_or(FutureMetaError::InvalidContractHandle)?;
         let spec = self.contract_spec_for_handle_on(handle, trading_date)?;
         prepare_fee(contract.symbol.as_str(), spec.lot_size, fee)
+    }
+
+    fn prepare_fees_on(
+        &self,
+        handles: &[ContractHandle],
+        trading_date: Date,
+        output: &mut Vec<PreparedFee>,
+    ) -> Result<(), FutureMetaError> {
+        output.clear();
+        for handle in handles {
+            let Some(fee) = self.fee_for_contract_handle_on(*handle, trading_date)? else {
+                return Err(FutureMetaError::NoVersionAt(
+                    self.contract_symbol(*handle)?.to_owned(),
+                ));
+            };
+            output.push(self.prepare_contract_fee(*handle, fee, trading_date)?);
+        }
+        Ok(())
     }
 }
 
@@ -1052,7 +1201,7 @@ impl<'a> TradingDayMeta<'a> {
             .flatten();
 
         archive_index
-            .map(|index| &self.meta.archive.fee_versions[index])
+            .map(|index| &self.meta.storage.archive.fee_versions[index])
             .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
     }
 
@@ -1122,6 +1271,7 @@ impl<'a> TradingDayMeta<'a> {
         self.reject_unix_nanos_outside_trading_day(start_unix_nanos)?;
         let handles = handles.into_iter().collect::<Vec<_>>();
         let fees = self.prepare_fee_book(handles.iter().copied())?;
+        let scratch_fees = Vec::with_capacity(handles.len());
         Ok(PreparedFeeCursors {
             meta: self.meta,
             handles,
@@ -1130,6 +1280,7 @@ impl<'a> TradingDayMeta<'a> {
             trading_day_end_unix_nanos: self.trading_day_end_unix_nanos,
             last_unix_nanos: start_unix_nanos,
             fees,
+            scratch_fees,
         })
     }
 
@@ -1137,15 +1288,12 @@ impl<'a> TradingDayMeta<'a> {
         &self,
         unix_nanos: i64,
     ) -> Result<(), FutureMetaError> {
-        if unix_nanos < self.trading_day_start_unix_nanos
-            || unix_nanos >= self.trading_day_end_unix_nanos
-        {
-            return Err(FutureMetaError::InvalidTimestamp(format!(
-                "{unix_nanos} is outside trading day {}",
-                self.trading_date
-            )));
-        }
-        Ok(())
+        reject_unix_nanos_outside_trading_day(
+            self.trading_date,
+            self.trading_day_start_unix_nanos,
+            self.trading_day_end_unix_nanos,
+            unix_nanos,
+        )
     }
 }
 
@@ -1311,6 +1459,29 @@ fn exchange_date(at: OffsetDateTime) -> Date {
 
 fn exchange_midnight_unix_nanos(date: Date) -> Result<i64, FutureMetaError> {
     query_timestamp_unix_nanos(date.midnight().assume_offset(exchange_offset()))
+}
+
+fn trading_day_bounds(trading_date: Date) -> Result<(i64, i64), FutureMetaError> {
+    let start = exchange_midnight_unix_nanos(trading_date)?;
+    let next_trading_date = trading_date.next_day().ok_or_else(|| {
+        FutureMetaError::InvalidTimestamp(format!("{trading_date} has no next day"))
+    })?;
+    let end = exchange_midnight_unix_nanos(next_trading_date)?;
+    Ok((start, end))
+}
+
+fn reject_unix_nanos_outside_trading_day(
+    trading_date: Date,
+    start: i64,
+    end: i64,
+    unix_nanos: i64,
+) -> Result<(), FutureMetaError> {
+    if unix_nanos < start || unix_nanos >= end {
+        return Err(FutureMetaError::InvalidTimestamp(format!(
+            "{unix_nanos} is outside trading day {trading_date}"
+        )));
+    }
+    Ok(())
 }
 
 fn exchange_offset() -> UtcOffset {

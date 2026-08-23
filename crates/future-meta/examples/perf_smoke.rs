@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use future_meta::archive::decode_archive_bytes;
-use future_meta::model::ContractFee;
+use future_meta::model::{ContractFee, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;
 use future_meta::{ContractHandle, FutureMeta};
 use time::format_description::well_known::Rfc3339;
@@ -37,65 +37,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_measurement("FutureMeta::from_archive", config.load_iters, build_result);
 
     let meta = FutureMeta::from_archive(archive.clone())?;
+    let clone_result = measure_clone(&meta, config.query_iters);
+    print_measurement("FutureMeta::clone", config.query_iters, clone_result);
     let at = archive.history_end.clone();
     let at_time = OffsetDateTime::parse(&at, &Rfc3339)?;
     let trading_date = exchange_date(at_time);
+    let start_unix_nanos = i64::try_from(at_time.unix_timestamp_nanos())?;
     let contract_symbols = current_contract_symbols(&archive);
     let contract_handles = current_contract_handles(&meta, &contract_symbols)?;
     let underlying_symbols = current_underlying_symbols(&contract_symbols);
-    let main_symbols = current_main_symbols(&meta, &underlying_symbols, &at);
 
     println!("current_contract_samples={}", contract_symbols.len());
     println!("current_contract_handle_samples={}", contract_handles.len());
     println!("current_underlying_samples={}", underlying_symbols.len());
-    println!("current_main_samples={}", main_symbols.len());
 
     if contract_symbols.is_empty() {
         return Err("archive has no open-ended current contract fee records".into());
     }
 
-    let contract_result =
-        measure_contract_asof_queries(&meta, &contract_symbols, &at, config.query_iters);
-    print_measurement("contract_fee_asof", config.query_iters, contract_result);
-
-    let contract_at_result =
-        measure_contract_at_queries(&meta, &contract_symbols, at_time, config.query_iters);
-    print_measurement("contract_fee_at", config.query_iters, contract_at_result);
-
-    let contract_on_result =
-        measure_contract_on_queries(&meta, &contract_symbols, trading_date, config.query_iters);
-    print_measurement("contract_fee_on", config.query_iters, contract_on_result);
-
-    let handle_at_result =
-        measure_handle_at_queries(&meta, &contract_handles, at_time, config.query_iters);
-    print_measurement(
-        "contract_fee_for_handle_at",
-        config.query_iters,
-        handle_at_result,
-    );
-
-    let handle_on_result =
-        measure_handle_on_queries(&meta, &contract_handles, trading_date, config.query_iters);
-    print_measurement(
-        "contract_fee_for_handle_on",
-        config.query_iters,
-        handle_on_result,
-    );
-
-    if !underlying_symbols.is_empty() {
-        let underlying_result =
-            measure_underlying_queries(&meta, &underlying_symbols, &at, config.query_iters);
-        print_measurement(
-            "underlying_fees_asof",
-            config.query_iters,
-            underlying_result,
-        );
-    }
-
-    if !main_symbols.is_empty() {
-        let main_result = measure_main_queries(&meta, &main_symbols, &at, config.query_iters);
-        print_measurement("main_contract_fee_asof", config.query_iters, main_result);
-    }
+    let benchmarks = BenchmarkData {
+        archive: &archive,
+        meta: &meta,
+        contract_symbols: &contract_symbols,
+        contract_handles: &contract_handles,
+        underlying_symbols: &underlying_symbols,
+        at: &at,
+        at_time,
+        trading_date,
+        config: &config,
+    };
+    run_prepared_benchmarks(&benchmarks, start_unix_nanos)?;
+    run_query_benchmarks(&benchmarks)?;
 
     Ok(())
 }
@@ -105,6 +77,18 @@ struct Config {
     archive_path: PathBuf,
     query_iters: usize,
     load_iters: usize,
+}
+
+struct BenchmarkData<'a> {
+    archive: &'a future_meta::FeeArchiveV2,
+    meta: &'a FutureMeta,
+    contract_symbols: &'a [String],
+    contract_handles: &'a [ContractHandle],
+    underlying_symbols: &'a [String],
+    at: &'a str,
+    at_time: OffsetDateTime,
+    trading_date: Date,
+    config: &'a Config,
 }
 
 impl Config {
@@ -130,6 +114,189 @@ impl Config {
             load_iters,
         })
     }
+}
+
+fn run_prepared_benchmarks(
+    data: &BenchmarkData<'_>,
+    start_unix_nanos: i64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let trading_day_result =
+        measure_trading_day(data.meta, data.trading_date, data.config.load_iters)?;
+    print_measurement(
+        "FutureMeta::for_trading_day",
+        data.config.load_iters,
+        trading_day_result,
+    );
+
+    let day = data.meta.for_trading_day(data.trading_date)?;
+    let prepared_handles = data
+        .contract_handles
+        .iter()
+        .copied()
+        .filter(|handle| day.prepare_fee(*handle).is_ok())
+        .collect::<Vec<_>>();
+    let handle = *prepared_handles
+        .first()
+        .ok_or("archive has no current fees that can be prepared")?;
+    println!("prepared_handle_samples={}", prepared_handles.len());
+
+    let cursor_prepare_result = measure_prepare_cursors(
+        data.meta,
+        std::slice::from_ref(&handle),
+        data.trading_date,
+        start_unix_nanos,
+        data.config.load_iters,
+    )?;
+    print_measurement(
+        "FutureMeta::prepare_fee_cursors",
+        data.config.load_iters,
+        cursor_prepare_result,
+    );
+
+    let prepared_result = measure_prepared_fee_queries(
+        data.meta,
+        handle,
+        data.trading_date,
+        start_unix_nanos,
+        data.config.query_iters,
+    )?;
+    print_measurement(
+        "PreparedFeeCursors::advance_and_get_unix_nanos",
+        data.config.query_iters,
+        prepared_result,
+    );
+
+    let cursor_advance_result = measure_cursor_day_advances(
+        data.meta,
+        handle,
+        data.trading_date,
+        start_unix_nanos,
+        data.config.load_iters,
+    )?;
+    print_measurement(
+        "PreparedFeeCursors::advance_to(next_day)",
+        data.config.load_iters,
+        cursor_advance_result,
+    );
+    Ok(())
+}
+
+fn run_query_benchmarks(data: &BenchmarkData<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    let contract_result = measure_contract_asof_queries(
+        data.meta,
+        data.contract_symbols,
+        data.at,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "contract_fee_asof",
+        data.config.query_iters,
+        contract_result,
+    );
+
+    let contract_at_result = measure_contract_at_queries(
+        data.meta,
+        data.contract_symbols,
+        data.at_time,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "contract_fee_at",
+        data.config.query_iters,
+        contract_at_result,
+    );
+
+    let contract_on_result = measure_contract_on_queries(
+        data.meta,
+        data.contract_symbols,
+        data.trading_date,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "contract_fee_on",
+        data.config.query_iters,
+        contract_on_result,
+    );
+
+    let handle_at_result = measure_handle_at_queries(
+        data.meta,
+        data.contract_handles,
+        data.at_time,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "contract_fee_for_handle_at",
+        data.config.query_iters,
+        handle_at_result,
+    );
+
+    let handle_on_result = measure_handle_on_queries(
+        data.meta,
+        data.contract_handles,
+        data.trading_date,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "contract_fee_for_handle_on",
+        data.config.query_iters,
+        handle_on_result,
+    );
+
+    run_underlying_benchmarks(data);
+
+    let (main_meta, main_symbol) = main_benchmark_meta(data.archive, data.trading_date)?;
+    let main_result = measure_main_queries(
+        &main_meta,
+        std::slice::from_ref(&main_symbol),
+        data.at,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "main_contract_fee_asof",
+        data.config.query_iters,
+        main_result,
+    );
+    let main_on_result = measure_main_on_queries(
+        &main_meta,
+        &main_symbol,
+        data.trading_date,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "main_contract_fee_on",
+        data.config.query_iters,
+        main_on_result,
+    );
+    Ok(())
+}
+
+fn run_underlying_benchmarks(data: &BenchmarkData<'_>) {
+    if data.underlying_symbols.is_empty() {
+        return;
+    }
+    let underlying_result = measure_underlying_queries(
+        data.meta,
+        data.underlying_symbols,
+        data.at,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "underlying_fees_asof",
+        data.config.query_iters,
+        underlying_result,
+    );
+
+    let underlying_on_result = measure_underlying_on_queries(
+        data.meta,
+        data.underlying_symbols,
+        data.trading_date,
+        data.config.query_iters,
+    );
+    print_measurement(
+        "underlying_fees_on(iterator)",
+        data.config.query_iters,
+        underlying_on_result,
+    );
 }
 
 fn current_contract_symbols(archive: &future_meta::FeeArchiveV2) -> Vec<String> {
@@ -167,12 +334,54 @@ fn current_underlying_symbols(contract_symbols: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn current_main_symbols(meta: &FutureMeta, underlying_symbols: &[String], at: &str) -> Vec<String> {
-    underlying_symbols
+fn main_benchmark_meta(
+    archive: &future_meta::FeeArchiveV2,
+    trading_date: Date,
+) -> Result<(FutureMeta, String), Box<dyn std::error::Error>> {
+    let date_key = trading_date.to_string().replace('-', "");
+    let contract = archive
+        .contracts
         .iter()
-        .map(|underlying| format!("KQ.m@{underlying}"))
-        .filter(|symbol| meta.main_contract_fee_asof(symbol, at).is_ok())
-        .collect()
+        .find(|contract| {
+            contract
+                .listing_date
+                .as_ref()
+                .is_none_or(|listing_date| listing_date <= &date_key)
+                && contract
+                    .expiry_date
+                    .as_ref()
+                    .is_none_or(|expiry_date| expiry_date >= &date_key)
+                && archive
+                    .fee_versions
+                    .iter()
+                    .any(|fee| fee.contract_id == contract.id && fee.valid_to.is_none())
+        })
+        .ok_or("archive has no listed contract for main benchmark")?;
+    let underlying = derive_underlying_symbol(&contract.symbol)?;
+    let contract_id = contract.id;
+
+    let mut archive = archive.clone();
+    for fee in archive
+        .fee_versions
+        .iter_mut()
+        .filter(|fee| fee.contract_id == contract_id)
+    {
+        fee.is_main_contract = true;
+        fee.trading_status = TradingStatus::Trading;
+    }
+
+    Ok((
+        FutureMeta::from_archive(archive)?,
+        format!("KQ.m@{underlying}"),
+    ))
+}
+
+fn measure_clone(meta: &FutureMeta, iterations: usize) -> Duration {
+    let start = Instant::now();
+    for _ in 0..iterations {
+        black_box(meta.clone());
+    }
+    start.elapsed()
 }
 
 fn measure_decode(bytes: &[u8], iterations: usize) -> Result<Duration, Box<dyn std::error::Error>> {
@@ -198,6 +407,69 @@ fn measure_index_build(
         black_box(meta.contracts().len());
     }
     Ok(elapsed)
+}
+
+fn measure_trading_day(
+    meta: &FutureMeta,
+    trading_date: Date,
+    iterations: usize,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let day = meta.for_trading_day(trading_date)?;
+        black_box(day.trading_date());
+    }
+    Ok(start.elapsed())
+}
+
+fn measure_prepare_cursors(
+    meta: &FutureMeta,
+    handles: &[ContractHandle],
+    trading_date: Date,
+    start_unix_nanos: i64,
+    iterations: usize,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let cursors =
+            meta.prepare_fee_cursors(handles.iter().copied(), trading_date, start_unix_nanos)?;
+        black_box(cursors.len());
+    }
+    Ok(start.elapsed())
+}
+
+fn measure_prepared_fee_queries(
+    meta: &FutureMeta,
+    handle: ContractHandle,
+    trading_date: Date,
+    start_unix_nanos: i64,
+    iterations: usize,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let mut cursors = meta.prepare_fee_cursors([handle], trading_date, start_unix_nanos)?;
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let fee = cursors.advance_and_get_unix_nanos(0, start_unix_nanos)?;
+        black_box(fee.open_amount(70_000.0, 1.0));
+    }
+    Ok(start.elapsed())
+}
+
+fn measure_cursor_day_advances(
+    meta: &FutureMeta,
+    handle: ContractHandle,
+    trading_date: Date,
+    start_unix_nanos: i64,
+    iterations: usize,
+) -> Result<Duration, Box<dyn std::error::Error>> {
+    let mut cursors = meta.prepare_fee_cursors([handle], trading_date, start_unix_nanos)?;
+    let mut date = trading_date;
+    let start = Instant::now();
+    for _ in 0..iterations {
+        date = date.next_day().ok_or("benchmark date has no next day")?;
+        cursors.advance_to(date, exchange_midnight_unix_nanos(date)?)?;
+        black_box(cursors.current(0)?);
+    }
+    Ok(start.elapsed())
 }
 
 fn measure_contract_asof_queries(
@@ -314,6 +586,26 @@ fn measure_underlying_queries(
     start.elapsed()
 }
 
+fn measure_underlying_on_queries(
+    meta: &FutureMeta,
+    symbols: &[String],
+    trading_date: Date,
+    iterations: usize,
+) -> Duration {
+    let start = Instant::now();
+    for index in 0..iterations {
+        let symbol = &symbols[index % symbols.len()];
+        let count = meta
+            .underlying_fees_on(symbol, trading_date)
+            .unwrap_or_else(|err| {
+                panic!("underlying_fees_on failed for {symbol} on {trading_date}: {err}")
+            })
+            .count();
+        black_box(count);
+    }
+    start.elapsed()
+}
+
 fn measure_main_queries(
     meta: &FutureMeta,
     symbols: &[String],
@@ -327,6 +619,24 @@ fn measure_main_queries(
             .main_contract_fee_asof(symbol, at)
             .unwrap_or_else(|err| {
                 panic!("main_contract_fee_asof failed for {symbol} at {at}: {err}")
+            });
+        black_box(contract_fee_rule_hash(fee));
+    }
+    start.elapsed()
+}
+
+fn measure_main_on_queries(
+    meta: &FutureMeta,
+    symbol: &str,
+    trading_date: Date,
+    iterations: usize,
+) -> Duration {
+    let start = Instant::now();
+    for _ in 0..iterations {
+        let fee = meta
+            .main_contract_fee_on(symbol, trading_date)
+            .unwrap_or_else(|err| {
+                panic!("main_contract_fee_on failed for {symbol} on {trading_date}: {err}")
             });
         black_box(contract_fee_rule_hash(fee));
     }
@@ -361,4 +671,9 @@ fn print_measurement(name: &str, iterations: usize, elapsed: Duration) {
 fn exchange_date(at: OffsetDateTime) -> Date {
     at.to_offset(UtcOffset::from_hms(8, 0, 0).expect("valid exchange UTC offset"))
         .date()
+}
+
+fn exchange_midnight_unix_nanos(date: Date) -> Result<i64, Box<dyn std::error::Error>> {
+    let at = date.midnight().assume_offset(UtcOffset::from_hms(8, 0, 0)?);
+    Ok(i64::try_from(at.unix_timestamp_nanos())?)
 }
