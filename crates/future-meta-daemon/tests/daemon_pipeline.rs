@@ -2109,6 +2109,81 @@ fn known_official_spec_change_repairs_all_listed_contract_history() {
 }
 
 #[test]
+fn official_spec_migration_repairs_expired_contract_when_expiry_date_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "DCE.p2405".to_owned();
+    row.listing_date = Some("20230519".to_owned());
+    row.expiry_date = None;
+    row.lot_size = 10.0;
+    row.tick_size = 2.0;
+    row.source_updated_at = Some("2023-05-19 00:00:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[row], "2023-05-19T01:00:00+08:00").unwrap();
+
+    conn.execute_batch(
+        "delete from contract_spec_versions
+         where contract_id = (select id from contracts where symbol = 'DCE.p2405');
+         insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         ) values (
+           (select id from contracts where symbol = 'DCE.p2405'),
+           10, 2, '2023-05-19T00:00:00+08:00', '2026-04-10T00:00:00+08:00',
+           'official', 'http://www.dce.com.cn/dce/content/2026/ywggytz/18628268.html',
+           '2026-08-23T12:00:00Z', '2026-08-23T12:00:00Z'
+         );
+         insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         ) values (
+           (select id from contracts where symbol = 'DCE.p2405'),
+           10, 1, '2026-04-10T00:00:00+08:00', null,
+           'official', 'http://www.dce.com.cn/dce/content/2026/ywggytz/18628268.html',
+           '2026-08-23T12:00:00Z', '2026-08-23T12:00:00Z'
+         );
+         update contracts set tick_size = 1 where symbol = 'DCE.p2405';",
+    )
+    .unwrap();
+
+    let changed = migrate_known_contract_spec_history(&mut conn, "2026-08-23T12:00:00Z").unwrap();
+
+    assert_eq!(changed, 1);
+    let repeated = migrate_known_contract_spec_history(&mut conn, "2026-08-23T12:01:00Z").unwrap();
+    assert_eq!(repeated, 0);
+    let (tick_size, versions, version_tick, valid_to, source_kind): (
+        f64,
+        i64,
+        f64,
+        Option<String>,
+        String,
+    ) = conn
+        .query_row(
+            "select c.tick_size, count(s.id), min(s.tick_size), max(s.valid_to), max(s.source_kind)
+             from contracts c join contract_spec_versions s on s.contract_id = c.id
+             where c.symbol = 'DCE.p2405'",
+            [],
+            |record| {
+                Ok((
+                    record.get(0)?,
+                    record.get(1)?,
+                    record.get(2)?,
+                    record.get(3)?,
+                    record.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(tick_size.to_bits(), 2.0_f64.to_bits());
+    assert_eq!(versions, 1);
+    assert_eq!(version_tick.to_bits(), 2.0_f64.to_bits());
+    assert_eq!(valid_to, None);
+    assert_eq!(source_kind, "v11_baseline");
+}
+
+#[test]
 fn duplicate_symbol_with_distinct_source_dates_creates_history() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
