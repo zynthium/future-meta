@@ -49,7 +49,9 @@ cargo run -p future-meta-daemon -- apply-verified-official \
 GitHub Actions 不从零构建历史库。每次运行：
 
 Cloudflare seed 的 `baseline_state.source_sha256` 必须匹配仓库内的
-`assets/future-meta-v17-reviewed.sqlite.gz`。旧 seed 只在该指纹不匹配时迁移一次；匹配后继续沿用线上 seed，避免定时任务覆盖后续经官方证据批准的增量。
+`assets/future-meta-v18-reviewed.sqlite.gz` 内记录的审阅基线指纹。V18 指纹为
+`84ffaa15468b8cbdc6203d25f0ecfe668c677193a7d42c32a243143be44d241e`；旧 seed
+只在该指纹不匹配时迁移一次，匹配后继续沿用线上 seed，避免定时任务覆盖后续经官方证据批准的增量。V18 在 V17 及线上增量基础上修正了 6 个大商所合约的固定手续费偏移，并合并 5 条无实质变化的冗余版本。
 
 1. 从 Cloudflare 下载 `ops/future-meta.sqlite.gz`。
 2. 解压为 `data/future-meta.sqlite`。

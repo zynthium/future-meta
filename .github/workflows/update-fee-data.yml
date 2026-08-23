@@ -10,8 +10,8 @@ env:
   DB_PATH: data/future-meta.sqlite
   SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
   SEED_ARCHIVE: public/ops/future-meta.sqlite.gz
-  REVIEWED_SEED_ARCHIVE: assets/future-meta-v17-reviewed.sqlite.gz
-  REVIEWED_BASELINE_SOURCE_SHA256: 5690905cd18dcd9d5e32c9ffca9f8eb998978432dd67f0129dc5f9c7e0c7c242
+  REVIEWED_SEED_ARCHIVE: assets/future-meta-v18-reviewed.sqlite.gz
+  REVIEWED_BASELINE_SOURCE_SHA256: 84ffaa15468b8cbdc6203d25f0ecfe668c677193a7d42c32a243143be44d241e
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -38,12 +38,12 @@ jobs:
           if ! sqlite3 "$DB_PATH" \
             "select name from sqlite_master where type = 'table' and name = 'baseline_state';" \
             | grep -qx baseline_state; then
-            echo "Bootstrapping reviewed V17 daemon seed"
+            echo "Bootstrapping reviewed V18 daemon seed"
             gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
           elif [ "$(sqlite3 "$DB_PATH" \
             "select source_sha256 from baseline_state where baseline_version = 'v11' limit 1;")" \
             != "$REVIEWED_BASELINE_SOURCE_SHA256" ]; then
-            echo "Migrating daemon seed to reviewed V17 baseline"
+            echo "Migrating daemon seed to reviewed V18 baseline"
             gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
           fi
           cargo run -p future-meta-daemon -- inspect --db "$DB_PATH"
