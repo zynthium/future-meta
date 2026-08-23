@@ -3,12 +3,14 @@
 use crate::db::{self, connect, ensure_schema};
 use crate::hash::{rule_set_hash, source_probe_hash};
 use crate::jin10::{parse_snapshots_with_candidates, range_url};
-use crate::latest::{LATEST_TABLE_PROBE_KEY, parse_latest_html};
-use crate::parse::AllowedRow;
-use crate::source::{TOTAL_URL, fetch_text, http_client};
+use crate::latest::{LATEST_TABLE_PROBE_KEY, LatestSnapshot, parse_latest_html};
+use crate::parse::{AllowedRow, parse_csv};
+use crate::source::{TOTAL_URL, discover_sources_from_html, fetch_text, http_client};
 use anyhow::{Result, anyhow};
+use future_meta::symbol::derive_underlying_symbol;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER, USER_AGENT};
 use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 use time::format_description;
@@ -391,6 +393,10 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
     crate::baseline::ensure_v11_baseline(&conn)?;
 
     let observed_at = now_string()?;
+    let migrated_specs = db::migrate_known_contract_spec_history(&mut conn, &observed_at)?;
+    if migrated_specs > 0 {
+        eprintln!("official contract specification history migrated: contracts={migrated_specs}");
+    }
     let announcement_health = db::announcement_health(&conn, &observed_at)?;
     eprintln!(
         "announcement health accepted: fresh_sources={} pending_candidates={}",
@@ -406,7 +412,9 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
             "latest total-page table returned no allowed rows: {TOTAL_URL}"
         ));
     }
-    let completion = db::complete_latest_rows(&conn, &snapshot.rows)?;
+    let (completion, cached_jin10_rows) =
+        complete_latest_snapshot(&conn, &client, &html, &snapshot, &observed_at)?;
+    db::require_complete_latest_metadata(&completion)?;
     if completion.rows.is_empty() {
         return Err(anyhow!(
             "latest total-page rows could not be completed from seed metadata: parsed={} skipped_invalid_symbols={} skipped_missing_metadata={}",
@@ -430,7 +438,10 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         return Ok(());
     }
 
-    let jin10_rows = recent_jin10_rows(&conn, OffsetDateTime::parse(&observed_at, &Rfc3339)?)?;
+    let jin10_rows = match cached_jin10_rows {
+        Some(rows) => rows,
+        None => recent_jin10_rows(&conn, OffsetDateTime::parse(&observed_at, &Rfc3339)?)?,
+    };
     let verified = db::cross_verify_latest_candidates(&conn, &completion.rows, &jin10_rows)?;
     if !verified.rejected.is_empty() {
         let symbols = verified
@@ -453,6 +464,17 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         return Err(error);
     }
 
+    if !verified.new_contracts.is_empty() {
+        db::upsert_allowed_rows(&mut conn, &verified.new_contracts, &observed_at)?;
+        db::record_new_contract_metadata_admissions(&conn, &verified, &observed_at)?;
+        if !verified.degraded_new_contracts.is_empty() {
+            eprintln!(
+                "new contracts admitted with degraded product-level Jin10 verification: count={} symbols={}",
+                verified.degraded_new_contracts.len(),
+                verified.degraded_new_contracts.join(",")
+            );
+        }
+    }
     db::mark_latest_contracts_seen(&mut conn, &completion.rows, &observed_at)?;
     db::update_source_success(&conn, TOTAL_URL, &probe_hash, &rows_hash, &observed_at)?;
     eprintln!(
@@ -464,6 +486,92 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         TOTAL_URL
     );
     Ok(())
+}
+
+fn complete_latest_snapshot(
+    conn: &rusqlite::Connection,
+    client: &reqwest::blocking::Client,
+    html: &str,
+    snapshot: &LatestSnapshot,
+    observed_at: &str,
+) -> Result<(db::LatestCompletion, Option<Vec<AllowedRow>>)> {
+    let completion = db::complete_latest_rows(conn, &snapshot.rows)?;
+    if completion.missing_metadata_symbols.is_empty() {
+        return Ok((completion, None));
+    }
+
+    let missing = completion
+        .missing_metadata_symbols
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let missing_latest = snapshot
+        .rows
+        .iter()
+        .filter(|row| missing.contains(&row.symbol))
+        .cloned()
+        .collect::<Vec<_>>();
+    let csv_rows = fetch_missing_contract_csv_rows(client, html, &missing)?;
+    let jin10_rows = recent_jin10_rows(conn, OffsetDateTime::parse(observed_at, &Rfc3339)?)?;
+    let corroborated =
+        db::corroborate_new_contract_metadata(&missing_latest, &csv_rows, &jin10_rows)?
+            .into_iter()
+            .map(|row| (row.symbol.clone(), row))
+            .collect::<BTreeMap<_, _>>();
+    let enriched_rows = snapshot
+        .rows
+        .iter()
+        .map(|row| {
+            corroborated
+                .get(&row.symbol)
+                .cloned()
+                .unwrap_or_else(|| row.clone())
+        })
+        .collect::<Vec<_>>();
+    let completion = db::complete_latest_rows(conn, &enriched_rows)?;
+    Ok((completion, Some(jin10_rows)))
+}
+
+fn fetch_missing_contract_csv_rows(
+    client: &reqwest::blocking::Client,
+    total_html: &str,
+    missing_symbols: &BTreeSet<String>,
+) -> Result<Vec<AllowedRow>> {
+    let sources = discover_sources_from_html(total_html)?;
+    let mut sources_by_code = BTreeMap::new();
+    for source in sources {
+        sources_by_code.insert(source.heyue.to_ascii_lowercase(), source);
+    }
+
+    let mut missing_by_product = BTreeMap::<String, BTreeSet<String>>::new();
+    for symbol in missing_symbols {
+        missing_by_product
+            .entry(derive_underlying_symbol(symbol)?)
+            .or_default()
+            .insert(symbol.clone());
+    }
+
+    let mut evidence = Vec::new();
+    for (product, symbols) in missing_by_product {
+        let (_, local) = product
+            .split_once('.')
+            .ok_or_else(|| anyhow!("invalid product symbol {product}"))?;
+        let source = sources_by_code
+            .get(&local.to_ascii_lowercase())
+            .ok_or_else(|| {
+                anyhow!("no 9qihuo product CSV source for new contracts in {product}")
+            })?;
+        let csv = fetch_text(client, &source.csv_url)?;
+        let rows = parse_csv(&csv)?;
+        for symbol in symbols {
+            let row = rows
+                .iter()
+                .find(|row| row.symbol == symbol)
+                .ok_or_else(|| anyhow!("new contract {symbol} missing from {}", source.csv_url))?;
+            evidence.push(row.clone());
+        }
+    }
+    Ok(evidence)
 }
 
 /// Fetch recent Jin10 snapshots whose next-day effective dates can corroborate

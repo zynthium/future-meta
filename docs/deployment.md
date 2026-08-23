@@ -1,6 +1,6 @@
 # future-meta Deployment
 
-第一版使用 GitHub Actions 做定时更新，Cloudflare Pages 免费层做静态分发和 daemon seed 托管。
+使用 GitHub Actions 做定时更新，Cloudflare Pages 免费层做静态分发和 daemon seed 托管。
 
 ## 当前 Cloudflare 部署
 
@@ -64,6 +64,17 @@ Cloudflare seed 的 `baseline_state.source_sha256` 必须匹配仓库内的
 
 Jin10 只作为 9qihuo 最新截面候选的同日交叉确认，不会独立写入生产费率版本，也不能作为 9qihuo 失败时的自动替代源。固定值/成交金额比例切换、平昨/平今字段置换、零费率切换、单腿超过两倍的跳变、超过 12 条的同批变更，以及疑似 `0.1 元`占位或统一 `+0.01/+0.09/+0.1` 固定费偏移都会在交叉核验阶段明确标记风险；但即使普通候选双源一致，也必须进入交易所官方证据与人工审阅流程。实时路径不会以产品众数或固定费偏移规则覆写已有费率。
 
+新上市 symbol 不属于手续费“变更”。它必须满足单品种 CSV 的乘数/跳价与总表每跳毛利恒等，并由 Jin10 核验静态规格。优先要求 Jin10 同日同合约手续费一致；Jin10 尚未列出远月时，只允许该费率完整匹配 V11 中已有同品种合约，同时 Jin10 同日同品种规格一致，并记录为 `contract_metadata_admissions.verification_level = 'degraded_product'`。该降级规则绝不适用于已有合约费率变化。
+
+archive schema v2 导出 `contract_spec_versions`，用于查询历史乘数和最小变动价位。部署前可在生产副本显式运行已审阅的交易所规格迁移：
+
+```bash
+cargo run -p future-meta-daemon -- migrate-contract-specs \
+  --db path/to/review-copy.sqlite
+```
+
+当前内置迁移覆盖 DCE 棕榈油/豆油、GFEX 碳酸锂和 INE 集运欧线的官方调整，并逐合约保留有效期和公告 URL。schema v2 客户端继续兼容读取 schema v1 artifact。
+
 ## Required GitHub Secrets
 
 - `CLOUDFLARE_API_TOKEN`: token allowed to deploy Cloudflare Pages.
@@ -76,7 +87,7 @@ Jin10 只作为 9qihuo 最新截面候选的同日交叉确认，不会独立写
 - 不提交 `public/` 生成物。
 - 不存储或发布价格、涨跌停、每手保证金、每跳盈亏、开平合计手续费等派生字段。
 - latest HTML 中不是普通期货合约的代码会跳过，例如源站的月均价类 `l2607F`。
-- latest HTML 不提供上市日、到期日、每手数量、最小跳动时，daemon 只从 Cloudflare seed 中已有 contract 元数据补齐；seed 不认识的新 symbol 会跳过，直到下一次本地全量 seed。
+- latest HTML 不提供上市日、到期日、每手数量、最小跳动时，daemon 优先从 seed 补齐；seed 不认识的新 symbol 必须通过上述受控准入，否则整个发布失败，绝不静默跳过。
 
 ## Client URL
 

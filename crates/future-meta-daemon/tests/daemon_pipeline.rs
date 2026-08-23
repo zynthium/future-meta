@@ -1,10 +1,11 @@
 use future_meta::query::FutureMeta;
 use future_meta_daemon::db::{
-    apply_official_fee_transition, apply_official_fee_tuple,
+    LatestCompletion, apply_official_fee_transition, apply_official_fee_tuple,
     apply_official_listed_contract_fee_tuple, compare_fee_rows_as_of, complete_latest_rows,
-    connect, ensure_schema, ensure_seeded, source_probe_hash, source_rule_set_hash,
-    update_source_error, update_source_success, upsert_allowed_rows, upsert_latest_rows,
-    upsert_v11_baseline_rows,
+    connect, corroborate_new_contract_metadata, ensure_schema, ensure_seeded,
+    migrate_known_contract_spec_history, record_new_contract_metadata_admissions,
+    require_complete_latest_metadata, source_probe_hash, source_rule_set_hash, update_source_error,
+    update_source_success, upsert_allowed_rows, upsert_latest_rows, upsert_v11_baseline_rows,
 };
 use future_meta_daemon::export::export_archive;
 use future_meta_daemon::latest::parse_latest_html;
@@ -1908,6 +1909,7 @@ fn latest_rows_complete_from_seed_metadata() {
 
     assert_eq!(completion.rows.len(), 1);
     assert_eq!(completion.skipped_missing_metadata, 1);
+    assert_eq!(completion.missing_metadata_symbols, ["SHFE.al2607"]);
     let row = &completion.rows[0];
     assert_eq!(row.symbol, "SHFE.cu2607");
     assert_eq!(row.listing_date.as_deref(), Some("20250716"));
@@ -1922,6 +1924,188 @@ fn latest_rows_complete_from_seed_metadata() {
         .query_row("select count(*) from fee_versions", [], |row| row.get(0))
         .unwrap();
     assert_eq!(fee_version_count, 2);
+}
+
+#[test]
+fn latest_publish_refuses_any_missing_contract_metadata() {
+    let completion = LatestCompletion {
+        rows: Vec::new(),
+        skipped_missing_metadata: 1,
+        missing_metadata_symbols: vec!["SHFE.al2607".to_owned()],
+    };
+
+    let error = require_complete_latest_metadata(&completion).unwrap_err();
+
+    assert!(error.to_string().contains('1'));
+    assert!(error.to_string().contains("refusing to publish"));
+}
+
+#[test]
+fn new_contract_metadata_requires_matching_three_source_tick_value() {
+    let latest = parse_latest_html(LATEST_HTML_CU).unwrap();
+    // The historical CSV can still carry a stale 0.1-CNY placeholder. It is
+    // admitted only as static metadata; current fees come from total+Jin10.
+    let csv_rows = parse_csv(CSV_V1).unwrap();
+    let jin10_rows = csv_rows.clone();
+
+    let enriched =
+        corroborate_new_contract_metadata(&latest.rows[..1], &csv_rows, &jin10_rows).unwrap();
+
+    assert_eq!(enriched[0].lot_size, Some(5.0));
+    assert_eq!(enriched[0].tick_size, Some(10.0));
+    assert_eq!(enriched[0].listing_date.as_deref(), Some("20250716"));
+    assert_eq!(enriched[0].expiry_date.as_deref(), Some("20260715"));
+}
+
+#[test]
+fn corroborated_new_contract_is_not_treated_as_a_fee_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let candidate = parse_csv(CSV_V1).unwrap().remove(0);
+
+    let verified = future_meta_daemon::db::cross_verify_latest_candidates(
+        &conn,
+        std::slice::from_ref(&candidate),
+        std::slice::from_ref(&candidate),
+    )
+    .unwrap();
+
+    assert_eq!(verified.new_contracts, [candidate]);
+    assert!(verified.accepted.is_empty());
+    assert!(verified.rejected.is_empty());
+}
+
+#[test]
+fn new_contract_can_use_explicitly_marked_product_level_jin10_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut candidate = parse_csv(CSV_V1).unwrap().remove(0);
+    candidate.symbol = "SHFE.cu2708".to_owned();
+    let representative = parse_csv(CSV_V1).unwrap().remove(0);
+
+    let verified = future_meta_daemon::db::cross_verify_latest_candidates(
+        &conn,
+        std::slice::from_ref(&candidate),
+        &[representative],
+    )
+    .unwrap();
+
+    assert_eq!(verified.new_contracts, [candidate]);
+    assert_eq!(verified.degraded_new_contracts, ["SHFE.cu2708"]);
+    assert!(verified.rejected.is_empty());
+
+    let mut conn = conn;
+    upsert_allowed_rows(
+        &mut conn,
+        &verified.new_contracts,
+        "2026-03-27T23:00:00+08:00",
+    )
+    .unwrap();
+    record_new_contract_metadata_admissions(&conn, &verified, "2026-03-27T23:00:00+08:00").unwrap();
+    let level: String = conn
+        .query_row(
+            "select verification_level from contract_metadata_admissions",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(level, "degraded_product");
+}
+
+#[test]
+fn contract_static_metadata_changes_create_non_overlapping_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let first = parse_csv(CSV_V1).unwrap().remove(0);
+    upsert_allowed_rows(
+        &mut conn,
+        std::slice::from_ref(&first),
+        "2026-03-27T23:00:00+08:00",
+    )
+    .unwrap();
+
+    let mut changed = first;
+    changed.tick_size = 5.0;
+    changed.source_updated_at = Some("2026-04-10 00:00:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[changed], "2026-04-10T01:00:00+08:00").unwrap();
+
+    let versions = conn
+        .prepare(
+            "select lot_size, tick_size, valid_from, valid_to
+             from contract_spec_versions
+             order by valid_from",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, f64>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].0.to_bits(), 5.0_f64.to_bits());
+    assert_eq!(versions[0].1.to_bits(), 10.0_f64.to_bits());
+    assert_eq!(versions[0].3.as_deref(), Some("2026-04-10T00:00:00+08:00"));
+    assert_eq!(versions[1].0.to_bits(), 5.0_f64.to_bits());
+    assert_eq!(versions[1].1.to_bits(), 5.0_f64.to_bits());
+    assert_eq!(versions[1].2, "2026-04-10T00:00:00+08:00");
+    assert_eq!(versions[1].3, None);
+}
+
+#[test]
+fn known_official_spec_change_repairs_all_listed_contract_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "DCE.p2605".to_owned();
+    row.listing_date = Some("20250519".to_owned());
+    row.expiry_date = Some("20260525".to_owned());
+    row.lot_size = 10.0;
+    row.tick_size = 2.0;
+    row.source_updated_at = Some("2025-05-19 00:00:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[row], "2025-05-19T01:00:00+08:00").unwrap();
+
+    let changed = migrate_known_contract_spec_history(&mut conn, "2026-08-23T12:00:00Z").unwrap();
+
+    assert_eq!(changed, 1);
+    let specs = conn
+        .prepare(
+            "select tick_size, valid_from, valid_to, source_kind
+             from contract_spec_versions order by valid_from",
+        )
+        .unwrap()
+        .query_map([], |record| {
+            Ok((
+                record.get::<_, f64>(0)?,
+                record.get::<_, String>(1)?,
+                record.get::<_, Option<String>>(2)?,
+                record.get::<_, String>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(specs.len(), 2);
+    assert_eq!(specs[0].0.to_bits(), 2.0_f64.to_bits());
+    assert_eq!(specs[0].2.as_deref(), Some("2026-04-10T00:00:00+08:00"));
+    assert_eq!(specs[1].0.to_bits(), 1.0_f64.to_bits());
+    assert_eq!(specs[1].1, "2026-04-10T00:00:00+08:00");
+    assert_eq!(specs[1].2, None);
+    assert_eq!(specs[1].3, "official");
 }
 
 #[test]
