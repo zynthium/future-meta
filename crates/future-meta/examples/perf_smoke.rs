@@ -132,7 +132,7 @@ impl Config {
     }
 }
 
-fn current_contract_symbols(archive: &future_meta::FeeArchiveV1) -> Vec<String> {
+fn current_contract_symbols(archive: &future_meta::FeeArchiveV2) -> Vec<String> {
     let contract_by_id: HashMap<u32, &str> = archive
         .contracts
         .iter()
@@ -186,7 +186,7 @@ fn measure_decode(bytes: &[u8], iterations: usize) -> Result<Duration, Box<dyn s
 }
 
 fn measure_index_build(
-    archive: &future_meta::FeeArchiveV1,
+    archive: &future_meta::FeeArchiveV2,
     iterations: usize,
 ) -> Result<Duration, Box<dyn std::error::Error>> {
     let mut elapsed = Duration::ZERO;

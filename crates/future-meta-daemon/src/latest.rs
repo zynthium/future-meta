@@ -34,6 +34,8 @@ pub struct LatestRow {
     pub lot_size: Option<f64>,
     /// Minimum price tick when the latest page exposes it directly.
     pub tick_size: Option<f64>,
+    /// Monetary value of one minimum price movement for one lot.
+    pub tick_value: Option<f64>,
     /// Source fee update timestamp when present.
     pub source_updated_at: Option<String>,
     /// Whether the source remark marks this as a main contract.
@@ -119,6 +121,7 @@ pub fn parse_latest_html(html: &str) -> Result<LatestSnapshot> {
             close_today_fee: parse_fee_spec(primary_text(&cells[8]).as_deref().unwrap_or("")),
             lot_size: None,
             tick_size: None,
+            tick_value: parse_numeric_cell(primary_text(&cells[9]).as_deref()),
             source_updated_at: row_source_updated_at,
             is_main_contract: parse_main_contract(&all_text(&cells[12])),
         });
@@ -180,6 +183,12 @@ fn parse_margin_cell(text: Option<&str>) -> Result<Option<f64>> {
     parse_optional_f64(numeric)
         .map(Some)
         .ok_or_else(|| anyhow!("invalid margin cell: {text}"))
+}
+
+fn parse_numeric_cell(text: Option<&str>) -> Option<f64> {
+    text.and_then(|value| {
+        parse_optional_f64(value.trim().strip_suffix('元').unwrap_or(value.trim()))
+    })
 }
 
 fn parse_main_contract(text: &str) -> bool {
@@ -298,6 +307,7 @@ mod tests {
         assert!(!first.is_main_contract);
         assert_eq!(first.lot_size, None);
         assert_eq!(first.tick_size, None);
+        assert_eq!(first.tick_value, Some(15.0));
 
         let second = &snapshot.rows[1];
         assert_eq!(second.symbol, "CFFEX.IF2606");

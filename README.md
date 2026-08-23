@@ -15,6 +15,7 @@
 
 - 使用 TqSdk 风格 `symbol` 作为合约唯一标识，例如 `SHFE.cu2607`、`CZCE.SR903`、`KQ.m@SHFE.cu`。
 - 支持具体合约、品种下全部合约、主连别名的 as-of 手续费查询。
+- 提供可按历史时间查询的合约乘数、最小变动价位，以及派生的每手每跳价值。
 - 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
 - daemon 使用 SQLite 保存历史版本，按手续费规则变化生成有效期区间。
@@ -63,6 +64,20 @@ use future_meta::{DownloadConfig, load_or_fetch};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let meta = load_or_fetch(DownloadConfig::default()).await?;
 
+    let contract = meta.contract("SHFE.cu2607")?;
+    println!(
+        "lot_size={}, tick_size={}, tick_value={}",
+        contract.lot_size,
+        contract.tick_size,
+        contract.tick_value()
+    );
+
+    let historical_spec = meta.contract_spec_asof(
+        "DCE.p2605",
+        "2026-04-09T10:00:00+08:00",
+    )?;
+    println!("historical tick_size={}", historical_spec.tick_size);
+
     let fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")?;
     println!("open={:?}, close_today={:?}", fee.open_fee, fee.close_today_fee);
 
@@ -87,6 +102,11 @@ https://future-meta.pages.dev/manifest.json
 
 | API | 说明 |
 | --- | --- |
+| `contract(symbol)` | O(1) 查询合约乘数、最小变动价位等静态规格元数据 |
+| `contract_for_handle(handle)` | 使用已解析的 `ContractHandle` 查询合约规格，适合热路径；`tick_value()` 返回每手每跳价值 |
+| `contract_spec_asof(symbol, at)` | 查询 RFC3339 时间点有效的合约乘数、最小变动价位和每手每跳价值 |
+| `contract_spec_at/on(...)` | 使用预解析时间或交易日查询历史合约规格 |
+| `contract_spec_for_handle_at/on(...)` | 使用 `ContractHandle` 查询历史合约规格，避免重复解析 symbol |
 | `contract_fee_asof(symbol, at)` | 查询具体期货合约在某个 RFC3339 时间点所属交易所本地日期的手续费 |
 | `contract_fee_at(symbol, at)` | 使用已解析的 `OffsetDateTime` 查询，内部按交易所本地日期选择日级手续费 |
 | `contract_fee_on(symbol, trading_date)` | 使用交易所本地 `Date` 查询，适合手续费盘中不变的场景 |
@@ -162,6 +182,8 @@ for tick in ticks {
 
 - 历史手续费事实：只接受交易所原始公告、收费表和结算/业务参数文件。先暂存到独立的官方证据库，不能直接导出或发布；详见 [官方历史证据流程](docs/official-evidence.md)。
 - 每日增量更新：GitHub Actions 拉取 Cloudflare 上的 SQLite seed，解析 `https://www.9qihuo.com/qihuoshouxufei` 的 `table#heyuetbl`；实质费率变化必须有同日、同合约 Jin10 快照确认才可进入历史。
+- 新上市 symbol 必须通过总表每跳价值、单品种 CSV 静态规格和 Jin10 核验；Jin10 尚无该 symbol 时，只允许使用 V11 同品种费率锚点的受控降级，并在 SQLite 标记 `degraded_product`。
+- archive schema v2 保存合约规格历史；当前客户端仍可读取 schema v1，并将其静态规格转换为单一历史区间。
 - Jin10 仅作为 9qihuo 候选的交叉确认，不会独立写入 `fee_versions`，也不会替代 9qihuo 更新。费率类型切换、平昨/平今字段置换、零费率切换、超过两倍的单腿跳变、超过 12 条的同批变化，以及疑似 `0.1 元`占位或统一小数固定费偏移，均失败关闭；它们不是“错误”结论，而是必须暂存并按交易所官方证据导入的队列。实时更新绝不以品种众数静默覆写既有费率。
 
 `9qihuo` 单品种 CSV、Jin10 和其他第三方衍生数据不再用于补充历史手续费。`seed-history`/`refresh` 会明确拒绝该用途；现有历史记录也不会因此被追溯认定为官方证据。

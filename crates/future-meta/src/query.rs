@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::FutureMetaError;
-use crate::model::{Contract, ContractFee, FeeArchiveV1, FeeKind, FeeSpec, TradingStatus};
+use crate::model::{
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV2, FeeKind, FeeSpec, SCHEMA_VERSION,
+    TradingStatus,
+};
 use crate::symbol::{SymbolKind, derive_underlying_symbol, parse_symbol};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Month, OffsetDateTime, UtcOffset};
@@ -12,12 +15,13 @@ use time::{Date, Month, OffsetDateTime, UtcOffset};
 /// High-performance local future-meta query client.
 #[derive(Debug, Clone)]
 pub struct FutureMeta {
-    archive: FeeArchiveV1,
+    archive: FeeArchiveV2,
     handle_token: u64,
     history_start_date: Date,
     contract_by_symbol: HashMap<String, ContractHandle>,
     contract_indexes: Vec<ContractIndex>,
     fee_indexes_by_contract: Vec<Vec<FeeVersionIndex>>,
+    spec_indexes_by_contract: Vec<Vec<SpecVersionIndex>>,
     contracts_by_underlying: HashMap<String, Vec<ContractHandle>>,
 }
 
@@ -323,6 +327,62 @@ struct FeeVersionIndex {
     valid_to_date: Option<Date>,
 }
 
+#[derive(Debug, Clone)]
+struct SpecVersionIndex {
+    archive_index: usize,
+    valid_from: OffsetDateTime,
+    valid_from_date: Date,
+    valid_to: Option<OffsetDateTime>,
+    valid_to_date: Option<Date>,
+}
+
+fn build_spec_indexes(
+    archive: &FeeArchiveV2,
+    contract_handle_by_id: &HashMap<u32, ContractHandle>,
+) -> Result<Vec<Vec<SpecVersionIndex>>, FutureMetaError> {
+    let mut indexes_by_contract = vec![Vec::new(); archive.contracts.len()];
+    for (index, spec) in archive.contract_spec_versions.iter().enumerate() {
+        if !spec.lot_size.is_finite() || spec.lot_size <= 0.0 {
+            return Err(FutureMetaError::CorruptArchive(format!(
+                "invalid lot_size in contract spec for id {}",
+                spec.contract_id
+            )));
+        }
+        if !spec.tick_size.is_finite() || spec.tick_size <= 0.0 {
+            return Err(FutureMetaError::CorruptArchive(format!(
+                "invalid tick_size in contract spec for id {}",
+                spec.contract_id
+            )));
+        }
+        let handle = contract_handle_by_id
+            .get(&spec.contract_id)
+            .copied()
+            .ok_or_else(|| {
+                FutureMetaError::CorruptArchive(format!(
+                    "contract spec references unknown contract id {}",
+                    spec.contract_id
+                ))
+            })?;
+        let valid_from = parse_archive_timestamp("spec valid_from", &spec.valid_from)?;
+        let valid_to = parse_optional_archive_timestamp("spec valid_to", spec.valid_to.as_deref())?;
+        indexes_by_contract[handle.index].push(SpecVersionIndex {
+            archive_index: index,
+            valid_from,
+            valid_from_date: exchange_date(valid_from),
+            valid_to,
+            valid_to_date: valid_to.map(exchange_date),
+        });
+    }
+    for indexes in &mut indexes_by_contract {
+        indexes.sort_by(|left, right| {
+            left.valid_from
+                .cmp(&right.valid_from)
+                .then_with(|| left.archive_index.cmp(&right.archive_index))
+        });
+    }
+    Ok(indexes_by_contract)
+}
+
 impl FutureMeta {
     /// Build an indexed query client from a decoded archive.
     ///
@@ -330,7 +390,14 @@ impl FutureMeta {
     ///
     /// Returns an error if a contract symbol in the archive cannot provide a
     /// supported futures underlying symbol.
-    pub fn from_archive(archive: FeeArchiveV1) -> Result<Self, FutureMetaError> {
+    pub fn from_archive(archive: impl Into<FeeArchiveV2>) -> Result<Self, FutureMetaError> {
+        let archive = archive.into();
+        if archive.schema_version != SCHEMA_VERSION {
+            return Err(FutureMetaError::UnsupportedSchemaVersion {
+                found: archive.schema_version,
+                supported: SCHEMA_VERSION,
+            });
+        }
         let handle_token = next_handle_token();
         let history_start = parse_archive_timestamp("history_start", &archive.history_start)?;
         let history_start_date = exchange_date(history_start);
@@ -393,6 +460,8 @@ impl FutureMeta {
             });
         }
 
+        let spec_indexes_by_contract = build_spec_indexes(&archive, &contract_handle_by_id)?;
+
         Ok(Self {
             archive,
             handle_token,
@@ -400,6 +469,7 @@ impl FutureMeta {
             contract_by_symbol,
             contract_indexes,
             fee_indexes_by_contract,
+            spec_indexes_by_contract,
             contracts_by_underlying,
         })
     }
@@ -442,6 +512,117 @@ impl FutureMeta {
             .get(symbol)
             .copied()
             .ok_or_else(|| FutureMetaError::UnknownContract(symbol.to_owned()))
+    }
+
+    /// Return metadata for a concrete contract symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `symbol` is not present in the archive.
+    pub fn contract(&self, symbol: &str) -> Result<&Contract, FutureMetaError> {
+        let handle = self.resolve_contract(symbol)?;
+        self.contract_for_handle(handle)
+    }
+
+    /// Return metadata for a pre-resolved contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the handle was produced by another client or is
+    /// otherwise invalid for this archive.
+    pub fn contract_for_handle(
+        &self,
+        handle: ContractHandle,
+    ) -> Result<&Contract, FutureMetaError> {
+        self.contract_index(handle)?;
+        self.archive
+            .contracts
+            .get(handle.index)
+            .ok_or(FutureMetaError::InvalidContractHandle)
+    }
+
+    /// Return the contract lot/tick specification at an RFC 3339 timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timestamp or symbol is invalid, predates the
+    /// archive, or no specification covers it.
+    pub fn contract_spec_asof(
+        &self,
+        symbol: &str,
+        at: &str,
+    ) -> Result<&ContractSpecVersion, FutureMetaError> {
+        self.contract_spec_at(symbol, parse_query_timestamp(at)?)
+    }
+
+    /// Return the contract lot/tick specification at a parsed timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the symbol is unknown or no specification covers `at`.
+    pub fn contract_spec_at(
+        &self,
+        symbol: &str,
+        at: OffsetDateTime,
+    ) -> Result<&ContractSpecVersion, FutureMetaError> {
+        self.reject_date_before_history(exchange_date(at))?;
+        let handle = self.resolve_contract(symbol)?;
+        self.contract_spec_for_handle_at(handle, at)
+    }
+
+    /// Return the contract lot/tick specification on an exchange-local date.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the symbol is unknown or no specification covers the date.
+    pub fn contract_spec_on(
+        &self,
+        symbol: &str,
+        trading_date: Date,
+    ) -> Result<&ContractSpecVersion, FutureMetaError> {
+        self.reject_date_before_history(trading_date)?;
+        let handle = self.resolve_contract(symbol)?;
+        self.contract_spec_for_handle_on(handle, trading_date)
+    }
+
+    /// Return a pre-resolved contract's lot/tick specification at a timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid handle or uncovered timestamp.
+    pub fn contract_spec_for_handle_at(
+        &self,
+        handle: ContractHandle,
+        at: OffsetDateTime,
+    ) -> Result<&ContractSpecVersion, FutureMetaError> {
+        self.reject_date_before_history(exchange_date(at))?;
+        let index = self.spec_archive_index_for_handle_at(handle, at)?;
+        if let Some(index) = index {
+            return Ok(&self.archive.contract_spec_versions[index]);
+        }
+        Err(FutureMetaError::NoVersionAt(
+            self.contract_symbol(handle)?.to_owned(),
+        ))
+    }
+
+    /// Return a pre-resolved contract's lot/tick specification on a date.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid handle or uncovered trading date.
+    pub fn contract_spec_for_handle_on(
+        &self,
+        handle: ContractHandle,
+        trading_date: Date,
+    ) -> Result<&ContractSpecVersion, FutureMetaError> {
+        self.reject_date_before_history(trading_date)?;
+        let index = self.spec_archive_index_for_handle_on(handle, trading_date)?;
+        if let Some(index) = index {
+            return Ok(&self.archive.contract_spec_versions[index]);
+        }
+        Err(FutureMetaError::NoVersionAt(
+            self.contract_symbol(handle)?.to_owned(),
+        ))
     }
 
     /// Return the fee rule for a concrete contract at a pre-parsed timestamp.
@@ -685,6 +866,51 @@ impl FutureMeta {
             .ok_or(FutureMetaError::InvalidContractHandle)
     }
 
+    fn spec_indexes_for_handle(
+        &self,
+        handle: ContractHandle,
+    ) -> Result<&[SpecVersionIndex], FutureMetaError> {
+        self.contract_index(handle)?;
+        self.spec_indexes_by_contract
+            .get(handle.index)
+            .map(Vec::as_slice)
+            .ok_or(FutureMetaError::InvalidContractHandle)
+    }
+
+    fn spec_archive_index_for_handle_at(
+        &self,
+        handle: ContractHandle,
+        at: OffsetDateTime,
+    ) -> Result<Option<usize>, FutureMetaError> {
+        let indexes = self.spec_indexes_for_handle(handle)?;
+        let position = indexes.partition_point(|index| index.valid_from <= at);
+        if position == 0 {
+            return Ok(None);
+        }
+        let index = &indexes[position - 1];
+        Ok(index
+            .valid_to
+            .is_none_or(|valid_to| at < valid_to)
+            .then_some(index.archive_index))
+    }
+
+    fn spec_archive_index_for_handle_on(
+        &self,
+        handle: ContractHandle,
+        trading_date: Date,
+    ) -> Result<Option<usize>, FutureMetaError> {
+        let indexes = self.spec_indexes_for_handle(handle)?;
+        let position = indexes.partition_point(|index| index.valid_from_date <= trading_date);
+        if position == 0 {
+            return Ok(None);
+        }
+        let index = &indexes[position - 1];
+        Ok(index
+            .valid_to_date
+            .is_none_or(|valid_to| trading_date < valid_to)
+            .then_some(index.archive_index))
+    }
+
     fn fee_for_contract_handle_on(
         &self,
         handle: ContractHandle,
@@ -737,6 +963,7 @@ impl FutureMeta {
         &self,
         handle: ContractHandle,
         fee: &ContractFee,
+        trading_date: Date,
     ) -> Result<PreparedFee, FutureMetaError> {
         self.contract_index(handle)?;
         let contract = self
@@ -744,7 +971,8 @@ impl FutureMeta {
             .contracts
             .get(handle.index)
             .ok_or(FutureMetaError::InvalidContractHandle)?;
-        prepare_fee(contract.symbol.as_str(), contract.lot_size, fee)
+        let spec = self.contract_spec_for_handle_on(handle, trading_date)?;
+        prepare_fee(contract.symbol.as_str(), spec.lot_size, fee)
     }
 }
 
@@ -762,6 +990,50 @@ impl<'a> TradingDayMeta<'a> {
     /// Returns an error when `symbol` is not present in the archive.
     pub fn resolve_contract(&self, symbol: &str) -> Result<ContractHandle, FutureMetaError> {
         self.meta.resolve_contract(symbol)
+    }
+
+    /// Return metadata for a concrete contract symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `symbol` is not present in the archive.
+    pub fn contract(&self, symbol: &str) -> Result<&'a Contract, FutureMetaError> {
+        self.meta.contract(symbol)
+    }
+
+    /// Return metadata for a pre-resolved contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the handle was produced by another client or is
+    /// otherwise invalid for this archive.
+    pub fn contract_for_handle(
+        &self,
+        handle: ContractHandle,
+    ) -> Result<&'a Contract, FutureMetaError> {
+        self.meta.contract_for_handle(handle)
+    }
+
+    /// Return the contract specification for this trading day.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the symbol is unknown or has no specification.
+    pub fn contract_spec(&self, symbol: &str) -> Result<&'a ContractSpecVersion, FutureMetaError> {
+        self.meta.contract_spec_on(symbol, self.trading_date)
+    }
+
+    /// Return a pre-resolved contract's specification for this trading day.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the handle is invalid or has no specification.
+    pub fn contract_spec_for_handle(
+        &self,
+        handle: ContractHandle,
+    ) -> Result<&'a ContractSpecVersion, FutureMetaError> {
+        self.meta
+            .contract_spec_for_handle_on(handle, self.trading_date)
     }
 
     /// Return the fee rule for a pre-resolved contract in this trading day.
@@ -792,7 +1064,8 @@ impl<'a> TradingDayMeta<'a> {
     /// trading day, or the fee rule cannot be compiled to numeric coefficients.
     pub fn prepare_fee(&self, handle: ContractHandle) -> Result<PreparedFee, FutureMetaError> {
         let fee = self.fee_rule(handle)?;
-        self.meta.prepare_contract_fee(handle, fee)
+        self.meta
+            .prepare_contract_fee(handle, fee, self.trading_date)
     }
 
     /// Return the fee rule for a concrete contract symbol in this trading day.

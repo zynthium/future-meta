@@ -49,6 +49,10 @@ enum Command {
         #[arg(long)]
         require_seed: bool,
     },
+    MigrateContractSpecs {
+        #[arg(long)]
+        db: PathBuf,
+    },
     DiagnoseLatest {
         #[arg(long)]
         db: PathBuf,
@@ -148,6 +152,14 @@ pub fn run() -> anyhow::Result<()> {
         }
         Command::SeedHistory { db, force_full } => refresh::refresh(&db, force_full),
         Command::UpdateLatest { db, require_seed } => refresh::update_latest(&db, require_seed),
+        Command::MigrateContractSpecs { db } => {
+            let mut conn = self::db::connect(&db)?;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let changed = self::db::migrate_known_contract_spec_history(&mut conn, &observed_at)?;
+            eprintln!("contract specification history migrated: contracts={changed}");
+            Ok(())
+        }
         Command::DiagnoseLatest { db, out } => {
             let diagnosis = refresh::diagnose_latest(&db, &out)?;
             eprintln!(
@@ -288,6 +300,24 @@ mod tests {
                 assert_eq!(out, PathBuf::from("/tmp/latest-diagnostics.json"));
             }
             _ => panic!("expected diagnose-latest command"),
+        }
+    }
+
+    #[test]
+    fn migrate_contract_specs_cli_targets_one_database() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "migrate-contract-specs",
+            "--db",
+            "data/future-meta.sqlite",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::MigrateContractSpecs { db } => {
+                assert_eq!(db, PathBuf::from("data/future-meta.sqlite"));
+            }
+            _ => panic!("expected migrate-contract-specs command"),
         }
     }
 

@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Current archive schema version.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// Legacy archive version that stores only one static specification per contract.
+pub const LEGACY_SCHEMA_VERSION: u32 = 1;
 
 /// Published artifact manifest metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +48,50 @@ pub struct FeeArchiveV1 {
     pub fee_versions: Vec<ContractFee>,
 }
 
+/// Version 2 fee archive payload with time-versioned contract specifications.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeeArchiveV2 {
+    /// Schema version used by this archive.
+    pub schema_version: u32,
+    /// Generation timestamp.
+    pub generated_at: String,
+    /// Earliest date covered by this archive.
+    pub history_start: String,
+    /// Latest date covered by this archive.
+    pub history_end: String,
+    /// Contract metadata table containing the latest known specification.
+    pub contracts: Vec<Contract>,
+    /// Contract lot/tick specifications over time.
+    pub contract_spec_versions: Vec<ContractSpecVersion>,
+    /// Fee records over time.
+    pub fee_versions: Vec<ContractFee>,
+}
+
+impl From<FeeArchiveV1> for FeeArchiveV2 {
+    fn from(archive: FeeArchiveV1) -> Self {
+        let contract_spec_versions = archive
+            .contracts
+            .iter()
+            .map(|contract| ContractSpecVersion {
+                contract_id: contract.id,
+                lot_size: contract.lot_size,
+                tick_size: contract.tick_size,
+                valid_from: archive.history_start.clone(),
+                valid_to: None,
+            })
+            .collect();
+        Self {
+            schema_version: SCHEMA_VERSION,
+            generated_at: archive.generated_at,
+            history_start: archive.history_start,
+            history_end: archive.history_end,
+            contracts: archive.contracts,
+            contract_spec_versions,
+            fee_versions: archive.fee_versions,
+        }
+    }
+}
+
 /// Futures contract metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Contract {
@@ -62,6 +109,42 @@ pub struct Contract {
     pub tick_size: f64,
     /// Whether the contract is currently active.
     pub active: bool,
+}
+
+impl Contract {
+    /// Monetary value of one minimum price movement for one lot.
+    ///
+    /// This value is derived from contract metadata and is therefore not
+    /// stored separately in the archive.
+    #[must_use]
+    #[inline]
+    pub const fn tick_value(&self) -> f64 {
+        self.lot_size * self.tick_size
+    }
+}
+
+/// Lot and tick specification for one contract over a validity interval.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContractSpecVersion {
+    /// Contract id from the contract table.
+    pub contract_id: u32,
+    /// Number of units per lot.
+    pub lot_size: f64,
+    /// Minimum price tick.
+    pub tick_size: f64,
+    /// Inclusive first timestamp this specification is valid.
+    pub valid_from: String,
+    /// Exclusive end timestamp; `None` means open-ended/current.
+    pub valid_to: Option<String>,
+}
+
+impl ContractSpecVersion {
+    /// Monetary value of one minimum price movement for one lot.
+    #[must_use]
+    #[inline]
+    pub const fn tick_value(&self) -> f64 {
+        self.lot_size * self.tick_size
+    }
 }
 
 /// Fee rule for a contract over a validity interval.

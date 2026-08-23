@@ -3,7 +3,8 @@
 use anyhow::{Result, anyhow};
 use future_meta::archive::{encode_archive_bytes, sha256_hex};
 use future_meta::model::{
-    Contract, ContractFee, FeeArchiveV1, FeeSpec, Manifest, SCHEMA_VERSION, TradingStatus,
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV2, FeeSpec, Manifest, SCHEMA_VERSION,
+    TradingStatus,
 };
 use rusqlite::{Connection, Row};
 use std::path::Path;
@@ -17,6 +18,7 @@ use time::format_description::well_known::Rfc3339;
 /// Returns an error if archive export fails.
 pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
     let conn = Connection::open(db)?;
+    crate::db::ensure_schema(&conn)?;
     ensure_no_untrusted_jin10_fee_versions(&conn)?;
     std::fs::create_dir_all(out.join("artifacts"))?;
     let archive = load_archive(&conn)?;
@@ -26,7 +28,7 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         .generated_at
         .replace([':', '+'], "")
         .replace('-', "");
-    let artifact_name = format!("artifacts/future-meta-fees-v1-{data_version}.fmeta.zst");
+    let artifact_name = format!("artifacts/future-meta-fees-v2-{data_version}.fmeta.zst");
 
     std::fs::write(out.join("latest.fmeta.zst"), &bytes)?;
     std::fs::write(out.join(&artifact_name), &bytes)?;
@@ -63,7 +65,7 @@ fn ensure_no_untrusted_jin10_fee_versions(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn load_archive(conn: &Connection) -> Result<FeeArchiveV1> {
+fn load_archive(conn: &Connection) -> Result<FeeArchiveV2> {
     let mut contracts_stmt = conn.prepare(
         "select id, symbol, listing_date, expiry_date, lot_size, tick_size, active
          from contracts
@@ -79,6 +81,23 @@ fn load_archive(conn: &Connection) -> Result<FeeArchiveV1> {
                 lot_size: row.get(4)?,
                 tick_size: row.get(5)?,
                 active: row.get::<_, i64>(6)? != 0,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    let mut spec_stmt = conn.prepare(
+        "select contract_id, lot_size, tick_size, valid_from, valid_to
+         from contract_spec_versions
+         order by contract_id, valid_from, id",
+    )?;
+    let contract_spec_versions = spec_stmt
+        .query_map([], |row| {
+            Ok(ContractSpecVersion {
+                contract_id: read_u32(row, 0)?,
+                lot_size: row.get(1)?,
+                tick_size: row.get(2)?,
+                valid_from: row.get(3)?,
+                valid_to: row.get(4)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -121,12 +140,13 @@ fn load_archive(conn: &Connection) -> Result<FeeArchiveV1> {
         .min()
         .unwrap_or_else(|| generated_at.clone());
 
-    Ok(FeeArchiveV1 {
+    Ok(FeeArchiveV2 {
         schema_version: SCHEMA_VERSION,
         generated_at: generated_at.clone(),
         history_start,
         history_end: generated_at,
         contracts,
+        contract_spec_versions,
         fee_versions,
     })
 }

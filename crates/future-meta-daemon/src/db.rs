@@ -35,6 +35,134 @@ pub struct HistoryCounts {
 pub struct LatestCompletion {
     pub rows: Vec<AllowedRow>,
     pub skipped_missing_metadata: usize,
+    pub missing_metadata_symbols: Vec<String>,
+}
+
+/// Refuse a publishing update when any parsed latest row lacks contract metadata.
+///
+/// Read-only diagnostics may still inspect a partial [`LatestCompletion`], but a
+/// publisher must never silently omit newly listed contracts.
+///
+/// # Errors
+///
+/// Returns an error containing the number of omitted rows.
+pub fn require_complete_latest_metadata(completion: &LatestCompletion) -> Result<()> {
+    if completion.skipped_missing_metadata > 0 {
+        return Err(anyhow!(
+            "latest snapshot skipped {} contract(s) with missing metadata; refusing to publish",
+            completion.skipped_missing_metadata
+        ));
+    }
+    Ok(())
+}
+
+/// Fill metadata for newly listed contracts only when 9qihuo's product CSV,
+/// the latest table's tick value, and Jin10 independently agree.
+///
+/// # Errors
+///
+/// Returns an error when any row needing metadata lacks either corroborating
+/// source, has inconsistent source observations, or fails the tick-value
+/// identity `lot_size * tick_size`.
+pub fn corroborate_new_contract_metadata(
+    latest_rows: &[LatestRow],
+    csv_rows: &[AllowedRow],
+    jin10_rows: &[AllowedRow],
+) -> Result<Vec<LatestRow>> {
+    let mut enriched = Vec::with_capacity(latest_rows.len());
+    for latest in latest_rows {
+        if latest.lot_size.is_some() && latest.tick_size.is_some() {
+            enriched.push(latest.clone());
+            continue;
+        }
+
+        let csv = unique_static_metadata(csv_rows, &latest.symbol, "9qihuo product CSV")?;
+        let jin10 = if jin10_rows.iter().any(|row| row.symbol == latest.symbol) {
+            unique_static_metadata(jin10_rows, &latest.symbol, "Jin10")?
+        } else {
+            product_level_jin10_evidence(latest, csv, jin10_rows)?
+        };
+        if !same_number(csv.lot_size, jin10.lot_size)
+            || !same_number(csv.tick_size, jin10.tick_size)
+        {
+            return Err(anyhow!(
+                "new contract metadata disagreement for {}: 9qihuo={}x{}, Jin10={}x{}",
+                latest.symbol,
+                csv.lot_size,
+                csv.tick_size,
+                jin10.lot_size,
+                jin10.tick_size
+            ));
+        }
+        let tick_value = latest.tick_value.ok_or_else(|| {
+            anyhow!(
+                "new contract {} has no latest-table tick value; refusing metadata admission",
+                latest.symbol
+            )
+        })?;
+        if !same_number(csv.lot_size * csv.tick_size, tick_value) {
+            return Err(anyhow!(
+                "new contract tick value mismatch for {}: metadata={}x{}, latest={}",
+                latest.symbol,
+                csv.lot_size,
+                csv.tick_size,
+                tick_value
+            ));
+        }
+
+        let mut row = latest.clone();
+        row.listing_date.clone_from(&csv.listing_date);
+        row.expiry_date.clone_from(&csv.expiry_date);
+        row.lot_size = Some(csv.lot_size);
+        row.tick_size = Some(csv.tick_size);
+        enriched.push(row);
+    }
+    Ok(enriched)
+}
+
+fn unique_static_metadata<'a>(
+    rows: &'a [AllowedRow],
+    symbol: &str,
+    source: &str,
+) -> Result<&'a AllowedRow> {
+    let mut matches = rows.iter().filter(|row| row.symbol == symbol);
+    let first = matches
+        .next()
+        .ok_or_else(|| anyhow!("new contract {symbol} missing from {source}"))?;
+    for other in matches {
+        if !same_number(first.lot_size, other.lot_size)
+            || !same_number(first.tick_size, other.tick_size)
+        {
+            return Err(anyhow!(
+                "new contract {symbol} has inconsistent metadata within {source}"
+            ));
+        }
+    }
+    Ok(first)
+}
+
+fn same_number(left: f64, right: f64) -> bool {
+    (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1e-9
+}
+
+fn product_level_jin10_evidence<'a>(
+    latest: &LatestRow,
+    csv: &AllowedRow,
+    jin10_rows: &'a [AllowedRow],
+) -> Result<&'a AllowedRow> {
+    let product = derive_underlying_symbol(&latest.symbol)?;
+    for row in jin10_rows {
+        if derive_underlying_symbol(&row.symbol)? == product
+            && same_number(row.lot_size, csv.lot_size)
+            && same_number(row.tick_size, csv.tick_size)
+        {
+            return Ok(row);
+        }
+    }
+    Err(anyhow!(
+        "new contract {} has no matching Jin10 product-level fallback",
+        latest.symbol
+    ))
 }
 
 /// A fee mismatch found while comparing a secondary source with the current
@@ -61,6 +189,8 @@ pub struct LatestCandidateRejection {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LatestCandidateVerification {
     pub accepted: Vec<AllowedRow>,
+    pub new_contracts: Vec<AllowedRow>,
+    pub degraded_new_contracts: Vec<String>,
     pub unchanged: usize,
     pub rejected: Vec<LatestCandidateRejection>,
 }
@@ -115,15 +245,31 @@ pub fn cross_verify_latest_candidates(
     let current_product_counts = current_product_fee_kind_counts(conn)?;
 
     let mut accepted = Vec::new();
+    let mut new_contracts = Vec::new();
+    let mut degraded_new_contracts = Vec::new();
     let mut unchanged = 0usize;
     let mut rejected = Vec::new();
     for candidate in candidates {
         let candidate_fees = fee_tuple(candidate);
         let Some(current) = current_fee_rule(conn, &candidate.symbol)? else {
-            rejected.push(LatestCandidateRejection {
-                symbol: candidate.symbol.clone(),
-                reason: "contract missing from approved baseline".to_owned(),
+            let jin10 = source_day(candidate).and_then(|day| {
+                jin10_by_key
+                    .get(&(candidate.symbol.clone(), day.to_owned()))
+                    .copied()
             });
+            if jin10.is_some_and(|row| same_fee_rules(&candidate_fees, &fee_tuple(row))) {
+                new_contracts.push(candidate.clone());
+            } else if jin10.is_none()
+                && has_same_day_product_level_jin10_match(conn, candidate, jin10_rows)?
+            {
+                new_contracts.push(candidate.clone());
+                degraded_new_contracts.push(candidate.symbol.clone());
+            } else {
+                rejected.push(LatestCandidateRejection {
+                    symbol: candidate.symbol.clone(),
+                    reason: "new contract lacks same-day matching Jin10 fee tuple".to_owned(),
+                });
+            }
             continue;
         };
         if same_fee_rules(&current.fees, &candidate_fees) {
@@ -186,6 +332,8 @@ pub fn cross_verify_latest_candidates(
 
     Ok(LatestCandidateVerification {
         accepted,
+        new_contracts,
+        degraded_new_contracts,
         unchanged,
         rejected,
     })
@@ -253,6 +401,51 @@ fn fee_tuple(row: &AllowedRow) -> [FeeSpec; 3] {
         row.close_yesterday_fee.clone(),
         row.close_today_fee.clone(),
     ]
+}
+
+fn has_same_day_product_level_jin10_match(
+    conn: &Connection,
+    candidate: &AllowedRow,
+    jin10_rows: &[AllowedRow],
+) -> Result<bool> {
+    let Some(day) = source_day(candidate) else {
+        return Ok(false);
+    };
+    let product = derive_underlying_symbol(&candidate.symbol)?;
+    let mut static_verified = false;
+    let mut jin10_fee_verified = false;
+    for row in jin10_rows {
+        if source_day(row) == Some(day)
+            && derive_underlying_symbol(&row.symbol)? == product
+            && same_number(row.lot_size, candidate.lot_size)
+            && same_number(row.tick_size, candidate.tick_size)
+        {
+            static_verified = true;
+            jin10_fee_verified |= same_fee_rules(&fee_tuple(row), &fee_tuple(candidate));
+        }
+    }
+    if !static_verified {
+        return Ok(false);
+    }
+    if jin10_fee_verified {
+        return Ok(true);
+    }
+
+    let symbols = {
+        let mut statement = conn.prepare("select symbol from contracts order by symbol")?;
+        statement
+            .query_map([], |record| record.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    for symbol in symbols {
+        if derive_underlying_symbol(&symbol)? == product
+            && current_fee_rule(conn, &symbol)?
+                .is_some_and(|rule| same_fee_rules(&rule.fees, &fee_tuple(candidate)))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Compare externally observed fee rows with current production rules without
@@ -356,6 +549,36 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           first_seen_at text not null,
           last_seen_at text not null,
           active integer not null check(active in (0, 1))
+        );
+
+        create table if not exists contract_spec_versions(
+          id integer primary key,
+          contract_id integer not null,
+          lot_size real not null check(lot_size > 0),
+          tick_size real not null check(tick_size > 0),
+          valid_from text not null,
+          valid_to text check(valid_to is null or julianday(valid_to) > julianday(valid_from)),
+          source_kind text not null check(source_kind in ('9qihuo', 'jin10', 'v11_baseline', 'official')),
+          source_url text,
+          first_seen_at text not null,
+          last_seen_at text not null,
+          foreign key(contract_id) references contracts(id)
+        );
+        create unique index if not exists idx_contract_spec_versions_open_contract
+          on contract_spec_versions(contract_id)
+          where valid_to is null;
+        create unique index if not exists idx_contract_spec_versions_contract_valid_from
+          on contract_spec_versions(contract_id, valid_from);
+
+        create table if not exists contract_metadata_admissions(
+          contract_id integer primary key,
+          verification_level text not null
+            check(verification_level in ('exact_contract', 'degraded_product')),
+          primary_source_url text not null,
+          secondary_source_url text not null,
+          admitted_at text not null,
+          last_verified_at text not null,
+          foreign key(contract_id) references contracts(id)
         );
 
         create table if not exists fee_versions(
@@ -482,7 +705,317 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
 
     ensure_fee_version_source_kind_column(conn)?;
     repair_fee_versions_before_listing(conn)?;
+    seed_missing_contract_spec_versions(conn)?;
 
+    Ok(())
+}
+
+fn seed_missing_contract_spec_versions(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         )
+         select c.id, c.lot_size, c.tick_size,
+                coalesce(
+                  case
+                    when length(c.listing_date) = 8 then
+                      substr(c.listing_date, 1, 4) || '-' ||
+                      substr(c.listing_date, 5, 2) || '-' ||
+                      substr(c.listing_date, 7, 2) || 'T00:00:00+08:00'
+                    when length(c.listing_date) = 10 then
+                      c.listing_date || 'T00:00:00+08:00'
+                  end,
+                  (select min(fv.valid_from) from fee_versions fv where fv.contract_id = c.id),
+                  c.first_seen_at
+                ),
+                null, 'v11_baseline', null, c.first_seen_at, c.last_seen_at
+         from contracts c
+         where not exists (
+           select 1 from contract_spec_versions csv where csv.contract_id = c.id
+         )",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Apply the reviewed exchange-wide contract-specification changes currently
+/// known to this dataset.
+///
+/// Each transition is sourced from an exchange notice and applies to every
+/// contract of the product that was still listed on the effective date. The
+/// operation is idempotent per contract and preserves contracts that expired
+/// before the transition.
+///
+/// # Errors
+///
+/// Returns an error when timestamps, symbols, or database writes are invalid.
+pub fn migrate_known_contract_spec_history(
+    conn: &mut Connection,
+    observed_at: &str,
+) -> Result<usize> {
+    ensure_schema(conn)?;
+    parse_timestamp("observed_at", observed_at)?;
+    let contracts = load_contract_identities(conn)?;
+    let tx = conn.transaction()?;
+    let mut changed = 0usize;
+    for transition in KNOWN_CONTRACT_SPEC_TRANSITIONS {
+        changed += apply_known_contract_spec_transition(&tx, &transition, &contracts, observed_at)?;
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
+#[derive(Clone, Copy)]
+struct KnownContractSpecTransition {
+    product: &'static str,
+    effective_at: &'static str,
+    lot_size: f64,
+    old_tick: f64,
+    new_tick: f64,
+    source_url: &'static str,
+}
+
+const KNOWN_CONTRACT_SPEC_TRANSITIONS: [KnownContractSpecTransition; 4] = [
+    KnownContractSpecTransition {
+        product: "DCE.p",
+        effective_at: "2026-04-10T00:00:00+08:00",
+        lot_size: 10.0,
+        old_tick: 2.0,
+        new_tick: 1.0,
+        source_url: "http://www.dce.com.cn/dce/content/2026/ywggytz/18628268.html",
+    },
+    KnownContractSpecTransition {
+        product: "DCE.y",
+        effective_at: "2026-04-10T00:00:00+08:00",
+        lot_size: 10.0,
+        old_tick: 2.0,
+        new_tick: 1.0,
+        source_url: "http://www.dce.com.cn/dce/content/2026/ywggytz/18628268.html",
+    },
+    KnownContractSpecTransition {
+        product: "GFEX.lc",
+        effective_at: "2024-12-18T00:00:00+08:00",
+        lot_size: 1.0,
+        old_tick: 50.0,
+        new_tick: 20.0,
+        source_url: "http://www.gfex.com.cn/gfex/tzts/202412/917905b781b040d1bfc189c0b5559d24.shtml",
+    },
+    KnownContractSpecTransition {
+        product: "INE.ec",
+        effective_at: "2026-05-11T00:00:00+08:00",
+        lot_size: 50.0,
+        old_tick: 0.1,
+        new_tick: 0.5,
+        source_url: "https://www.ine.cn/publicnotice/notice/202601/t20260116_830126.html",
+    },
+];
+
+#[derive(Debug)]
+struct ContractIdentity {
+    id: i64,
+    symbol: String,
+    listing_date: Option<String>,
+    expiry_date: Option<String>,
+}
+
+fn load_contract_identities(conn: &Connection) -> Result<Vec<ContractIdentity>> {
+    let mut statement =
+        conn.prepare("select id, symbol, listing_date, expiry_date from contracts order by id")?;
+    Ok(statement
+        .query_map([], |record| {
+            Ok(ContractIdentity {
+                id: record.get(0)?,
+                symbol: record.get(1)?,
+                listing_date: record.get(2)?,
+                expiry_date: record.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn apply_known_contract_spec_transition(
+    tx: &Transaction<'_>,
+    transition: &KnownContractSpecTransition,
+    contracts: &[ContractIdentity],
+    observed_at: &str,
+) -> Result<usize> {
+    let effective = parse_timestamp("contract spec effective_at", transition.effective_at)?;
+    let mut changed = 0usize;
+    for contract in contracts {
+        if derive_underlying_symbol(&contract.symbol)? != transition.product {
+            continue;
+        }
+        let expiry = contract
+            .expiry_date
+            .as_deref()
+            .map(contract_listing_day_start)
+            .transpose()?;
+        if expiry.is_some_and(|expiry| expiry < effective)
+            || official_spec_transition_exists(tx, contract.id, transition)?
+        {
+            continue;
+        }
+        replace_contract_spec_transition(tx, contract, transition, effective, observed_at)?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
+fn official_spec_transition_exists(
+    tx: &Transaction<'_>,
+    contract_id: i64,
+    transition: &KnownContractSpecTransition,
+) -> Result<bool> {
+    Ok(tx
+        .query_row(
+            "select 1 from contract_spec_versions
+             where contract_id = ?1 and source_kind = 'official'
+               and source_url = ?2 and tick_size = ?3 limit 1",
+            params![contract_id, transition.source_url, transition.new_tick],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+fn replace_contract_spec_transition(
+    tx: &Transaction<'_>,
+    contract: &ContractIdentity,
+    transition: &KnownContractSpecTransition,
+    effective: OffsetDateTime,
+    observed_at: &str,
+) -> Result<()> {
+    let earliest: String = tx.query_row(
+        "select min(valid_from) from contract_spec_versions where contract_id = ?1",
+        params![contract.id],
+        |record| record.get(0),
+    )?;
+    let earliest_at = parse_timestamp("contract spec earliest", &earliest)?;
+    let listing = contract
+        .listing_date
+        .as_deref()
+        .map(contract_listing_day_start)
+        .transpose()?
+        .unwrap_or(earliest_at);
+    let initial_at = listing.max(earliest_at);
+    let initial = initial_at.format(&Rfc3339)?;
+    tx.execute(
+        "delete from contract_spec_versions where contract_id = ?1",
+        params![contract.id],
+    )?;
+    if initial_at < effective {
+        insert_official_contract_spec(
+            tx,
+            contract.id,
+            transition,
+            transition.old_tick,
+            &initial,
+            Some(transition.effective_at),
+            observed_at,
+        )?;
+    }
+    let new_valid_from = if initial_at < effective {
+        transition.effective_at
+    } else {
+        &initial
+    };
+    insert_official_contract_spec(
+        tx,
+        contract.id,
+        transition,
+        transition.new_tick,
+        new_valid_from,
+        None,
+        observed_at,
+    )?;
+    tx.execute(
+        "update contracts set lot_size = ?1, tick_size = ?2 where id = ?3",
+        params![transition.lot_size, transition.new_tick, contract.id],
+    )?;
+    Ok(())
+}
+
+fn insert_official_contract_spec(
+    tx: &Transaction<'_>,
+    contract_id: i64,
+    transition: &KnownContractSpecTransition,
+    tick_size: f64,
+    valid_from: &str,
+    valid_to: Option<&str>,
+    observed_at: &str,
+) -> Result<()> {
+    tx.execute(
+        "insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         ) values (?1, ?2, ?3, ?4, ?5, 'official', ?6, ?7, ?7)",
+        params![
+            contract_id,
+            transition.lot_size,
+            tick_size,
+            valid_from,
+            valid_to,
+            transition.source_url,
+            observed_at
+        ],
+    )?;
+    Ok(())
+}
+
+/// Record how newly listed contract metadata was independently corroborated.
+///
+/// # Errors
+///
+/// Returns an error if a verified new contract has not yet been inserted or a
+/// database write fails.
+pub fn record_new_contract_metadata_admissions(
+    conn: &Connection,
+    verification: &LatestCandidateVerification,
+    observed_at: &str,
+) -> Result<()> {
+    ensure_schema(conn)?;
+    parse_timestamp("observed_at", observed_at)?;
+    for row in &verification.new_contracts {
+        let contract_id = conn
+            .query_row(
+                "select id from contracts where symbol = ?1",
+                params![row.symbol],
+                |record| record.get::<_, i64>(0),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                anyhow!(
+                    "new contract {} was not inserted before admission",
+                    row.symbol
+                )
+            })?;
+        let degraded = verification
+            .degraded_new_contracts
+            .iter()
+            .any(|symbol| symbol == &row.symbol);
+        let level = if degraded {
+            "degraded_product"
+        } else {
+            "exact_contract"
+        };
+        conn.execute(
+            "insert into contract_metadata_admissions(
+               contract_id, verification_level, primary_source_url,
+               secondary_source_url, admitted_at, last_verified_at
+             ) values (?1, ?2, ?3, ?4, ?5, ?5)
+             on conflict(contract_id) do update set
+               verification_level = excluded.verification_level,
+               last_verified_at = excluded.last_verified_at",
+            params![
+                contract_id,
+                level,
+                "https://www.9qihuo.com/qihuoshouxufei",
+                "https://mp-api.jin10.com/api/dynamic-data/child",
+                observed_at
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -2101,6 +2634,7 @@ pub fn complete_latest_rows(conn: &Connection, rows: &[LatestRow]) -> Result<Lat
     ensure_schema(conn)?;
     let mut completed = Vec::new();
     let mut skipped_missing_metadata = 0usize;
+    let mut missing_metadata_symbols = Vec::new();
 
     for row in rows {
         let metadata = load_contract_metadata(conn, &row.symbol)?;
@@ -2122,6 +2656,7 @@ pub fn complete_latest_rows(conn: &Connection, rows: &[LatestRow]) -> Result<Lat
             .or_else(|| metadata.as_ref().map(|value| value.tick_size));
         let (Some(lot_size), Some(tick_size)) = (lot_size, tick_size) else {
             skipped_missing_metadata += 1;
+            missing_metadata_symbols.push(row.symbol.clone());
             continue;
         };
         if !lot_size.is_finite() || lot_size <= 0.0 {
@@ -2159,6 +2694,7 @@ pub fn complete_latest_rows(conn: &Connection, rows: &[LatestRow]) -> Result<Lat
     Ok(LatestCompletion {
         rows: completed,
         skipped_missing_metadata,
+        missing_metadata_symbols,
     })
 }
 
@@ -3083,11 +3619,97 @@ fn upsert_contract(
         ],
     )?;
 
-    Ok(tx.query_row(
+    let contract_id = tx.query_row(
         "select id from contracts where symbol = ?1",
         params![row.symbol.as_str()],
         |record| record.get(0),
-    )?)
+    )?;
+    upsert_contract_spec(tx, contract_id, row, observed_at, mode)?;
+    Ok(contract_id)
+}
+
+fn upsert_contract_spec(
+    tx: &Transaction<'_>,
+    contract_id: i64,
+    row: &AllowedRow,
+    observed_at: &str,
+    mode: IngestMode,
+) -> Result<()> {
+    let (valid_from, valid_from_at) = row_valid_from(row, observed_at)?;
+    let current = tx
+        .query_row(
+            "select id, lot_size, tick_size, valid_from
+             from contract_spec_versions
+             where contract_id = ?1 and valid_to is null",
+            params![contract_id],
+            |record| {
+                Ok((
+                    record.get::<_, i64>(0)?,
+                    record.get::<_, f64>(1)?,
+                    record.get::<_, f64>(2)?,
+                    record.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    if let Some((id, lot_size, tick_size, current_valid_from)) = current {
+        if same_number(lot_size, row.lot_size) && same_number(tick_size, row.tick_size) {
+            tx.execute(
+                "update contract_spec_versions
+                 set last_seen_at = case
+                   when julianday(?1) > julianday(last_seen_at) then ?1 else last_seen_at end
+                 where id = ?2",
+                params![observed_at, id],
+            )?;
+            return Ok(());
+        }
+        let current_from_at = parse_timestamp("contract spec valid_from", &current_valid_from)?;
+        if valid_from_at < current_from_at {
+            return Err(anyhow!(
+                "out-of-order contract spec change for {} at {} before current {}",
+                row.symbol,
+                valid_from,
+                current_valid_from
+            ));
+        }
+        if valid_from_at == current_from_at {
+            tx.execute(
+                "update contract_spec_versions
+                 set lot_size = ?1, tick_size = ?2, source_kind = ?3,
+                     last_seen_at = ?4
+                 where id = ?5",
+                params![
+                    row.lot_size,
+                    row.tick_size,
+                    mode.source_kind().as_str(),
+                    observed_at,
+                    id
+                ],
+            )?;
+            return Ok(());
+        }
+        tx.execute(
+            "update contract_spec_versions set valid_to = ?1, last_seen_at = ?2 where id = ?3",
+            params![valid_from, observed_at, id],
+        )?;
+    }
+
+    tx.execute(
+        "insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         ) values (?1, ?2, ?3, ?4, null, ?5, null, ?6, ?6)",
+        params![
+            contract_id,
+            row.lot_size,
+            row.tick_size,
+            valid_from,
+            mode.source_kind().as_str(),
+            observed_at
+        ],
+    )?;
+    Ok(())
 }
 
 fn insert_fee_version(

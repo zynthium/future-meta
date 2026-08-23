@@ -1,7 +1,8 @@
 use future_meta::archive::{decode_archive_bytes, encode_archive_bytes, sha256_hex};
 use future_meta::error::FutureMetaError;
 use future_meta::model::{
-    Contract, ContractFee, FeeArchiveV1, FeeKind, FeeSpec, SCHEMA_VERSION, TradingStatus,
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV1, FeeArchiveV2, FeeKind, FeeSpec,
+    LEGACY_SCHEMA_VERSION, SCHEMA_VERSION, TradingStatus,
 };
 use future_meta::query::FutureMeta;
 use time::format_description::well_known::Rfc3339;
@@ -16,7 +17,7 @@ fn assert_amount(actual: f64, expected: f64) {
 
 fn sample_archive() -> FeeArchiveV1 {
     FeeArchiveV1 {
-        schema_version: SCHEMA_VERSION,
+        schema_version: LEGACY_SCHEMA_VERSION,
         generated_at: "2026-06-04T12:00:00+08:00".to_owned(),
         history_start: "2026-06-04T12:00:00+08:00".to_owned(),
         history_end: "2026-06-04T12:00:00+08:00".to_owned(),
@@ -66,7 +67,21 @@ fn archive_roundtrips_through_zstd_bincode() {
     assert!(bytes.len() > 8);
     let decoded = decode_archive_bytes(&bytes).unwrap();
 
+    assert_eq!(decoded.contracts, archive.contracts);
+    assert_eq!(decoded.fee_versions, archive.fee_versions);
+    assert_eq!(decoded.contract_spec_versions.len(), 1);
+    assert_amount(decoded.contract_spec_versions[0].tick_size, 10.0);
+}
+
+#[test]
+fn version_two_archive_roundtrips_with_spec_history() {
+    let archive = FeeArchiveV2::from(sample_archive());
+
+    let bytes = encode_archive_bytes(&archive).unwrap();
+    let decoded = decode_archive_bytes(&bytes).unwrap();
+
     assert_eq!(decoded, archive);
+    assert_eq!(decoded.schema_version, SCHEMA_VERSION);
 }
 
 #[cfg(feature = "download")]
@@ -130,6 +145,42 @@ fn queries_contract_fee_asof() {
 
     assert!(fee.is_main_contract);
     assert_eq!(fee.rule_hash, "abc");
+}
+
+#[test]
+fn queries_contract_specification_asof_across_tick_change() {
+    let legacy = sample_archive();
+    let mut archive = FeeArchiveV2::from(legacy);
+    archive.history_start = "2026-01-01T00:00:00+08:00".to_owned();
+    archive.contract_spec_versions = vec![
+        ContractSpecVersion {
+            contract_id: 1,
+            lot_size: 5.0,
+            tick_size: 10.0,
+            valid_from: "2026-01-01T00:00:00+08:00".to_owned(),
+            valid_to: Some("2026-04-10T00:00:00+08:00".to_owned()),
+        },
+        ContractSpecVersion {
+            contract_id: 1,
+            lot_size: 5.0,
+            tick_size: 5.0,
+            valid_from: "2026-04-10T00:00:00+08:00".to_owned(),
+            valid_to: None,
+        },
+    ];
+    let meta = FutureMeta::from_archive(archive).unwrap();
+
+    let before = meta
+        .contract_spec_asof("SHFE.cu2607", "2026-04-09T23:59:59+08:00")
+        .unwrap();
+    let after = meta
+        .contract_spec_asof("SHFE.cu2607", "2026-04-10T00:00:00+08:00")
+        .unwrap();
+
+    assert_amount(before.tick_size, 10.0);
+    assert_amount(before.tick_value(), 50.0);
+    assert_amount(after.tick_size, 5.0);
+    assert_amount(after.tick_value(), 25.0);
 }
 
 #[test]
@@ -199,6 +250,50 @@ fn queries_contract_fee_with_resolved_handle() {
 
     assert_eq!(fee_at.rule_hash, "abc");
     assert_eq!(fee_on.rule_hash, "abc");
+}
+
+#[test]
+fn queries_contract_metadata_and_derives_tick_value() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+    let handle = meta.resolve_contract("SHFE.cu2607").unwrap();
+    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
+    let day = meta.for_trading_day(trading_date).unwrap();
+
+    let by_symbol = meta.contract("SHFE.cu2607").unwrap();
+    let by_handle = meta.contract_for_handle(handle).unwrap();
+    let day_by_symbol = day.contract("SHFE.cu2607").unwrap();
+    let day_by_handle = day.contract_for_handle(handle).unwrap();
+
+    assert_eq!(by_symbol.symbol, "SHFE.cu2607");
+    assert_amount(by_symbol.lot_size, 5.0);
+    assert_amount(by_symbol.tick_size, 10.0);
+    assert_amount(by_symbol.tick_value(), 50.0);
+    assert!(std::ptr::eq(by_symbol, by_handle));
+    assert!(std::ptr::eq(by_symbol, day_by_symbol));
+    assert!(std::ptr::eq(by_symbol, day_by_handle));
+}
+
+#[test]
+fn rejects_unknown_symbol_and_foreign_handle_for_contract_metadata() {
+    let first = FutureMeta::from_archive(sample_archive()).unwrap();
+    let second = FutureMeta::from_archive(sample_archive()).unwrap();
+    let foreign_handle = first.resolve_contract("SHFE.cu2607").unwrap();
+    let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
+    let day = second.for_trading_day(trading_date).unwrap();
+
+    let unknown = second.contract("SHFE.al2607").unwrap_err();
+    let foreign = second.contract_for_handle(foreign_handle).unwrap_err();
+    let day_foreign = day.contract_for_handle(foreign_handle).unwrap_err();
+
+    assert!(matches!(
+        unknown,
+        FutureMetaError::UnknownContract(symbol) if symbol == "SHFE.al2607"
+    ));
+    assert!(matches!(foreign, FutureMetaError::InvalidContractHandle));
+    assert!(matches!(
+        day_foreign,
+        FutureMetaError::InvalidContractHandle
+    ));
 }
 
 #[test]
