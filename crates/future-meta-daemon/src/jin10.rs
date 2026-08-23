@@ -14,6 +14,11 @@ use time::format_description;
 /// Jin10 public futures-fee endpoint.
 pub const API_URL: &str = "https://mp-api.jin10.com/api/dynamic-data/child";
 
+// Before this source-side schema correction, the two sell-close fields were
+// populated in the inverse order. The cutover was verified from consecutive
+// daily snapshots (2025-10-29 remains legacy; 2025-10-30 is natural order).
+const NATURAL_CLOSE_FIELD_ORDER_FROM: &str = "2025-10-30";
+
 /// Product-level static data required to retain a historical fee row.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContractStaticMetadata {
@@ -162,6 +167,19 @@ pub fn parse_snapshots_with_candidates(
             let metadata = select_static_metadata(&symbol, candidates, &source_row.per_ratio)?;
             validate_static_metadata(&symbol, &metadata, &source_row.per_ratio)?;
 
+            let (close_yesterday_fee, close_today_fee) =
+                if source_row.snapshot_date.as_str() < NATURAL_CLOSE_FIELD_ORDER_FROM {
+                    (
+                        parse_jin10_fee(&source_row.close_current_fee),
+                        parse_jin10_fee(&source_row.close_yesterday_fee),
+                    )
+                } else {
+                    (
+                        parse_jin10_fee(&source_row.close_yesterday_fee),
+                        parse_jin10_fee(&source_row.close_current_fee),
+                    )
+                };
+
             rows.push(AllowedRow {
                 symbol,
                 listing_date: None,
@@ -170,10 +188,8 @@ pub fn parse_snapshots_with_candidates(
                 buy_margin_rate: parse_margin(&source_row.buy_margin_rate, "buy_ratio")?,
                 sell_margin_rate: parse_margin(&source_row.sell_margin_rate, "sell_ratio")?,
                 open_fee: parse_jin10_fee(&source_row.open_fee),
-                // Jin10's API field names are inverted against its published table:
-                // sell_cur is 平昨 and sell_yesterday is 平今.
-                close_yesterday_fee: parse_jin10_fee(&source_row.close_current_fee),
-                close_today_fee: parse_jin10_fee(&source_row.close_yesterday_fee),
+                close_yesterday_fee,
+                close_today_fee,
                 lot_size: metadata.lot_size,
                 tick_size: metadata.tick_size,
                 // `pub_date_commission` is stale on some rows where dynamic

@@ -42,10 +42,50 @@ pub fn import_v11_baseline(
     input_path: &Path,
     metadata_db_path: &Path,
 ) -> Result<BaselineImport> {
+    import_v11_baseline_with_optional_patches(db_path, input_path, metadata_db_path, None)
+}
+
+/// Import a reviewed V11 baseline after applying a checked, review-only TSV patch.
+///
+/// Each patch must name the interval it replaces and restate its expected fee
+/// tuple. This prevents an old correction sheet from silently applying to a
+/// different baseline revision.
+///
+/// # Errors
+///
+/// Returns an error when the baseline or patch TSV is malformed, a patch does
+/// not match exactly one expected interval, static metadata is unavailable, or
+/// the destination database cannot be initialized.
+pub fn import_v11_baseline_with_patches(
+    db_path: &Path,
+    input_path: &Path,
+    metadata_db_path: &Path,
+    patch_path: &Path,
+) -> Result<BaselineImport> {
+    import_v11_baseline_with_optional_patches(
+        db_path,
+        input_path,
+        metadata_db_path,
+        Some(patch_path),
+    )
+}
+
+fn import_v11_baseline_with_optional_patches(
+    db_path: &Path,
+    input_path: &Path,
+    metadata_db_path: &Path,
+    patch_path: Option<&Path>,
+) -> Result<BaselineImport> {
     let bytes = std::fs::read(input_path)
         .with_context(|| format!("read V11 baseline {}", input_path.display()))?;
     let source_sha256 = hex::encode(Sha256::digest(&bytes));
-    let rows = parse_v11_rows(&bytes)?;
+    let mut rows = parse_v11_rows(&bytes)?;
+    if let Some(patch_path) = patch_path {
+        let patch = std::fs::read(patch_path)
+            .with_context(|| format!("read baseline patch {}", patch_path.display()))?;
+        apply_reviewed_patches(&mut rows.rows, &patch)?;
+        validate_intervals(&rows.rows)?;
+    }
 
     let metadata_db = connect(metadata_db_path)?;
     ensure_schema(&metadata_db)?;
@@ -176,7 +216,7 @@ struct V11TsvRow {
     close_today_fee: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct V11Row {
     symbol: String,
     valid_from: String,
@@ -184,6 +224,141 @@ struct V11Row {
     open_fee: FeeSpec,
     close_yesterday_fee: FeeSpec,
     close_today_fee: FeeSpec,
+}
+
+#[derive(Debug, Deserialize)]
+struct V11PatchRow {
+    symbol: String,
+    valid_from: String,
+    expected_open_fee: String,
+    expected_close_yesterday_fee: String,
+    expected_close_today_fee: String,
+    open_fee: String,
+    close_yesterday_fee: String,
+    close_today_fee: String,
+    source_valid_from: Option<String>,
+}
+
+#[allow(clippy::too_many_lines)]
+fn apply_reviewed_patches(rows: &mut Vec<V11Row>, bytes: &[u8]) -> Result<()> {
+    let mut reader = ReaderBuilder::new().delimiter(b'\t').from_reader(bytes);
+    for record in reader.deserialize::<V11PatchRow>() {
+        let patch = record?;
+        let symbol = patch.symbol.trim();
+        let valid_from = patch.valid_from.trim();
+        let effective = OffsetDateTime::parse(valid_from, &Rfc3339)
+            .with_context(|| format!("invalid patch valid_from for {symbol}"))?;
+        let expected = [
+            parse_fee(&patch.expected_open_fee, symbol, "expected_open_fee")?,
+            parse_fee(
+                &patch.expected_close_yesterday_fee,
+                symbol,
+                "expected_close_yesterday_fee",
+            )?,
+            parse_fee(
+                &patch.expected_close_today_fee,
+                symbol,
+                "expected_close_today_fee",
+            )?,
+        ];
+        let replacement = [
+            parse_fee(&patch.open_fee, symbol, "open_fee")?,
+            parse_fee(&patch.close_yesterday_fee, symbol, "close_yesterday_fee")?,
+            parse_fee(&patch.close_today_fee, symbol, "close_today_fee")?,
+        ];
+        if let Some(source_valid_from) = patch.source_valid_from.as_deref() {
+            let source_valid_from = source_valid_from.trim();
+            let source = OffsetDateTime::parse(source_valid_from, &Rfc3339)
+                .with_context(|| format!("invalid patch source_valid_from {symbol}"))?;
+            if source == effective {
+                bail!("patch source_valid_from must differ from valid_from {symbol}");
+            }
+            let source_matches = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.symbol == symbol && row.valid_from == source_valid_from)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            let [source_index] = source_matches.as_slice() else {
+                bail!("patch source interval not uniquely found {symbol} at {source_valid_from}");
+            };
+            let original = &rows[*source_index];
+            if [
+                original.open_fee.clone(),
+                original.close_yesterday_fee.clone(),
+                original.close_today_fee.clone(),
+            ] != expected
+            {
+                bail!(
+                    "patch expected fee tuple does not match source {symbol} at {source_valid_from}"
+                );
+            }
+            let predecessor_matches = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| {
+                    row.symbol == symbol && row.valid_to.as_deref() == Some(source_valid_from)
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            let [predecessor_index] = predecessor_matches.as_slice() else {
+                bail!(
+                    "patch source interval has no unique predecessor {symbol} at {source_valid_from}"
+                );
+            };
+            rows[*predecessor_index].valid_to = Some(valid_from.to_owned());
+            let target = &mut rows[*source_index];
+            valid_from.clone_into(&mut target.valid_from);
+            [
+                target.open_fee,
+                target.close_yesterday_fee,
+                target.close_today_fee,
+            ] = replacement;
+            continue;
+        }
+        let matches = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                row.symbol == symbol
+                    && OffsetDateTime::parse(&row.valid_from, &Rfc3339)
+                        .is_ok_and(|start| start <= effective)
+                    && row.valid_to.as_deref().is_none_or(|end| {
+                        OffsetDateTime::parse(end, &Rfc3339).is_ok_and(|end| effective < end)
+                    })
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let [index] = matches.as_slice() else {
+            bail!("patch interval not uniquely found for {symbol} at {valid_from}");
+        };
+        let original = &rows[*index];
+        if [
+            original.open_fee.clone(),
+            original.close_yesterday_fee.clone(),
+            original.close_today_fee.clone(),
+        ] != expected
+        {
+            bail!("patch expected fee tuple does not match {symbol} at {valid_from}");
+        }
+        if original.valid_from == valid_from {
+            let target = &mut rows[*index];
+            [
+                target.open_fee,
+                target.close_yesterday_fee,
+                target.close_today_fee,
+            ] = replacement;
+            continue;
+        }
+        let mut replacement_row = original.clone();
+        valid_from.clone_into(&mut replacement_row.valid_from);
+        replacement_row.open_fee = replacement[0].clone();
+        replacement_row.close_yesterday_fee = replacement[1].clone();
+        replacement_row.close_today_fee = replacement[2].clone();
+        rows[*index].valid_to = Some(valid_from.to_owned());
+        rows.push(replacement_row);
+    }
+    Ok(())
 }
 
 impl V11Row {

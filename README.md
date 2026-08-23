@@ -161,8 +161,8 @@ for tick in ticks {
 历史补充与日常增量是两条不同路径：
 
 - 历史手续费事实：只接受交易所原始公告、收费表和结算/业务参数文件。先暂存到独立的官方证据库，不能直接导出或发布；详见 [官方历史证据流程](docs/official-evidence.md)。
-- 每日增量更新：GitHub Actions 拉取 Cloudflare 上的 SQLite seed，解析 `https://www.9qihuo.com/qihuoshouxufei` 的 `table#heyuetbl`，更新最新截面后重新发布 artifact。
-- Jin10 仅作为每日只读交叉核验源。它的快照会与当前生产费率比较并输出差异，但不会写入 `fee_versions`，也不会替代 9qihuo 更新。
+- 每日增量更新：GitHub Actions 拉取 Cloudflare 上的 SQLite seed，解析 `https://www.9qihuo.com/qihuoshouxufei` 的 `table#heyuetbl`；实质费率变化必须有同日、同合约 Jin10 快照确认才可进入历史。
+- Jin10 仅作为 9qihuo 候选的交叉确认，不会独立写入 `fee_versions`，也不会替代 9qihuo 更新。费率类型切换、平昨/平今字段置换、零费率切换、超过两倍的单腿跳变、超过 12 条的同批变化，以及疑似 `0.1 元`占位或统一小数固定费偏移，均失败关闭；它们不是“错误”结论，而是必须暂存并按交易所官方证据导入的队列。实时更新绝不以品种众数静默覆写既有费率。
 
 `9qihuo` 单品种 CSV、Jin10 和其他第三方衍生数据不再用于补充历史手续费。`seed-history`/`refresh` 会明确拒绝该用途；现有历史记录也不会因此被追溯认定为官方证据。
 
