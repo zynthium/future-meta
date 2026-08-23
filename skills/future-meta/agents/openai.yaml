@@ -1,4 +1,4 @@
 interface:
   display_name: "future-meta"
-  short_description: "future-meta 客户端接入、刷新与高频手续费查询"
-  default_prompt: "使用 $future-meta 设计客户端接入：加载 artifact、处理开盘前刷新，并优化 tick 级手续费热路径。"
+  short_description: "手续费、合约规格历史查询与高频客户端接入"
+  default_prompt: "使用 $future-meta 设计客户端接入：加载 schema v2 artifact，正确查询历史手续费、合约乘数与最小变动价位，并优化跨日 tick 级热路径。"

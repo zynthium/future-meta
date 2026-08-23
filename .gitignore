@@ -6,3 +6,6 @@
 /.mcp.json
 **/*.rs.bk
 .DS_Store
+.gstack/
+.serena/
+.tokensave/
