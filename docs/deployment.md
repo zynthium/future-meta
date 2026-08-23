@@ -48,6 +48,9 @@ cargo run -p future-meta-daemon -- apply-verified-official \
 
 GitHub Actions 不从零构建历史库。每次运行：
 
+Cloudflare seed 的 `baseline_state.source_sha256` 必须匹配仓库内的
+`assets/future-meta-v17-reviewed.sqlite.gz`。旧 seed 只在该指纹不匹配时迁移一次；匹配后继续沿用线上 seed，避免定时任务覆盖后续经官方证据批准的增量。
+
 1. 从 Cloudflare 下载 `ops/future-meta.sqlite.gz`。
 2. 解压为 `data/future-meta.sqlite`。
 3. 每日先执行 `future-meta-daemon scan-announcements`：中信期货为主发现源；中信无法完成有效扫描时同轮切换华泰期货；每周五额外执行华泰完整补漏扫描。扫描仅保存券商正文、哈希、交易所原文链接和手续费候选，绝不直接改变 `fee_versions`。
