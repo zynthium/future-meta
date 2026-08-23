@@ -846,20 +846,98 @@ fn apply_known_contract_spec_transition(
         if derive_underlying_symbol(&contract.symbol)? != transition.product {
             continue;
         }
-        let expiry = contract
-            .expiry_date
-            .as_deref()
-            .map(contract_listing_day_start)
-            .transpose()?;
-        if expiry.is_some_and(|expiry| expiry < effective)
-            || official_spec_transition_exists(tx, contract.id, transition)?
-        {
+        let transition_exists = official_spec_transition_exists(tx, contract.id, transition)?;
+        if contract_expired_before(contract, effective)? {
+            if transition_exists {
+                repair_expired_contract_spec_transition(tx, contract, transition, observed_at)?;
+                changed += 1;
+            }
+            continue;
+        }
+        if transition_exists {
             continue;
         }
         replace_contract_spec_transition(tx, contract, transition, effective, observed_at)?;
         changed += 1;
     }
     Ok(changed)
+}
+
+fn repair_expired_contract_spec_transition(
+    tx: &Transaction<'_>,
+    contract: &ContractIdentity,
+    transition: &KnownContractSpecTransition,
+    observed_at: &str,
+) -> Result<()> {
+    let earliest: String = tx.query_row(
+        "select min(valid_from) from contract_spec_versions where contract_id = ?1",
+        params![contract.id],
+        |record| record.get(0),
+    )?;
+    tx.execute(
+        "delete from contract_spec_versions where contract_id = ?1",
+        params![contract.id],
+    )?;
+    tx.execute(
+        "insert into contract_spec_versions(
+           contract_id, lot_size, tick_size, valid_from, valid_to,
+           source_kind, source_url, first_seen_at, last_seen_at
+         ) values (?1, ?2, ?3, ?4, null, 'v11_baseline', null, ?5, ?5)",
+        params![
+            contract.id,
+            transition.lot_size,
+            transition.old_tick,
+            earliest,
+            observed_at
+        ],
+    )?;
+    tx.execute(
+        "update contracts set lot_size = ?1, tick_size = ?2 where id = ?3",
+        params![transition.lot_size, transition.old_tick, contract.id],
+    )?;
+    Ok(())
+}
+
+fn contract_expired_before(contract: &ContractIdentity, effective: OffsetDateTime) -> Result<bool> {
+    if let Some(expiry_date) = contract.expiry_date.as_deref() {
+        return Ok(contract_listing_day_start(expiry_date)? < effective);
+    }
+    let Some((year, month)) = inferred_contract_year_month(&contract.symbol, effective.year())?
+    else {
+        return Ok(false);
+    };
+    let effective_month = u8::from(effective.month());
+    Ok((year, month) < (effective.year(), effective_month))
+}
+
+fn inferred_contract_year_month(symbol: &str, reference_year: i32) -> Result<Option<(i32, u8)>> {
+    let (_, local) = symbol
+        .split_once('.')
+        .ok_or_else(|| anyhow!("invalid contract symbol {symbol}"))?;
+    let suffix = local
+        .trim_start_matches(|character: char| character.is_ascii_alphabetic())
+        .as_bytes();
+    let (year, month) = match suffix {
+        [year_tens, year_ones, month_tens, month_ones] if suffix.iter().all(u8::is_ascii_digit) => {
+            let year = 2000 + i32::from((year_tens - b'0') * 10 + (year_ones - b'0'));
+            let month = (month_tens - b'0') * 10 + (month_ones - b'0');
+            (year, month)
+        }
+        [year_digit, month_tens, month_ones] if suffix.iter().all(u8::is_ascii_digit) => {
+            let mut year =
+                reference_year - reference_year.rem_euclid(10) + i32::from(year_digit - b'0');
+            if year > reference_year + 5 {
+                year -= 10;
+            }
+            let month = (month_tens - b'0') * 10 + (month_ones - b'0');
+            (year, month)
+        }
+        _ => return Ok(None),
+    };
+    if !(1..=12).contains(&month) {
+        return Err(anyhow!("invalid contract month in symbol {symbol}"));
+    }
+    Ok(Some((year, month)))
 }
 
 fn official_spec_transition_exists(
