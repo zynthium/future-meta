@@ -1261,7 +1261,7 @@ fn gfex_parameter_import_uses_latest_observation_when_manifest_dates_are_not_sor
     .unwrap();
 
     let result = import_daily_settlement_parameters(&GfexParameterImportOptions {
-        history_db: db_path,
+        history_db: db_path.clone(),
         manifest,
         snapshot_dir: directory.path().to_path_buf(),
         from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
@@ -1269,6 +1269,18 @@ fn gfex_parameter_import_uses_latest_observation_when_manifest_dates_are_not_sor
     });
 
     assert!(result.is_ok(), "{result:?}");
+    let connection = connect(&db_path).unwrap();
+    let valid_from: String = connection
+        .query_row(
+            "select v.valid_from
+             from fee_versions v
+             join contracts c on c.id = v.contract_id
+             where c.symbol = 'GFEX.si2609' and v.source_kind = 'official'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(valid_from, "2026-08-17T00:00:00+08:00");
 }
 
 #[test]

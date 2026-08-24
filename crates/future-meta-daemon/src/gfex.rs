@@ -81,10 +81,15 @@ struct Observation {
 pub fn import_daily_settlement_parameters(
     options: &GfexParameterImportOptions,
 ) -> Result<GfexParameterImportResult> {
-    let (observations, snapshots) = load_observations(options)?;
+    let (mut observations, snapshots) = load_observations(options)?;
     if observations.is_empty() {
         bail!("GFEX parameter import has no in-range observations");
     }
+    observations.sort_by(|left, right| {
+        left.symbol
+            .cmp(&right.symbol)
+            .then_with(|| left.valid_from.cmp(&right.valid_from))
+    });
     let mut by_symbol = BTreeMap::<String, Vec<Observation>>::new();
     let mut last_observed = BTreeMap::<String, String>::new();
     let mut corpus_last = String::new();
