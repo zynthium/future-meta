@@ -1785,7 +1785,16 @@ pub fn replace_with_official_parameter_history(
             .optional()?
             .map_or_else(
                 || upsert_contract(&tx, &latest_row, observed_at, IngestMode::V11Baseline),
-                Ok,
+                |contract_id| {
+                    tx.execute(
+                        "update contracts
+                         set listing_date = coalesce(listing_date, ?2),
+                             expiry_date = coalesce(expiry_date, ?3)
+                         where id = ?1",
+                        params![contract_id, latest_row.listing_date, latest_row.expiry_date,],
+                    )?;
+                    Ok(contract_id)
+                },
             )?;
         let first_at = items[0].1.valid_from_at;
         let coverage_end_at = items
