@@ -1563,6 +1563,62 @@ fn schema_repair_clamps_existing_fee_version_to_contract_listing() {
 }
 
 #[test]
+fn schema_repair_removes_fee_version_ending_on_contract_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.listing_date = Some("20260320".to_owned());
+    row.source_updated_at = Some("2026-03-20 22:56:54".to_owned());
+    upsert_allowed_rows(&mut conn, &[row], "2026-03-20T23:00:00+08:00").unwrap();
+    conn.execute(
+        "insert into fee_versions(
+           contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
+           open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+           trading_status, is_main_contract, source_kind, source_updated_at,
+           valid_from, valid_to, first_seen_at, last_seen_at
+         ) select contract_id, 'prelisting-rule', buy_margin_rate, sell_margin_rate,
+           open_fee_json, close_yesterday_fee_json, close_today_fee_json,
+           trading_status, is_main_contract, 'official', source_updated_at,
+           '2026-03-19T00:00:00+08:00', '2026-03-20T00:00:00+08:00',
+           first_seen_at, last_seen_at
+         from fee_versions",
+        [],
+    )
+    .unwrap();
+    let contract_id: i64 = conn
+        .query_row("select id from contracts", [], |record| record.get(0))
+        .unwrap();
+    conn.execute(
+        "insert into fee_version_evidence(
+           contract_id, valid_from, rule_hash, evidence_level,
+           canonical_url, body_sha256, recorded_at
+         ) values (?1, '2026-03-19T00:00:00+08:00', 'prelisting-rule',
+           'official_parameter', 'https://www.shfe.com.cn/prelisting.html',
+           ?2, '2026-03-20T23:00:00+08:00')",
+        rusqlite::params![contract_id, "a".repeat(64)],
+    )
+    .unwrap();
+
+    ensure_schema(&conn).unwrap();
+
+    let versions: i64 = conn
+        .query_row("select count(*) from fee_versions", [], |record| {
+            record.get(0)
+        })
+        .unwrap();
+    let evidence: i64 = conn
+        .query_row("select count(*) from fee_version_evidence", [], |record| {
+            record.get(0)
+        })
+        .unwrap();
+    assert_eq!(versions, 1);
+    assert_eq!(evidence, 0);
+}
+
+#[test]
 fn schema_accepts_official_fee_version_provenance() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");

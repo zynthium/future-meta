@@ -3756,10 +3756,12 @@ fn contract_listing_day_start(value: &str) -> Result<OffsetDateTime> {
 fn repair_fee_versions_before_listing(conn: &Connection) -> Result<()> {
     let candidates = {
         let mut statement = conn.prepare(
-            "select fv.id, fv.contract_id, fv.valid_from, fv.valid_to, c.listing_date
+            "select fv.id, fv.contract_id, fv.rule_hash, fv.valid_from, fv.valid_to,
+                    c.listing_date
              from fee_versions fv
              join contracts c on c.id = fv.contract_id
-             where c.listing_date is not null",
+             where c.listing_date is not null
+             order by fv.contract_id, fv.valid_from",
         )?;
         statement
             .query_map([], |record| {
@@ -3767,42 +3769,44 @@ fn repair_fee_versions_before_listing(conn: &Connection) -> Result<()> {
                     record.get::<_, i64>(0)?,
                     record.get::<_, i64>(1)?,
                     record.get::<_, String>(2)?,
-                    record.get::<_, Option<String>>(3)?,
-                    record.get::<_, String>(4)?,
+                    record.get::<_, String>(3)?,
+                    record.get::<_, Option<String>>(4)?,
+                    record.get::<_, String>(5)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
 
+    let mut deletions = Vec::new();
     let mut repairs = Vec::new();
-    for (version_id, contract_id, valid_from, valid_to, listing_date) in candidates {
+    for (version_id, contract_id, rule_hash, valid_from, valid_to, listing_date) in candidates {
         let valid_from_at = parse_timestamp("valid_from", &valid_from)?;
         let listing_day_start = contract_listing_day_start(&listing_date)?;
         if valid_from_at >= listing_day_start {
             continue;
         }
 
+        if let Some(valid_to) = valid_to.as_deref() {
+            let valid_to_at = parse_timestamp("valid_to", valid_to)?;
+            if valid_to_at <= listing_day_start {
+                deletions.push((version_id, contract_id, valid_from, rule_hash));
+                continue;
+            }
+        }
+
         let is_initial: bool = conn.query_row(
             "select not exists(
                 select 1 from fee_versions
                 where contract_id = ?1 and valid_from < ?2
+                  and (valid_to is null or valid_to > ?3)
             )",
-            params![contract_id, valid_from],
+            params![contract_id, valid_from, listing_day_start.format(&Rfc3339)?],
             |record| record.get(0),
         )?;
         if !is_initial {
             return Err(anyhow!(
                 "cannot safely repair fee version {version_id}: it is not the initial contract version"
             ));
-        }
-
-        if let Some(valid_to) = valid_to {
-            let valid_to_at = parse_timestamp("valid_to", &valid_to)?;
-            if listing_day_start >= valid_to_at {
-                return Err(anyhow!(
-                    "cannot safely repair fee version {version_id}: contract listing starts after its validity"
-                ));
-            }
         }
 
         let repaired_valid_from = listing_day_start.format(&Rfc3339)?;
@@ -3820,15 +3824,53 @@ fn repair_fee_versions_before_listing(conn: &Connection) -> Result<()> {
             ));
         }
 
-        repairs.push((version_id, repaired_valid_from));
+        repairs.push((
+            version_id,
+            contract_id,
+            valid_from,
+            repaired_valid_from,
+            rule_hash,
+        ));
     }
 
-    if repairs.is_empty() {
+    apply_fee_listing_repairs(conn, &deletions, &repairs)
+}
+
+type FeeVersionDeletion = (i64, i64, String, String);
+type FeeVersionClamp = (i64, i64, String, String, String);
+
+fn apply_fee_listing_repairs(
+    conn: &Connection,
+    deletions: &[FeeVersionDeletion],
+    repairs: &[FeeVersionClamp],
+) -> Result<()> {
+    if deletions.is_empty() && repairs.is_empty() {
         return Ok(());
     }
-
     conn.execute_batch("begin immediate")?;
-    for (version_id, valid_from) in repairs {
+    for (version_id, contract_id, valid_from, rule_hash) in deletions {
+        if let Err(err) = conn.execute(
+            "delete from fee_version_evidence
+             where contract_id = ?1 and valid_from = ?2 and rule_hash = ?3",
+            params![contract_id, valid_from, rule_hash],
+        ) {
+            conn.execute_batch("rollback")?;
+            return Err(err.into());
+        }
+        if let Err(err) = conn.execute("delete from fee_versions where id = ?1", [*version_id]) {
+            conn.execute_batch("rollback")?;
+            return Err(err.into());
+        }
+    }
+    for (version_id, contract_id, old_valid_from, valid_from, rule_hash) in repairs {
+        if let Err(err) = conn.execute(
+            "update fee_version_evidence set valid_from = ?1
+             where contract_id = ?2 and valid_from = ?3 and rule_hash = ?4",
+            params![valid_from, contract_id, old_valid_from, rule_hash],
+        ) {
+            conn.execute_batch("rollback")?;
+            return Err(err.into());
+        }
         if let Err(err) = conn.execute(
             "update fee_versions set valid_from = ?1 where id = ?2",
             params![valid_from, version_id],
