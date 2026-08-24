@@ -10,7 +10,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::{SymbolKind, parse_symbol};
 use reqwest::Url;
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -80,6 +80,11 @@ type ExistingMetadata = (Option<String>, Option<String>, f64, f64);
 /// DCE's `openFee`, `offsetFee`, and `shortOffsetFee` map respectively to
 /// open, close-yesterday, and close-today fees. The report's `style` declares
 /// whether values are yuan-per-lot or turnover rates per ten thousand.
+///
+/// # Errors
+///
+/// Returns an error for malformed manifests or snapshots, incomplete fee
+/// tuples, invalid fee values, or database failures.
 pub fn import_daily_settlement_parameters(
     options: &DceParameterImportOptions,
 ) -> Result<DceParameterImportResult> {
@@ -100,7 +105,7 @@ pub fn import_daily_settlement_parameters(
             .entry(observation.symbol.clone())
             .and_modify(|latest| {
                 if observation.valid_from > *latest {
-                    *latest = observation.valid_from.clone();
+                    latest.clone_from(&observation.valid_from);
                 }
             })
             .or_insert_with(|| observation.valid_from.clone());
@@ -324,4 +329,224 @@ fn parse_fee(value: &serde_json::Value, style: &str) -> Result<FeeSpec> {
         value: Some(value),
         raw_text: Some(value.to_string()),
     })
+}
+
+/// Inputs for one offline, hash-verified DCE trading-calendar lifecycle import.
+#[derive(Debug, Clone)]
+pub struct DceCalendarImportOptions {
+    pub history_db: PathBuf,
+    pub manifest: PathBuf,
+    pub snapshot_dir: PathBuf,
+    pub observed_at: String,
+}
+
+/// Counts returned after a successful DCE lifecycle import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DceCalendarImportResult {
+    pub snapshots: usize,
+    pub contracts: usize,
+    pub evidence_links: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarDocument {
+    success: bool,
+    code: i64,
+    data: Vec<CalendarEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CalendarEvent {
+    calendar_date: String,
+    contract_id: String,
+    event_type: String,
+    trade_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct CalendarEvidence {
+    date: String,
+    canonical_url: String,
+    body_sha256: String,
+}
+
+/// Import exact DCE listing and last-trading-day lifecycle evidence.
+///
+/// DCE publishes both events in its official trading calendar. A contract is
+/// updated only once snapshots contain both events, so no lifecycle boundary is
+/// inferred from settlement observations or contract-code conventions.
+///
+/// # Errors
+///
+/// Returns an error for malformed manifests or snapshots, conflicting event
+/// pairs, invalid lifecycle dates, or database failures.
+#[allow(clippy::too_many_lines)]
+pub fn import_trading_calendar_lifecycles(
+    options: &DceCalendarImportOptions,
+) -> Result<DceCalendarImportResult> {
+    OffsetDateTime::parse(&options.observed_at, &Rfc3339)?;
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(&options.manifest)?;
+    let mut events =
+        BTreeMap::<String, (Option<CalendarEvidence>, Option<CalendarEvidence>)>::new();
+    let mut snapshots = 0;
+    for row in reader.deserialize::<ManifestRow>() {
+        let row = row?;
+        if row.status != "ok" {
+            continue;
+        }
+        let report_date = parse_compact_date(&row.report_date)?;
+        validate_calendar_manifest_row(&row)?;
+        let bytes = read_calendar_evidence(&options.snapshot_dir, &row.sha256)?;
+        let document: CalendarDocument = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse DCE calendar snapshot {}", row.report_date))?;
+        if !document.success || document.code != 200 {
+            bail!("DCE calendar response unsuccessful {}", row.report_date);
+        }
+        if row
+            .record_count
+            .is_some_and(|expected| expected != document.data.len())
+        {
+            bail!("DCE calendar record count mismatch {}", row.report_date);
+        }
+        snapshots += 1;
+        for event in document.data {
+            if event.trade_type != "0"
+                || !matches!(
+                    event.event_type.as_str(),
+                    "期货合约开始交易日" | "合约最后交易日"
+                )
+            {
+                continue;
+            }
+            let event_date = parse_compact_date(&event.calendar_date)?;
+            if event_date != report_date {
+                bail!(
+                    "DCE calendar event date differs from snapshot {}",
+                    row.report_date
+                );
+            }
+            let Some(contract_id) = event.contract_id.trim().strip_suffix("期货合约") else {
+                continue;
+            };
+            let symbol = format!("DCE.{}", contract_id.trim().to_ascii_lowercase());
+            if !is_futures_symbol(&symbol) {
+                continue;
+            }
+            let entry = events.entry(symbol).or_default();
+            let evidence = CalendarEvidence {
+                date: event.calendar_date,
+                canonical_url: row.url.clone(),
+                body_sha256: row.sha256.clone(),
+            };
+            let slot = if event.event_type == "期货合约开始交易日" {
+                &mut entry.0
+            } else {
+                &mut entry.1
+            };
+            if let Some(existing) = slot {
+                if existing != &evidence {
+                    bail!("conflicting DCE {} event", event.event_type);
+                }
+            } else {
+                *slot = Some(evidence);
+            }
+        }
+    }
+
+    let mut connection = db::connect(&options.history_db)?;
+    db::ensure_schema(&connection)?;
+    let transaction = connection.transaction()?;
+    let mut contracts = 0;
+    let mut evidence_links = 0;
+    for (symbol, (listing, expiry)) in events {
+        let (Some(listing), Some(expiry)) = (listing, expiry) else {
+            continue;
+        };
+        if listing.date >= expiry.date {
+            bail!("invalid DCE lifecycle interval {symbol}");
+        }
+        let contract_id = transaction
+            .query_row(
+                "select id from contracts where symbol = ?1",
+                [&symbol],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let Some(contract_id) = contract_id else {
+            continue;
+        };
+        let listing_date = listing.date.clone();
+        let expiry_date = expiry.date.clone();
+        transaction.execute(
+            "update contracts set listing_date = ?1, expiry_date = ?2, last_seen_at = ?3 where id = ?4",
+            params![listing_date, expiry_date, options.observed_at, contract_id],
+        )?;
+        transaction.execute(
+            "delete from contract_lifecycle_evidence where contract_id = ?1",
+            [contract_id],
+        )?;
+        for evidence in BTreeSet::from([listing, expiry]) {
+            transaction.execute(
+                "insert into contract_lifecycle_evidence(
+                    contract_id, listing_date, expiry_date, canonical_url, body_sha256, recorded_at
+                 ) values(?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    contract_id,
+                    listing_date,
+                    expiry_date,
+                    evidence.canonical_url,
+                    evidence.body_sha256,
+                    options.observed_at,
+                ],
+            )?;
+            evidence_links += 1;
+        }
+        contracts += 1;
+    }
+    transaction.commit()?;
+    Ok(DceCalendarImportResult {
+        snapshots,
+        contracts,
+        evidence_links,
+    })
+}
+
+fn validate_calendar_manifest_row(row: &ManifestRow) -> Result<()> {
+    if row.requested_date != row.report_date {
+        bail!("DCE calendar requested/report date mismatch");
+    }
+    parse_compact_date(&row.requested_date)?;
+    if !row.content_type.to_ascii_lowercase().contains("json") {
+        bail!("DCE calendar response not JSON {}", row.report_date);
+    }
+    let url = Url::parse(&row.url)?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("www.dce.com.cn")
+        || url.path() != "/dcereport/publicweb/trading/searchNotity"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("unexpected DCE calendar URL {}", row.url);
+    }
+    Ok(())
+}
+
+fn read_calendar_evidence(snapshot_dir: &std::path::Path, sha256: &str) -> Result<Vec<u8>> {
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        bail!("invalid DCE calendar SHA-256 {sha256}");
+    }
+    let path = snapshot_dir.join(format!("{sha256}.json"));
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("read retained DCE calendar snapshot {}", path.display()))?;
+    if hex::encode(Sha256::digest(&bytes)) != sha256 {
+        bail!("retained DCE calendar SHA-256 mismatch {sha256}");
+    }
+    Ok(bytes)
 }

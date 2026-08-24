@@ -99,7 +99,7 @@ pub fn import_daily_settlement_parameters(
             .entry(observation.symbol.clone())
             .and_modify(|latest| {
                 if observation.valid_from > *latest {
-                    *latest = observation.valid_from.clone();
+                    latest.clone_from(&observation.valid_from);
                 }
             })
             .or_insert_with(|| observation.valid_from.clone());

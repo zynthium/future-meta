@@ -18,7 +18,9 @@ use future_meta_daemon::db::{
     update_source_success, upsert_allowed_rows, upsert_latest_rows, upsert_v11_baseline_rows,
 };
 use future_meta_daemon::dce::{
-    DceParameterImportOptions, import_daily_settlement_parameters as import_dce_parameters,
+    DceCalendarImportOptions, DceParameterImportOptions,
+    import_daily_settlement_parameters as import_dce_parameters,
+    import_trading_calendar_lifecycles as import_dce_calendar,
 };
 use future_meta_daemon::export::export_archive;
 use future_meta_daemon::gfex::{
@@ -1294,6 +1296,62 @@ fn dce_daily_settlement_import_maps_complete_fee_tuple() {
     assert_eq!(close_yesterday.value, Some(2.0));
     assert_eq!(close_today.value, Some(4.0));
     assert_eq!(tuple.3, "official_parameter");
+}
+
+#[test]
+fn dce_calendar_import_records_exact_lifecycle_with_two_official_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "DCE.a2001".to_owned();
+    baseline.listing_date = None;
+    baseline.expiry_date = None;
+    baseline.lot_size = 10.0;
+    baseline.tick_size = 1.0;
+    upsert_v11_baseline_rows(&mut connection, &[baseline], "2026-08-25T00:00:00Z").unwrap();
+    drop(connection);
+
+    let listing = r#"{"success":true,"code":200,"data":[{"calendarDate":"20190116","contractId":"a2001期货合约","eventType":"期货合约开始交易日","tradeType":"0"}]}"#;
+    let expiry = r#"{"success":true,"code":200,"data":[{"calendarDate":"20200115","contractId":"a2001期货合约","eventType":"合约最后交易日","tradeType":"0"}]}"#;
+    let listing_sha = hex::encode(Sha256::digest(listing.as_bytes()));
+    let expiry_sha = hex::encode(Sha256::digest(expiry.as_bytes()));
+    std::fs::write(
+        directory.path().join(format!("{listing_sha}.json")),
+        listing,
+    )
+    .unwrap();
+    std::fs::write(directory.path().join(format!("{expiry_sha}.json")), expiry).unwrap();
+    let manifest = directory.path().join("dce-calendar.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tsha256\turl\trecord_count\tcontent_type\n20190116\tok\t20190116\t{listing_sha}\thttp://www.dce.com.cn/dcereport/publicweb/trading/searchNotity\t1\tapplication/json\n20200115\tok\t20200115\t{expiry_sha}\thttp://www.dce.com.cn/dcereport/publicweb/trading/searchNotity\t1\tapplication/json\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_dce_calendar(&DceCalendarImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-25T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.snapshots, 2);
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.evidence_links, 2);
+
+    let connection = connect(&db_path).unwrap();
+    let lifecycle = connection
+        .query_row(
+            "select listing_date, expiry_date from contracts where symbol = 'DCE.a2001'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .unwrap();
+    assert_eq!(lifecycle, ("20190116".to_owned(), "20200115".to_owned()));
 }
 
 #[test]

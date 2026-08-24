@@ -116,6 +116,14 @@ enum Command {
         #[arg(long)]
         from: String,
     },
+    ImportDceCalendar {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+    },
     ImportGfexParameters {
         #[arg(long)]
         db: PathBuf,
@@ -408,6 +416,25 @@ pub fn run() -> anyhow::Result<()> {
             eprintln!(
                 "DCE parameters imported: snapshots={} contracts={} versions={}",
                 result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
+        Command::ImportDceCalendar {
+            db,
+            manifest,
+            snapshot_dir,
+        } => {
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = dce::import_trading_calendar_lifecycles(&dce::DceCalendarImportOptions {
+                history_db: db,
+                manifest,
+                snapshot_dir,
+                observed_at,
+            })?;
+            eprintln!(
+                "DCE calendar imported: snapshots={} contracts={} evidence_links={}",
+                result.snapshots, result.contracts, result.evidence_links
             );
             Ok(())
         }
@@ -885,6 +912,33 @@ mod tests {
                 assert_eq!(from, "2020-01-01");
             }
             _ => panic!("expected import-dce-parameters command"),
+        }
+    }
+
+    #[test]
+    fn import_dce_calendar_cli_requires_retained_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-dce-calendar",
+            "--db",
+            "/tmp/review.sqlite",
+            "--manifest",
+            "/tmp/dce-calendar.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportDceCalendar {
+                db,
+                manifest,
+                snapshot_dir,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(manifest, PathBuf::from("/tmp/dce-calendar.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+            }
+            _ => panic!("expected import-dce-calendar command"),
         }
     }
 
