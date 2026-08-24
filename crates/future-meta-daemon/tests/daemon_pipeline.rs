@@ -1200,7 +1200,7 @@ fn gfex_calendar_import_records_exact_lifecycle_with_two_official_events() {
     ensure_schema(&connection).unwrap();
     let mut row = parse_csv(CSV_V1).unwrap().remove(0);
     row.symbol = "GFEX.si2308".to_owned();
-    row.listing_date = None;
+    row.listing_date = Some("20230101".to_owned());
     row.expiry_date = None;
     row.lot_size = 5.0;
     row.tick_size = 5.0;

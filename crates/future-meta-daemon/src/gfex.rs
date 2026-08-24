@@ -508,31 +508,16 @@ pub fn import_trading_calendar_lifecycles(
     let mut evidence_links = 0usize;
     let mut contracts = 0usize;
     for (symbol, lifecycle) in lifecycles {
-        let Some((contract_id, listing, expiry)) = transaction
+        let Some(contract_id) = transaction
             .query_row(
-                "select id, listing_date, expiry_date from contracts where symbol = ?1",
+                "select id from contracts where symbol = ?1",
                 [&symbol],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                    ))
-                },
+                |row| row.get::<_, i64>(0),
             )
             .optional()?
         else {
             continue;
         };
-        if listing
-            .as_deref()
-            .is_some_and(|value| value != lifecycle.listing_date)
-            || expiry
-                .as_deref()
-                .is_some_and(|value| value != lifecycle.expiry_date)
-        {
-            bail!("GFEX calendar lifecycle conflicts with database {symbol}");
-        }
         transaction.execute(
             "update contracts set listing_date = ?1, expiry_date = ?2 where id = ?3",
             params![lifecycle.listing_date, lifecycle.expiry_date, contract_id],
