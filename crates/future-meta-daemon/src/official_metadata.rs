@@ -108,6 +108,10 @@ fn persist_contract(
     let last = rows
         .last()
         .ok_or_else(|| anyhow!("official metadata contract has no intervals"))?;
+    // Official metadata is also the authoritative contract-discovery path.
+    // Do not require a third-party seed row to exist first: a newly listed
+    // contract must be admitted atomically with its verified lifecycle and
+    // specification evidence.
     let contract_id = transaction
         .query_row(
             "select id from contracts where symbol = ?1",
@@ -115,12 +119,27 @@ fn persist_contract(
             |record| record.get::<_, i64>(0),
         )
         .optional()?
-        .ok_or_else(|| {
-            anyhow!(
-                "official metadata contract missing: {}",
-                first.source.symbol
-            )
-        })?;
+        .map_or_else(
+            || {
+                transaction
+                    .execute(
+                        "insert into contracts(
+                         symbol, listing_date, expiry_date, lot_size, tick_size,
+                         first_seen_at, last_seen_at, active
+                     ) values(?1, ?2, ?3, ?4, ?5, ?6, ?6, 1)",
+                        params![
+                            first.source.symbol,
+                            compact_date(first.listing),
+                            compact_date(first.expiry),
+                            last.source.lot_size,
+                            last.source.tick_size,
+                            observed_at,
+                        ],
+                    )
+                    .map(|_| transaction.last_insert_rowid())
+            },
+            Ok,
+        )?;
     transaction.execute(
         "update contracts set listing_date = ?1, expiry_date = ?2,
              lot_size = ?3, tick_size = ?4, last_seen_at = ?5 where id = ?6",

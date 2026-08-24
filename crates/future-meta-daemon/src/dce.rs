@@ -361,7 +361,6 @@ struct CalendarEvent {
     calendar_date: String,
     contract_id: String,
     event_type: String,
-    trade_type: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -413,12 +412,14 @@ pub fn import_trading_calendar_lifecycles(
         }
         snapshots += 1;
         for event in document.data {
-            if event.trade_type != "0"
-                || !matches!(
-                    event.event_type.as_str(),
-                    "期货合约开始交易日" | "合约最后交易日"
-                )
-            {
+            // The DCE calendar uses `tradeType=1` for listing events and
+            // `tradeType=0` for last-trading-day events.  The event type is
+            // the authoritative discriminator; filtering to one trade type
+            // silently drops every listing boundary from real responses.
+            if !matches!(
+                event.event_type.as_str(),
+                "期货合约开始交易日" | "合约开始交易日" | "合约最后交易日"
+            ) {
                 continue;
             }
             let event_date = parse_compact_date(&event.calendar_date)?;
@@ -441,7 +442,10 @@ pub fn import_trading_calendar_lifecycles(
                 canonical_url: row.url.clone(),
                 body_sha256: row.sha256.clone(),
             };
-            let slot = if event.event_type == "期货合约开始交易日" {
+            let slot = if matches!(
+                event.event_type.as_str(),
+                "期货合约开始交易日" | "合约开始交易日"
+            ) {
                 &mut entry.0
             } else {
                 &mut entry.1

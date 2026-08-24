@@ -1313,7 +1313,7 @@ fn dce_calendar_import_records_exact_lifecycle_with_two_official_events() {
     upsert_v11_baseline_rows(&mut connection, &[baseline], "2026-08-25T00:00:00Z").unwrap();
     drop(connection);
 
-    let listing = r#"{"success":true,"code":200,"data":[{"calendarDate":"20190116","contractId":"a2001期货合约","eventType":"期货合约开始交易日","tradeType":"0"}]}"#;
+    let listing = r#"{"success":true,"code":200,"data":[{"calendarDate":"20190116","contractId":"a2001期货合约","eventType":"期货合约开始交易日","tradeType":"1"}]}"#;
     let expiry = r#"{"success":true,"code":200,"data":[{"calendarDate":"20200115","contractId":"a2001期货合约","eventType":"合约最后交易日","tradeType":"0"}]}"#;
     let listing_sha = hex::encode(Sha256::digest(listing.as_bytes()));
     let expiry_sha = hex::encode(Sha256::digest(expiry.as_bytes()));
@@ -5676,4 +5676,46 @@ fn coverage_report_writes_json_before_strict_failure() {
     assert_eq!(json["complete_contracts"], 0);
     assert_eq!(json["findings"][0]["symbol"], "SHFE.cu2001");
     assert_eq!(json["findings"][0]["kind"], "missing_listing_date");
+}
+
+#[test]
+fn official_metadata_import_discovers_unseeded_contract() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    drop(connection);
+
+    let evidence = b"official DCE contract metadata";
+    let sha256 = hex::encode(Sha256::digest(evidence));
+    std::fs::write(directory.path().join(&sha256), evidence).unwrap();
+    let manifest = directory.path().join("metadata.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "symbol\tlisting_date\texpiry_date\tvalid_from\tvalid_to\tlot_size\ttick_size\tlifecycle_url\tlifecycle_sha256\tspecification_url\tspecification_sha256\nDCE.a2609\t2025-09-15\t2026-09-14\t2025-09-15T00:00:00+08:00\t\t10\t1\thttp://www.dce.com.cn/dcereport/publicweb/tradepara/contractInfo\t{sha256}\thttp://www.dce.com.cn/dcereport/publicweb/tradepara/contractInfo\t{sha256}\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_contract_metadata(&OfficialMetadataImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-25T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.contracts, 1);
+    let connection = connect(&db_path).unwrap();
+    let row: (String, String, f64, f64) = connection
+        .query_row(
+            "select listing_date, expiry_date, lot_size, tick_size from contracts where symbol = 'DCE.a2609'",
+            [],
+            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?, record.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        ("20250915".to_owned(), "20260914".to_owned(), 10.0, 1.0)
+    );
 }
