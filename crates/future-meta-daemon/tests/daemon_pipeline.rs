@@ -17,6 +17,9 @@ use future_meta_daemon::db::{
     require_complete_latest_metadata, source_probe_hash, source_rule_set_hash, update_source_error,
     update_source_success, upsert_allowed_rows, upsert_latest_rows, upsert_v11_baseline_rows,
 };
+use future_meta_daemon::dce::{
+    DceParameterImportOptions, import_daily_settlement_parameters as import_dce_parameters,
+};
 use future_meta_daemon::export::export_archive;
 use future_meta_daemon::gfex::{
     GfexCalendarImportOptions, GfexParameterImportOptions, import_daily_settlement_parameters,
@@ -1230,6 +1233,66 @@ fn gfex_daily_settlement_import_maps_complete_fee_tuple() {
     assert_eq!(open.value, Some(1.0));
     assert_eq!(close_yesterday.value, Some(1.0));
     assert_eq!(close_today.kind, future_meta::model::FeeKind::Zero);
+    assert_eq!(tuple.3, "official_parameter");
+}
+
+#[test]
+fn dce_daily_settlement_import_maps_complete_fee_tuple() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "DCE.a2005".to_owned();
+    baseline.listing_date = Some("20191201".to_owned());
+    baseline.expiry_date = Some("20200515".to_owned());
+    baseline.lot_size = 10.0;
+    baseline.tick_size = 1.0;
+    upsert_v11_baseline_rows(&mut connection, &[baseline], "2026-08-25T00:00:00Z").unwrap();
+    drop(connection);
+
+    let body = r#"{"success":true,"code":200,"data":[{"contractId":"a2005","openFee":"2","offsetFee":"2","shortOffsetFee":"4","style":"绝对值"}]}"#.as_bytes();
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.json")), body).unwrap();
+    let manifest = directory.path().join("dce.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tsha256\turl\trecord_count\tcontent_type\n20200102\tok\t20200102\t{sha256}\thttp://www.dce.com.cn/dcereport/publicweb/tradepara/futAndOptSettle\t1\tapplication/json\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_dce_parameters(&DceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-25T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.snapshots, 1);
+    assert_eq!(result.contracts, 1);
+
+    let connection = connect(&db_path).unwrap();
+    let tuple = connection
+        .query_row(
+            "select v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json, e.evidence_level
+             from fee_versions v
+             join contracts c on c.id = v.contract_id
+             join fee_version_evidence e on e.contract_id = v.contract_id
+                 and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             where c.symbol = 'DCE.a2005' and v.source_kind = 'official'",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+        )
+        .unwrap();
+    let open: future_meta::model::FeeSpec = serde_json::from_str(&tuple.0).unwrap();
+    let close_yesterday: future_meta::model::FeeSpec = serde_json::from_str(&tuple.1).unwrap();
+    let close_today: future_meta::model::FeeSpec = serde_json::from_str(&tuple.2).unwrap();
+    assert_eq!(open.value, Some(2.0));
+    assert_eq!(close_yesterday.value, Some(2.0));
+    assert_eq!(close_today.value, Some(4.0));
     assert_eq!(tuple.3, "official_parameter");
 }
 

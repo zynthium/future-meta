@@ -5,6 +5,7 @@ pub mod contract_base_info;
 pub mod coverage;
 pub mod czce;
 pub mod db;
+pub mod dce;
 pub mod export;
 pub mod gfex;
 pub mod hash;
@@ -96,6 +97,16 @@ enum Command {
         evidence_db: PathBuf,
     },
     ImportCzceParameters {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
+    },
+    ImportDceParameters {
         #[arg(long)]
         db: PathBuf,
         #[arg(long)]
@@ -373,6 +384,29 @@ pub fn run() -> anyhow::Result<()> {
             })?;
             eprintln!(
                 "CZCE parameters imported: snapshots={} contracts={} versions={}",
+                result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
+        Command::ImportDceParameters {
+            db,
+            manifest,
+            snapshot_dir,
+            from,
+        } => {
+            let from = coverage::CoverageBoundary::parse(&from, &from)?.from;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result =
+                dce::import_daily_settlement_parameters(&dce::DceParameterImportOptions {
+                    history_db: db,
+                    manifest,
+                    snapshot_dir,
+                    from,
+                    observed_at,
+                })?;
+            eprintln!(
+                "DCE parameters imported: snapshots={} contracts={} versions={}",
                 result.snapshots, result.contracts, result.versions
             );
             Ok(())
@@ -820,6 +854,37 @@ mod tests {
                 assert_eq!(from, "2022-12-22");
             }
             _ => panic!("expected import-gfex-parameters command"),
+        }
+    }
+
+    #[test]
+    fn import_dce_parameters_cli_requires_retained_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-dce-parameters",
+            "--db",
+            "/tmp/review.sqlite",
+            "--manifest",
+            "/tmp/dce.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+            "--from",
+            "2020-01-01",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportDceParameters {
+                db,
+                manifest,
+                snapshot_dir,
+                from,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(manifest, PathBuf::from("/tmp/dce.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+                assert_eq!(from, "2020-01-01");
+            }
+            _ => panic!("expected import-dce-parameters command"),
         }
     }
 
