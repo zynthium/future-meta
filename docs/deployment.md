@@ -45,6 +45,19 @@ cargo run -p future-meta-daemon -- import-official-history \
 命令逐份验证保留文件 SHA-256。部分调整必须能从同一具体合约此前的完整官方版本
 补齐；不得从品种众数、第三方基线或后继版本反向推断。
 
+生命周期与规格证据单独导入：
+
+```bash
+cargo run -p future-meta-daemon -- import-official-metadata \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/official-metadata.tsv \
+  --snapshot-dir data/official-evidence
+```
+
+TSV 必须包含 `symbol`、`listing_date`、`expiry_date`、`valid_from`、`valid_to`、
+`lot_size`、`tick_size`、`lifecycle_url`、`lifecycle_sha256`、
+`specification_url`、`specification_sha256`。生命周期与规格引用分开核验。
+
 官方证据库与 `data/future-meta.sqlite` 完全隔离，且不属于 Pages 发布物。满足完整、连续、人工复核条件前，禁止把候选材料写入生产历史。具体标准见 [官方历史证据流程](official-evidence.md)。
 
 完整交易所参数表可作为较低等级 `official_parameter` 证据，无需配对公告，但必须保留

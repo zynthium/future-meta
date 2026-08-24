@@ -238,6 +238,19 @@ cargo run -p future-meta-daemon -- import-official-history \
 完整前序时硬失败。也可重复传入 `--input reviewed.json`，导入未写入证据库的已复核
 JSON。
 
+官方生命周期与合约规格使用独立 TSV 导入，不能复用只含手续费的页面：
+
+```bash
+cargo run -p future-meta-daemon -- import-official-metadata \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/official-metadata.tsv \
+  --snapshot-dir data/official-evidence
+```
+
+每行必须给出具体 `symbol`、上市日、到期日、连续规格区间、合约乘数、最小变动价位，
+以及分别证明生命周期和规格的官方 URL 与 SHA-256。导入前验证全部保留文件；任一
+合约的规格区间未从上市日连续覆盖到到期日时硬失败。
+
 交易所每日参数表可在保留原始字节后，以较低证据等级直接建立完整三腿手续费历史。
 例如 CZCE 导入只接受官方固定 URL、逐文件 SHA-256 和明确的绝对值/比例值单位，
 并将版本记录为 `official_parameter`；已有 `paired_official` 版本不会被覆盖：

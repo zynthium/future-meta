@@ -548,6 +548,10 @@ fn official_domain_for_exchange(exchange: &str) -> Result<&'static str> {
     }
 }
 
+pub(crate) fn validate_official_canonical_url(exchange: &str, value: &str) -> Result<()> {
+    validate_canonical_url(value, official_domain_for_exchange(exchange)?)
+}
+
 fn validate_canonical_url(value: &str, allowed_domain: &str) -> Result<()> {
     let url = Url::parse(value)?;
     // Some exchanges retain historical originals only on HTTP. Preserve their

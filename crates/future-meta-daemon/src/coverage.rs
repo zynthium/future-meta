@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use future_meta::model::{FeeKind, FeeSpec};
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::json;
 use std::path::Path;
 use time::format_description::well_known::Rfc3339;
@@ -47,6 +47,12 @@ pub enum CoverageFindingKind {
     MissingFeeHistory,
     /// Contract has no lot-size and tick-size history.
     MissingSpecificationHistory,
+    /// Official fee row has no retained evidence link.
+    MissingFeeEvidence,
+    /// Official specification row has no retained evidence link.
+    MissingSpecificationEvidence,
+    /// Lifecycle boundaries have no retained official evidence link.
+    MissingLifecycleEvidence,
     /// A fee interval leaves part of the listed lifetime uncovered.
     FeeCoverageGap,
     /// A specification interval leaves part of the listed lifetime uncovered.
@@ -80,6 +86,9 @@ impl CoverageFindingKind {
             Self::MissingExpiryDate => "missing_expiry_date",
             Self::MissingFeeHistory => "missing_fee_history",
             Self::MissingSpecificationHistory => "missing_specification_history",
+            Self::MissingFeeEvidence => "missing_fee_evidence",
+            Self::MissingSpecificationEvidence => "missing_specification_evidence",
+            Self::MissingLifecycleEvidence => "missing_lifecycle_evidence",
             Self::FeeCoverageGap => "fee_coverage_gap",
             Self::SpecificationCoverageGap => "specification_coverage_gap",
             Self::FeeIntervalOverlap => "fee_interval_overlap",
@@ -204,6 +213,31 @@ fn audit_contract(
         return Ok(None);
     }
 
+    if let (Some(listing_date), Some(expiry_date)) = (
+        contract.listing_date.as_deref(),
+        contract.expiry_date.as_deref(),
+    ) {
+        let retained = connection
+            .query_row(
+                "select 1 from contract_lifecycle_evidence
+                 where contract_id = ?1 and listing_date = ?2 and expiry_date = ?3
+                   and length(trim(canonical_url)) > 0 and length(body_sha256) = 64
+                 limit 1",
+                params![contract.id, listing_date, expiry_date],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !retained {
+            push_finding_once(
+                findings,
+                &contract.symbol,
+                CoverageFindingKind::MissingLifecycleEvidence,
+                "lifecycle boundaries lack retained official evidence".to_owned(),
+            );
+        }
+    }
+
     let scope_start = listing.map_or(boundary.from, |date| date.max(boundary.from));
     let scope_through = expiry.map_or(boundary.through, |date| date.min(boundary.through));
     let scope_start = exchange_day_start(scope_start)?;
@@ -240,6 +274,7 @@ fn audit_fee_history(
             CoverageFindingKind::FeeCoverageGap,
             CoverageFindingKind::FeeIntervalOverlap,
             CoverageFindingKind::NonOfficialFeeSource,
+            CoverageFindingKind::MissingFeeEvidence,
             CoverageFindingKind::InvalidFeeValue,
             "fee",
             findings,
@@ -272,6 +307,7 @@ fn audit_specification_history(
             CoverageFindingKind::SpecificationCoverageGap,
             CoverageFindingKind::SpecificationIntervalOverlap,
             CoverageFindingKind::NonOfficialSpecificationSource,
+            CoverageFindingKind::MissingSpecificationEvidence,
             CoverageFindingKind::InvalidSpecificationValue,
             "contract specification",
             findings,
@@ -344,6 +380,7 @@ struct AuditInterval {
     valid_from: OffsetDateTime,
     valid_to: Option<OffsetDateTime>,
     official: bool,
+    evidence: bool,
     value_valid: bool,
 }
 
@@ -356,6 +393,7 @@ fn audit_intervals(
     gap_kind: CoverageFindingKind,
     overlap_kind: CoverageFindingKind,
     source_kind: CoverageFindingKind,
+    evidence_kind: CoverageFindingKind,
     value_kind: CoverageFindingKind,
     label: &str,
     findings: &mut Vec<CoverageFinding>,
@@ -391,6 +429,14 @@ fn audit_intervals(
                 format!("{label} interval lacks official provenance"),
             );
         }
+        if interval.official && !interval.evidence {
+            push_finding_once(
+                findings,
+                symbol,
+                evidence_kind,
+                format!("{label} interval lacks retained official evidence"),
+            );
+        }
         if !interval.value_valid {
             push_finding_once(
                 findings,
@@ -420,9 +466,15 @@ fn load_fee_intervals(
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<Vec<AuditInterval>> {
     let mut statement = connection.prepare(
-        "select valid_from, valid_to, source_kind,
-                open_fee_json, close_yesterday_fee_json, close_today_fee_json
-         from fee_versions where contract_id = ?1 order by valid_from",
+        "select v.valid_from, v.valid_to, v.source_kind,
+                v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json,
+                exists(
+                  select 1 from fee_version_evidence e
+                  where e.contract_id = v.contract_id
+                    and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+                    and length(trim(e.canonical_url)) > 0 and length(e.body_sha256) = 64
+                )
+         from fee_versions v where v.contract_id = ?1 order by v.valid_from",
     )?;
     let records = statement
         .query_map([contract_id], |row| {
@@ -433,11 +485,12 @@ fn load_fee_intervals(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut intervals = Vec::with_capacity(records.len());
-    for (valid_from, valid_to, source, open, close_yesterday, close_today) in records {
+    for (valid_from, valid_to, source, open, close_yesterday, close_today, evidence) in records {
         let Some((valid_from, valid_to)) = parse_interval(
             symbol,
             &valid_from,
@@ -455,6 +508,7 @@ fn load_fee_intervals(
             valid_from,
             valid_to,
             official: source == "official",
+            evidence,
             value_valid,
         });
     }
@@ -469,8 +523,14 @@ fn load_specification_intervals(
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<Vec<AuditInterval>> {
     let mut statement = connection.prepare(
-        "select valid_from, valid_to, source_kind, source_url, lot_size, tick_size
-         from contract_spec_versions where contract_id = ?1 order by valid_from",
+        "select s.valid_from, s.valid_to, s.source_kind, s.source_url,
+                s.lot_size, s.tick_size,
+                exists(
+                  select 1 from contract_spec_evidence e
+                  where e.contract_id = s.contract_id and e.valid_from = s.valid_from
+                    and length(trim(e.canonical_url)) > 0 and length(e.body_sha256) = 64
+                )
+         from contract_spec_versions s where s.contract_id = ?1 order by s.valid_from",
     )?;
     let records = statement
         .query_map(params![contract_id], |row| {
@@ -481,11 +541,12 @@ fn load_specification_intervals(
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, f64>(4)?,
                 row.get::<_, f64>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut intervals = Vec::with_capacity(records.len());
-    for (valid_from, valid_to, source, source_url, lot_size, tick_size) in records {
+    for (valid_from, valid_to, source, source_url, lot_size, tick_size, evidence) in records {
         let Some((valid_from, valid_to)) = parse_interval(
             symbol,
             &valid_from,
@@ -503,6 +564,7 @@ fn load_specification_intervals(
                 && source_url
                     .as_deref()
                     .is_some_and(|url| !url.trim().is_empty()),
+            evidence,
             value_valid: lot_size.is_finite()
                 && lot_size > 0.0
                 && tick_size.is_finite()

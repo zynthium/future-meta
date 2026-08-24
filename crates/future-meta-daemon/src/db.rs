@@ -709,7 +709,26 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           body_sha256 text not null check(length(body_sha256) = 64),
           recorded_at text not null,
           primary key(contract_id, valid_from, rule_hash, canonical_url, body_sha256),
-          foreign key(contract_id) references contracts(id)
+            foreign key(contract_id) references contracts(id)
+        );
+        create table if not exists contract_spec_evidence(
+            contract_id integer not null,
+            valid_from text not null,
+            canonical_url text not null,
+            body_sha256 text not null check(length(body_sha256) = 64),
+            recorded_at text not null,
+            primary key(contract_id, valid_from, canonical_url, body_sha256),
+            foreign key(contract_id) references contracts(id)
+        );
+        create table if not exists contract_lifecycle_evidence(
+            contract_id integer not null,
+            listing_date text not null,
+            expiry_date text not null,
+            canonical_url text not null,
+            body_sha256 text not null check(length(body_sha256) = 64),
+            recorded_at text not null,
+            primary key(contract_id, canonical_url, body_sha256),
+            foreign key(contract_id) references contracts(id)
         );
         ",
     )?;

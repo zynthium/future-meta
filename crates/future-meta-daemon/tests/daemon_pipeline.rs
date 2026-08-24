@@ -18,6 +18,9 @@ use future_meta_daemon::official::{
     apply_verified_adjustments, stage_adjustment, stage_adjustment_json, stage_adjustments_json,
 };
 use future_meta_daemon::official_history::{OfficialHistoryImportOptions, import_adjustments};
+use future_meta_daemon::official_metadata::{
+    OfficialMetadataImportOptions, import_contract_metadata,
+};
 use future_meta_daemon::parse::parse_csv;
 use future_meta_daemon::refresh::{
     RefreshOptions, refresh_with_options, require_official_fee_change_admission, update_latest,
@@ -555,6 +558,78 @@ fn paired_official_history_reconstructs_partial_adjustment_from_prior_tuple() {
     let close_today: future_meta::model::FeeSpec = serde_json::from_str(&tuple.1).unwrap();
     assert_eq!(open.value, Some(0.23));
     assert_eq!(close_today.value, Some(2.3));
+}
+
+#[test]
+fn official_metadata_import_replaces_lifecycle_and_specification_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "SHFE.cu2607".to_owned();
+    row.listing_date = None;
+    row.expiry_date = None;
+    upsert_v11_baseline_rows(&mut conn, &[row], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let evidence = b"official SHFE contract specification";
+    let sha256 = hex::encode(Sha256::digest(evidence));
+    std::fs::write(directory.path().join(format!("{sha256}.html")), evidence).unwrap();
+    let manifest = directory.path().join("metadata.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "symbol\tlisting_date\texpiry_date\tvalid_from\tvalid_to\tlot_size\ttick_size\tlifecycle_url\tlifecycle_sha256\tspecification_url\tspecification_sha256\n\
+             SHFE.cu2607\t2025-07-16\t2026-07-15\t2025-07-16T00:00:00+08:00\t\t5\t10\thttps://www.shfe.com.cn/products/futures/metal/cu_f/\t{sha256}\thttps://www.shfe.com.cn/products/futures/metal/cu_f/\t{sha256}\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_contract_metadata(&OfficialMetadataImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.specification_versions, 1);
+    let conn = connect(&db_path).unwrap();
+    let persisted: (String, String, String, String, String, i64) = conn
+        .query_row(
+            "select c.listing_date, c.expiry_date, s.source_kind, s.source_url,
+                    e.body_sha256, count(l.canonical_url)
+             from contracts c
+             join contract_spec_versions s on s.contract_id = c.id
+             join contract_spec_evidence e on e.contract_id = s.contract_id
+               and e.valid_from = s.valid_from
+             join contract_lifecycle_evidence l on l.contract_id = c.id
+             where c.symbol = 'SHFE.cu2607'
+             group by c.id, s.id, e.body_sha256",
+            [],
+            |record| {
+                Ok((
+                    record.get(0)?,
+                    record.get(1)?,
+                    record.get(2)?,
+                    record.get(3)?,
+                    record.get(4)?,
+                    record.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(persisted.0, "20250716");
+    assert_eq!(persisted.1, "20260715");
+    assert_eq!(persisted.2, "official");
+    assert_eq!(
+        persisted.3,
+        "https://www.shfe.com.cn/products/futures/metal/cu_f/"
+    );
+    assert_eq!(persisted.4, sha256);
+    assert_eq!(persisted.5, 1);
 }
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";
@@ -3993,6 +4068,17 @@ fn insert_complete_coverage_contract(conn: &rusqlite::Connection) {
         [],
     )
     .unwrap();
+    conn.execute(
+        "insert into fee_version_evidence(
+           contract_id, valid_from, rule_hash, evidence_level,
+           canonical_url, body_sha256, recorded_at
+         ) values(
+           1, '2020-01-02T00:00:00+08:00', 'official-rule', 'official_parameter',
+           'https://www.shfe.com.cn/fees/cu.html', ?1, '2020-01-02T00:00:00+08:00'
+         )",
+        ["1".repeat(64)],
+    )
+    .unwrap();
     let fee = r#"{"kind":"CnyPerLot","value":5.0,"raw_text":"5元/手"}"#;
     conn.execute(
         "insert into fee_versions(
@@ -4021,6 +4107,29 @@ fn insert_complete_coverage_contract(conn: &rusqlite::Connection) {
         [],
     )
     .unwrap();
+    conn.execute(
+        "insert into contract_spec_evidence(
+           contract_id, valid_from, canonical_url, body_sha256, recorded_at
+         ) values(
+           1, '2020-01-02T00:00:00+08:00',
+           'https://www.shfe.com.cn/rules/cu.html', ?1,
+           '2020-01-02T00:00:00+08:00'
+         )",
+        ["2".repeat(64)],
+    )
+    .unwrap();
+    conn.execute(
+        "insert into contract_lifecycle_evidence(
+           contract_id, listing_date, expiry_date, canonical_url,
+           body_sha256, recorded_at
+         ) values(
+           1, '20200102', '20200131',
+           'https://www.shfe.com.cn/calendar/cu.html', ?1,
+           '2020-01-02T00:00:00+08:00'
+         )",
+        ["3".repeat(64)],
+    )
+    .unwrap();
 }
 
 fn january_2020_coverage() -> CoverageBoundary {
@@ -4041,6 +4150,30 @@ fn coverage_audit_accepts_complete_official_interval_chains() {
     assert_eq!(report.contracts, 1);
     assert_eq!(report.complete_contracts, 1);
     assert!(report.findings.is_empty());
+}
+
+#[test]
+fn coverage_audit_rejects_official_rows_without_retained_evidence() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute_batch(
+        "delete from fee_version_evidence;
+         delete from contract_spec_evidence;
+         delete from contract_lifecycle_evidence;",
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+    let kinds = report
+        .findings
+        .iter()
+        .map(|finding| finding.kind)
+        .collect::<Vec<_>>();
+
+    assert!(kinds.contains(&CoverageFindingKind::MissingFeeEvidence));
+    assert!(kinds.contains(&CoverageFindingKind::MissingSpecificationEvidence));
+    assert!(kinds.contains(&CoverageFindingKind::MissingLifecycleEvidence));
 }
 
 #[test]

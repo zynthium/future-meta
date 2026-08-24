@@ -82,6 +82,25 @@ pairs. A partial adjustment may inherit unstated fields only from an earlier
 complete tuple for the same concrete contract. It never inherits from another
 contract, a third-party baseline, or a later observation.
 
+## Materialize lifecycle and specifications
+
+Lifecycle and specification evidence is independent from fee evidence. Import
+it from a reviewed TSV into the same review copy:
+
+```bash
+cargo run -p future-meta-daemon -- import-official-metadata \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/official-metadata.tsv \
+  --snapshot-dir data/official-evidence
+```
+
+Each row states a concrete symbol, listing and expiry dates, one contiguous
+specification interval, lot size, tick size, and separate URL/digest pairs for
+lifecycle and specification evidence. All intervals for a contract must cover
+its entire listed lifetime without gaps. The strict coverage audit also
+requires retained evidence links for every official fee, specification, and
+lifecycle claim.
+
 ## Stage a reviewed document pair
 
 Download the official source files through an approved human-accessible path,

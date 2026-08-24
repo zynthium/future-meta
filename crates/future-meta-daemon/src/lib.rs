@@ -9,6 +9,7 @@ pub mod jin10;
 pub mod latest;
 pub mod official;
 pub mod official_history;
+pub mod official_metadata;
 pub mod parse;
 pub mod refresh;
 pub mod source;
@@ -113,6 +114,14 @@ enum Command {
         from: String,
         #[arg(long)]
         through: String,
+    },
+    ImportOfficialMetadata {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
     },
     BackfillJin10 {
         #[arg(long)]
@@ -316,6 +325,27 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportOfficialMetadata {
+            db,
+            manifest,
+            snapshot_dir,
+        } => {
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = official_metadata::import_contract_metadata(
+                &official_metadata::OfficialMetadataImportOptions {
+                    history_db: db,
+                    manifest,
+                    snapshot_dir,
+                    observed_at,
+                },
+            )?;
+            eprintln!(
+                "official metadata imported: contracts={} specification_versions={}",
+                result.contracts, result.specification_versions
+            );
+            Ok(())
+        }
         Command::BackfillJin10 { db, from, to } => {
             let result = refresh::backfill_jin10(&db, &from, &to)?;
             eprintln!(
@@ -406,6 +436,33 @@ mod tests {
                 assert_eq!(exchange.as_deref(), Some("CFFEX"));
             }
             _ => panic!("expected import-official-history command"),
+        }
+    }
+
+    #[test]
+    fn import_official_metadata_cli_requires_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-official-metadata",
+            "--db",
+            "/tmp/review.sqlite",
+            "--manifest",
+            "/tmp/metadata.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportOfficialMetadata {
+                db,
+                manifest,
+                snapshot_dir,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(manifest, PathBuf::from("/tmp/metadata.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+            }
+            _ => panic!("expected import-official-metadata command"),
         }
     }
 
