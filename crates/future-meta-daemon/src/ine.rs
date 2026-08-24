@@ -8,7 +8,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;
 use reqwest::Url;
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -297,9 +297,16 @@ fn materialize_rows(
             existing
         } else {
             let product = derive_underlying_symbol(&first.symbol)?;
-            let candidates = product_metadata
-                .get(&product)
-                .ok_or_else(|| anyhow!("INE contract metadata missing {}", first.symbol))?;
+            let official_candidates =
+                official_product_metadata_at(connection, &product, &first.valid_from)?;
+            let candidates = if official_candidates.is_empty() {
+                product_metadata
+                    .get(&product)
+                    .ok_or_else(|| anyhow!("INE contract metadata missing {}", first.symbol))?
+                    .as_slice()
+            } else {
+                official_candidates.as_slice()
+            };
             if candidates.len() != 1 {
                 bail!(
                     "INE contract metadata ambiguous {}: {} candidates",
@@ -338,6 +345,33 @@ fn materialize_rows(
         }
     }
     Ok(result)
+}
+
+fn official_product_metadata_at(
+    connection: &rusqlite::Connection,
+    product: &str,
+    valid_at: &str,
+) -> Result<Vec<ContractStaticMetadata>> {
+    let pattern = format!("{product}[0-9][0-9][0-9][0-9]");
+    let mut statement = connection.prepare(
+        "select distinct s.lot_size, s.tick_size
+         from contract_spec_versions s
+         join contracts c on c.id = s.contract_id
+         where c.symbol glob ?1
+           and s.source_kind = 'official'
+           and julianday(s.valid_from) <= julianday(?2)
+           and (s.valid_to is null or julianday(?2) < julianday(s.valid_to))
+         order by s.lot_size, s.tick_size",
+    )?;
+    statement
+        .query_map(params![pattern, valid_at], |record| {
+            Ok(ContractStaticMetadata {
+                lot_size: record.get(0)?,
+                tick_size: record.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 fn select_rule<'a>(
@@ -540,7 +574,9 @@ fn load_existing_metadata(
 }
 
 fn successful_code(value: &serde_json::Value) -> bool {
-    value.as_str().is_some_and(|value| value == "0")
+    value
+        .as_str()
+        .is_some_and(|value| !value.is_empty() && value.bytes().all(|byte| byte == b'0'))
         || value.as_i64().is_some_and(|value| value == 0)
 }
 
@@ -566,7 +602,14 @@ fn empty_to_none(value: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_close_today_rule_url;
+    use super::{successful_code, validate_close_today_rule_url};
+
+    #[test]
+    fn successful_code_accepts_zero_padded_official_code() {
+        assert!(successful_code(&serde_json::Value::String(
+            "0000".to_owned()
+        )));
+    }
 
     #[test]
     fn close_today_rule_rejects_non_notice_official_page() {

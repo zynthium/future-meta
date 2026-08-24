@@ -1776,7 +1776,17 @@ pub fn replace_with_official_parameter_history(
             .last()
             .map(|item| item.1.row.clone())
             .ok_or_else(|| anyhow!("empty official parameter contract group"))?;
-        let contract_id = upsert_contract(&tx, &latest_row, observed_at, IngestMode::V11Baseline)?;
+        let contract_id = tx
+            .query_row(
+                "select id from contracts where symbol = ?1",
+                [&latest_row.symbol],
+                |record| record.get::<_, i64>(0),
+            )
+            .optional()?
+            .map_or_else(
+                || upsert_contract(&tx, &latest_row, observed_at, IngestMode::V11Baseline),
+                Ok,
+            )?;
         let first_at = items[0].1.valid_from_at;
         let coverage_end_at = items
             .iter()

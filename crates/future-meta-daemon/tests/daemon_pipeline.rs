@@ -1244,10 +1244,26 @@ fn ine_daily_parameter_import_requires_and_records_close_today_rule() {
     let mut conn = connect(&db_path).unwrap();
     ensure_schema(&conn).unwrap();
     let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
-    exemplar.symbol = "INE.lu9999".to_owned();
+    exemplar.symbol = "INE.lu2107".to_owned();
+    exemplar.listing_date = Some("20210416".to_owned());
+    exemplar.expiry_date = Some("20220415".to_owned());
     exemplar.lot_size = 10.0;
     exemplar.tick_size = 1.0;
     upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    conn.execute_batch(
+        "delete from contract_spec_versions
+         where contract_id = (select id from contracts where symbol = 'INE.lu2107');
+         insert into contract_spec_versions(
+             contract_id, lot_size, tick_size, valid_from, valid_to,
+             source_kind, source_url, first_seen_at, last_seen_at
+         )
+         select id, 10, 1, '2021-04-16T00:00:00+08:00',
+                '2022-04-16T00:00:00+08:00', 'official',
+                'https://www.ine.cn/products/futures/energy/lu_f/',
+                '2026-08-24T00:00:00Z', '2026-08-24T00:00:00Z'
+         from contracts where symbol = 'INE.lu2107';",
+    )
+    .unwrap();
     drop(conn);
 
     let body = br#"{"o_code":"0","report_date":"20210416","o_cursor":[{"PRODUCTID":"lu_f","INSTRUMENTID":"lu2107","TRADEFEERATIO":0.01,"TRADEFEEUNIT":0}]}"#;
@@ -1327,6 +1343,97 @@ fn ine_daily_parameter_import_requires_and_records_close_today_rule() {
     }
     assert_eq!(level, "paired_official");
     assert_eq!(evidence_count, 2);
+}
+
+#[test]
+fn ine_daily_parameter_import_selects_official_product_spec_at_observation_date() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut old = parse_csv(CSV_V1).unwrap().remove(0);
+    old.symbol = "INE.ec9998".to_owned();
+    old.listing_date = Some("20200101".to_owned());
+    old.expiry_date = Some("20211231".to_owned());
+    old.lot_size = 50.0;
+    old.tick_size = 0.1;
+    let mut revised = old.clone();
+    revised.symbol = "INE.ec9999".to_owned();
+    revised.listing_date = Some("20260511".to_owned());
+    revised.expiry_date = Some("20270511".to_owned());
+    revised.tick_size = 0.5;
+    upsert_v11_baseline_rows(&mut conn, &[old, revised], "2026-08-24T00:00:00Z").unwrap();
+    conn.execute_batch(
+        "delete from contract_spec_versions
+         where contract_id in (
+             select id from contracts where symbol in ('INE.ec9998', 'INE.ec9999')
+         );
+         insert into contract_spec_versions(
+             contract_id, lot_size, tick_size, valid_from, valid_to,
+             source_kind, source_url, first_seen_at, last_seen_at
+         )
+         select id, 50, 0.1, '2020-01-01T00:00:00+08:00',
+                '2022-01-01T00:00:00+08:00', 'official',
+                'https://www.ine.cn/products/futures/index_f/ec_f/',
+                '2026-08-24T00:00:00Z', '2026-08-24T00:00:00Z'
+         from contracts where symbol = 'INE.ec9998';
+         insert into contract_spec_versions(
+             contract_id, lot_size, tick_size, valid_from, valid_to,
+             source_kind, source_url, first_seen_at, last_seen_at
+         )
+         select id, 50, 0.5, '2026-05-11T00:00:00+08:00', null,
+                'official',
+                'https://www.ine.cn/products/futures/index_f/ec_f/',
+                '2026-08-24T00:00:00Z', '2026-08-24T00:00:00Z'
+         from contracts where symbol = 'INE.ec9999';",
+    )
+    .unwrap();
+    drop(conn);
+
+    let body = br#"{"o_code":"0","report_date":"20210416","o_cursor":[{"PRODUCTID":"ec_f","INSTRUMENTID":"ec2404","TRADEFEERATIO":0.01,"TRADEFEEUNIT":0}]}"#;
+    let parameter_sha = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{parameter_sha}.dat")), body).unwrap();
+    let manifest = directory.path().join("ine.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tupdate_date\tsha256\turl\trecord_count\tproducts\n\
+             20210416\tok\t20210416\t20210416 20:01:00\t{parameter_sha}\thttps://www.ine.cn/data/tradedata/future/dailydata/js20210416.dat\t1\tec_f\n"
+        ),
+    )
+    .unwrap();
+    let rule_body = b"official EC close-today rule";
+    let rule_sha = hex::encode(Sha256::digest(rule_body));
+    std::fs::write(directory.path().join(format!("{rule_sha}.html")), rule_body).unwrap();
+    let rules = directory.path().join("ine-close-today.tsv");
+    std::fs::write(
+        &rules,
+        format!(
+            "scope\tvalid_from\tvalid_to\tclose_today_kind\tclose_today_value\tcanonical_url\tsha256\n\
+             INE.ec\t2020-01-01T00:00:00+08:00\t\tsame_as_general\t\thttps://www.ine.cn/publicnotice/notice/202308/t20230811_814262.html\t{rule_sha}\n"
+        ),
+    )
+    .unwrap();
+
+    import_ine_parameters(&IneParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        close_today_rules: rules,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2021, Month::April, 16).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    let conn = connect(&db_path).unwrap();
+    let tick: f64 = conn
+        .query_row(
+            "select tick_size from contracts where symbol = 'INE.ec2404'",
+            [],
+            |record| record.get(0),
+        )
+        .unwrap();
+    assert!((tick - 0.1).abs() < f64::EPSILON);
 }
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";
