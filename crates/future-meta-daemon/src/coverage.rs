@@ -156,12 +156,23 @@ pub fn audit_history_coverage(
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let evidence_tables = EvidenceTables {
+        fee: table_exists(connection, "fee_version_evidence")?,
+        specification: table_exists(connection, "contract_spec_evidence")?,
+        lifecycle: table_exists(connection, "contract_lifecycle_evidence")?,
+    };
 
     let mut findings = Vec::new();
     let mut complete_contracts = 0usize;
     let mut inspected_contracts = 0usize;
     for contract in &contracts {
-        if let Some(complete) = audit_contract(connection, contract, boundary, &mut findings)? {
+        if let Some(complete) = audit_contract(
+            connection,
+            contract,
+            boundary,
+            evidence_tables,
+            &mut findings,
+        )? {
             inspected_contracts += 1;
             complete_contracts += usize::from(complete);
         }
@@ -183,10 +194,18 @@ struct ContractLifecycle {
     expiry_date: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct EvidenceTables {
+    fee: bool,
+    specification: bool,
+    lifecycle: bool,
+}
+
 fn audit_contract(
     connection: &Connection,
     contract: &ContractLifecycle,
     boundary: CoverageBoundary,
+    evidence_tables: EvidenceTables,
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<Option<bool>> {
     let finding_start = findings.len();
@@ -217,17 +236,18 @@ fn audit_contract(
         contract.listing_date.as_deref(),
         contract.expiry_date.as_deref(),
     ) {
-        let retained = connection
-            .query_row(
-                "select 1 from contract_lifecycle_evidence
+        let retained = evidence_tables.lifecycle
+            && connection
+                .query_row(
+                    "select 1 from contract_lifecycle_evidence
                  where contract_id = ?1 and listing_date = ?2 and expiry_date = ?3
                    and length(trim(canonical_url)) > 0 and length(body_sha256) = 64
                  limit 1",
-                params![contract.id, listing_date, expiry_date],
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some();
+                    params![contract.id, listing_date, expiry_date],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
         if !retained {
             push_finding_once(
                 findings,
@@ -246,8 +266,22 @@ fn audit_contract(
             .next_day()
             .context("coverage boundary exceeds supported date range")?,
     )?;
-    audit_fee_history(connection, contract, scope_start, scope_end, findings)?;
-    audit_specification_history(connection, contract, scope_start, scope_end, findings)?;
+    audit_fee_history(
+        connection,
+        contract,
+        scope_start,
+        scope_end,
+        evidence_tables.fee,
+        findings,
+    )?;
+    audit_specification_history(
+        connection,
+        contract,
+        scope_start,
+        scope_end,
+        evidence_tables.specification,
+        findings,
+    )?;
     Ok(Some(findings.len() == finding_start))
 }
 
@@ -256,9 +290,16 @@ fn audit_fee_history(
     contract: &ContractLifecycle,
     scope_start: OffsetDateTime,
     scope_end: OffsetDateTime,
+    has_evidence_table: bool,
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<()> {
-    let intervals = load_fee_intervals(connection, contract.id, &contract.symbol, findings)?;
+    let intervals = load_fee_intervals(
+        connection,
+        contract.id,
+        &contract.symbol,
+        has_evidence_table,
+        findings,
+    )?;
     if intervals.is_empty() {
         findings.push(CoverageFinding {
             symbol: contract.symbol.clone(),
@@ -288,10 +329,16 @@ fn audit_specification_history(
     contract: &ContractLifecycle,
     scope_start: OffsetDateTime,
     scope_end: OffsetDateTime,
+    has_evidence_table: bool,
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<()> {
-    let intervals =
-        load_specification_intervals(connection, contract.id, &contract.symbol, findings)?;
+    let intervals = load_specification_intervals(
+        connection,
+        contract.id,
+        &contract.symbol,
+        has_evidence_table,
+        findings,
+    )?;
     if intervals.is_empty() {
         findings.push(CoverageFinding {
             symbol: contract.symbol.clone(),
@@ -463,19 +510,26 @@ fn load_fee_intervals(
     connection: &Connection,
     contract_id: i64,
     symbol: &str,
+    has_evidence_table: bool,
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<Vec<AuditInterval>> {
-    let mut statement = connection.prepare(
+    let evidence_projection = if has_evidence_table {
+        "exists(
+           select 1 from fee_version_evidence e
+           where e.contract_id = v.contract_id
+             and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             and length(trim(e.canonical_url)) > 0 and length(e.body_sha256) = 64
+         )"
+    } else {
+        "0"
+    };
+    let query = format!(
         "select v.valid_from, v.valid_to, v.source_kind,
                 v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json,
-                exists(
-                  select 1 from fee_version_evidence e
-                  where e.contract_id = v.contract_id
-                    and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
-                    and length(trim(e.canonical_url)) > 0 and length(e.body_sha256) = 64
-                )
-         from fee_versions v where v.contract_id = ?1 order by v.valid_from",
-    )?;
+                {evidence_projection}
+         from fee_versions v where v.contract_id = ?1 order by v.valid_from"
+    );
+    let mut statement = connection.prepare(&query)?;
     let records = statement
         .query_map([contract_id], |row| {
             Ok((
@@ -520,18 +574,25 @@ fn load_specification_intervals(
     connection: &Connection,
     contract_id: i64,
     symbol: &str,
+    has_evidence_table: bool,
     findings: &mut Vec<CoverageFinding>,
 ) -> Result<Vec<AuditInterval>> {
-    let mut statement = connection.prepare(
+    let evidence_projection = if has_evidence_table {
+        "exists(
+           select 1 from contract_spec_evidence e
+           where e.contract_id = s.contract_id and e.valid_from = s.valid_from
+             and length(trim(e.canonical_url)) > 0 and length(e.body_sha256) = 64
+         )"
+    } else {
+        "0"
+    };
+    let query = format!(
         "select s.valid_from, s.valid_to, s.source_kind, s.source_url,
                 s.lot_size, s.tick_size,
-                exists(
-                  select 1 from contract_spec_evidence e
-                  where e.contract_id = s.contract_id and e.valid_from = s.valid_from
-                    and length(trim(e.canonical_url)) > 0 and length(e.body_sha256) = 64
-                )
-         from contract_spec_versions s where s.contract_id = ?1 order by s.valid_from",
-    )?;
+                {evidence_projection}
+         from contract_spec_versions s where s.contract_id = ?1 order by s.valid_from"
+    );
+    let mut statement = connection.prepare(&query)?;
     let records = statement
         .query_map(params![contract_id], |row| {
             Ok((
@@ -679,4 +740,15 @@ fn push_finding_once(
         kind,
         detail,
     });
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool> {
+    Ok(connection
+        .query_row(
+            "select 1 from sqlite_master where type = 'table' and name = ?1",
+            [table],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }

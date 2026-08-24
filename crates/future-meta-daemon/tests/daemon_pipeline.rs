@@ -4177,6 +4177,39 @@ fn coverage_audit_rejects_official_rows_without_retained_evidence() {
 }
 
 #[test]
+fn coverage_audit_treats_legacy_schema_as_missing_evidence() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    insert_complete_coverage_contract(&conn);
+    conn.execute_batch(
+        "drop table fee_version_evidence;
+         drop table contract_spec_evidence;
+         drop table contract_lifecycle_evidence;",
+    )
+    .unwrap();
+
+    let report = audit_history_coverage(&conn, january_2020_coverage()).unwrap();
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::MissingFeeEvidence })
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::MissingSpecificationEvidence })
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| { finding.kind == CoverageFindingKind::MissingLifecycleEvidence })
+    );
+}
+
+#[test]
 fn coverage_audit_rejects_fee_chain_starting_after_listing() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     ensure_schema(&conn).unwrap();
