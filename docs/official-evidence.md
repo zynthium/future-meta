@@ -60,6 +60,13 @@ column explicitly document yuan per lot in their notes. These fee pages do not
 state contract multipliers or tick sizes, so they cannot promote specification
 history to official provenance.
 
+The GFEX importer maps `openFee`, `offsetFee`, and `shortOffsetFee` to open,
+close-yesterday, and close-today respectively. `绝对值` means yuan per lot,
+`比例值` means per ten-thousand of turnover, and an explicit numeric zero is
+retained as `FeeKind::Zero`. Only `ok` manifest rows are evidence. An
+`official_empty` or `pending` row remains a coverage gap and cannot support a
+completeness claim.
+
 ## Materialize paired history
 
 Use `import-official-history` only against a review copy. It reads one or more
@@ -81,6 +88,21 @@ its bytes. The importer rejects unverified records and incomplete document
 pairs. A partial adjustment may inherit unstated fields only from an earlier
 complete tuple for the same concrete contract. It never inherits from another
 contract, a third-party baseline, or a later observation.
+
+GFEX complete daily settlement parameters can instead be imported directly
+into a review copy at the lower `official_parameter` evidence level:
+
+```bash
+cargo run -p future-meta-daemon -- import-gfex-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/gfex-daily-settlement-20221222-20260818.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2022-12-22
+```
+
+The command validates every selected official URL and retained-byte digest
+before atomically replacing conflicting lower-confidence history. It never
+overwrites a `paired_official` interval.
 
 ## Materialize lifecycle and specifications
 

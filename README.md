@@ -267,6 +267,20 @@ cargo run -p future-meta-daemon -- import-czce-parameters \
 第三方版本；相邻相同参数不会制造重复版本。手续费参数页不证明合约乘数或最小变动
 价位，因此不会把派生规格冒充官方规格证据。
 
+GFEX 每日结算参数也可按相同规则导入：
+
+```bash
+cargo run -p future-meta-daemon -- import-gfex-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/gfex-daily-settlement-20221222-20260818.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2022-12-22
+```
+
+导入器将 `openFee`、`offsetFee`、`shortOffsetFee` 分别映射为开仓、平昨、平今手续费；
+`绝对值` 表示元/手，`比例值` 表示成交额万分比，零值保留为明确的零手续费。
+`official_empty` 和 `pending` 清单项不构成覆盖证据，也不会被静默跳过后宣称完整。
+
 在已有 seed 上应用最新截面：
 
 ```bash

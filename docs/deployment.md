@@ -75,6 +75,20 @@ cargo run -p future-meta-daemon -- import-czce-parameters \
 `official_parameter`。前者优先级更高，参数导入不得覆盖同一时点的前者。手续费参数
 文件不自动提升合约规格证据等级。
 
+GFEX 每日结算参数使用独立离线导入器：
+
+```bash
+cargo run -p future-meta-daemon -- import-gfex-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/gfex-daily-settlement-20221222-20260818.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2022-12-22
+```
+
+`openFee`、`offsetFee`、`shortOffsetFee` 依次对应开仓、平昨、平今；`绝对值` 按元/手
+导入，`比例值` 按成交额万分比导入。只有 manifest 中状态为 `ok` 且通过 URL、SHA-256、
+字段和单位校验的快照会参与历史物化；`official_empty` 与 `pending` 仍是覆盖缺口。
+
 经人工复核的官方证据只能先应用到审阅副本：
 
 ```bash
