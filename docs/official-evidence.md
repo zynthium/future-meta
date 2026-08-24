@@ -146,6 +146,39 @@ its entire listed lifetime without gaps. The strict coverage audit also
 requires retained evidence links for every official fee, specification, and
 lifecycle claim.
 
+### CFFEX product and calendar evidence
+
+CFFEX publishes exact contract last-trading-day events in its monthly trading
+calendar XML. Import reviewed product specification history together with those
+retained calendar snapshots:
+
+```bash
+cargo run -p future-meta-daemon -- import-cffex-metadata \
+  --db path/to/review-copy.sqlite \
+  --product-manifest data/official-evidence/cffex-product-metadata.tsv \
+  --calendar-manifest data/official-evidence/cffex-calendar-2019-2026.tsv \
+  --snapshot-dir data/official-evidence
+```
+
+The product TSV columns are `product`, `valid_from`, `valid_to`, `lot_size`,
+`tick_size`, `expiry_rule`, `specification_url`, and
+`specification_sha256`. `expiry_rule` is `second_friday` for government-bond
+futures and `third_friday` for stock-index futures. Product intervals must be
+contiguous. TS retains its initial contract and the official 2023-11-06
+tick-size adjustment as separate intervals.
+
+The calendar TSV columns are `month`, `canonical_url`, and `sha256`. Calendar
+URLs must use the exact CFFEX `/sj/jyrl/YYYYMM/index_6782.xml` path. Each covered
+contract month must contain an explicit `最后交易日` event; a missing event fails
+the import. The importer uses the official product rule only outside retained
+calendar months, for pre-calendar expired contracts and distant listed
+contracts whose expiry calendar has not yet been published.
+
+Each contract retains separate lifecycle evidence for listing and expiry.
+Listing evidence comes from the already paired official CFFEX listing notice;
+expiry evidence comes from exact calendar XML or, outside calendar coverage,
+the official product contract rule.
+
 ## Stage a reviewed document pair
 
 Download the official source files through an approved human-accessible path,

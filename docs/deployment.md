@@ -58,6 +58,16 @@ TSV 必须包含 `symbol`、`listing_date`、`expiry_date`、`valid_from`、`val
 `lot_size`、`tick_size`、`lifecycle_url`、`lifecycle_sha256`、
 `specification_url`、`specification_sha256`。生命周期与规格引用分开核验。
 
+CFFEX 使用官方产品规则和交易日历 XML 导入生命周期与规格：
+
+```bash
+cargo run -p future-meta-daemon -- import-cffex-metadata \
+  --db path/to/review-copy.sqlite \
+  --product-manifest data/official-evidence/cffex-product-metadata.tsv \
+  --calendar-manifest data/official-evidence/cffex-calendar-2019-2026.tsv \
+  --snapshot-dir data/official-evidence
+```
+
 官方证据库与 `data/future-meta.sqlite` 完全隔离，且不属于 Pages 发布物。满足完整、连续、人工复核条件前，禁止把候选材料写入生产历史。具体标准见 [官方历史证据流程](official-evidence.md)。
 
 完整交易所参数表可作为较低等级 `official_parameter` 证据，无需配对公告，但必须保留

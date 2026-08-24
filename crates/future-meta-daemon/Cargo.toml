@@ -15,6 +15,7 @@ clap.workspace = true
 csv.workspace = true
 future-meta = { path = "../future-meta" }
 hex.workspace = true
+quick-xml.workspace = true
 reqwest = { workspace = true, features = ["blocking", "cookies"] }
 rusqlite.workspace = true
 scraper.workspace = true

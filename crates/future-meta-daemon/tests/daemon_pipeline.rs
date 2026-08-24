@@ -1,4 +1,7 @@
 use future_meta::query::FutureMeta;
+use future_meta_daemon::cffex_metadata::{
+    CffexMetadataImportOptions, import_contract_metadata as import_cffex_metadata,
+};
 use future_meta_daemon::coverage::{
     CoverageBoundary, CoverageFindingKind, audit_history_coverage, audit_history_coverage_to_path,
 };
@@ -634,6 +637,146 @@ fn official_metadata_import_replaces_lifecycle_and_specification_history() {
     );
     assert_eq!(persisted.4, sha256);
     assert_eq!(persisted.5, 1);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn cffex_metadata_import_uses_calendar_expiry_and_splits_ts_tick_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "CFFEX.TS2312".to_owned();
+    row.listing_date = Some("20230313".to_owned());
+    row.expiry_date = None;
+    row.lot_size = 20_000.0;
+    row.tick_size = 0.002;
+    row.source_updated_at = Some("2023-03-13 00:00:00".to_owned());
+    upsert_v11_baseline_rows(&mut conn, &[row], "2026-08-24T00:00:00Z").unwrap();
+
+    let listing_body = b"official TS2312 listing notice";
+    let listing_sha = hex::encode(Sha256::digest(listing_body));
+    std::fs::write(
+        directory.path().join(format!("{listing_sha}.html")),
+        listing_body,
+    )
+    .unwrap();
+    let (contract_id, valid_from, rule_hash): (i64, String, String) = conn
+        .query_row(
+            "select c.id, v.valid_from, v.rule_hash from contracts c
+             join fee_versions v on v.contract_id = c.id
+             where c.symbol = 'CFFEX.TS2312' order by v.valid_from limit 1",
+            [],
+            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
+        )
+        .unwrap();
+    conn.execute(
+        "insert into fee_version_evidence(
+           contract_id, valid_from, rule_hash, evidence_level,
+           canonical_url, body_sha256, recorded_at
+         ) values(?1, ?2, ?3, 'paired_official', ?4, ?5, ?6)",
+        rusqlite::params![
+            contract_id,
+            valid_from,
+            rule_hash,
+            "http://www.cffex.com.cn/cn/jystz/20230310/1.html",
+            listing_sha,
+            "2026-08-24T00:00:00Z"
+        ],
+    )
+    .unwrap();
+    drop(conn);
+
+    let old_spec = b"official initial TS contract: tick 0.005";
+    let old_spec_sha = hex::encode(Sha256::digest(old_spec));
+    std::fs::write(
+        directory.path().join(format!("{old_spec_sha}.pdf")),
+        old_spec,
+    )
+    .unwrap();
+    let new_spec = b"official TS change: tick 0.002";
+    let new_spec_sha = hex::encode(Sha256::digest(new_spec));
+    std::fs::write(
+        directory.path().join(format!("{new_spec_sha}.html")),
+        new_spec,
+    )
+    .unwrap();
+    let calendar = b"<docs><doc><pubdate>2023-12-08</pubdate><title><![CDATA[ TS2312\
+        \xE6\x9C\x80\xE5\x90\x8E\xE4\xBA\xA4\xE6\x98\x93\xE6\x97\xA5 ]]></title></doc></docs>";
+    let calendar_sha = hex::encode(Sha256::digest(calendar));
+    std::fs::write(
+        directory.path().join(format!("{calendar_sha}.xml")),
+        calendar,
+    )
+    .unwrap();
+
+    let products = directory.path().join("cffex-products.tsv");
+    std::fs::write(
+        &products,
+        format!(
+            "product\tvalid_from\tvalid_to\tlot_size\ttick_size\texpiry_rule\tspecification_url\tspecification_sha256\n\
+             TS\t2018-08-17T00:00:00+08:00\t2023-11-06T00:00:00+08:00\t20000\t0.005\tsecond_friday\thttp://www.cffex.com.cn/u/cms/www/201808/ts.pdf\t{old_spec_sha}\n\
+             TS\t2023-11-06T00:00:00+08:00\t\t20000\t0.002\tsecond_friday\thttp://www.cffex.com.cn/cn/jystz/20231020/34772.html\t{new_spec_sha}\n"
+        ),
+    )
+    .unwrap();
+    let calendars = directory.path().join("cffex-calendars.tsv");
+    std::fs::write(
+        &calendars,
+        format!(
+            "month\tcanonical_url\tsha256\n\
+             2023-12\thttp://www.cffex.com.cn/sj/jyrl/202312/index_6782.xml\t{calendar_sha}\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_cffex_metadata(&CffexMetadataImportOptions {
+        history_db: db_path.clone(),
+        product_manifest: products,
+        calendar_manifest: calendars,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.specification_versions, 2);
+    let conn = connect(&db_path).unwrap();
+    let lifecycle: (String, i64) = conn
+        .query_row(
+            "select c.expiry_date, count(l.canonical_url) from contracts c
+             join contract_lifecycle_evidence l on l.contract_id = c.id
+             where c.symbol = 'CFFEX.TS2312' group by c.id",
+            [],
+            |record| Ok((record.get(0)?, record.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(lifecycle, ("20231208".to_owned(), 2));
+    let versions = conn
+        .prepare(
+            "select s.tick_size, s.valid_from, s.valid_to, s.source_kind
+             from contract_spec_versions s join contracts c on c.id = s.contract_id
+             where c.symbol = 'CFFEX.TS2312' order by valid_from",
+        )
+        .unwrap()
+        .query_map([], |record| {
+            Ok((
+                record.get::<_, f64>(0)?,
+                record.get::<_, String>(1)?,
+                record.get::<_, Option<String>>(2)?,
+                record.get::<_, String>(3)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(versions.len(), 2);
+    assert!((versions[0].0 - 0.005).abs() < f64::EPSILON);
+    assert_eq!(versions[0].1, "2023-03-13T00:00:00+08:00");
+    assert_eq!(versions[0].2.as_deref(), Some("2023-11-06T00:00:00+08:00"));
+    assert!((versions[1].0 - 0.002).abs() < f64::EPSILON);
+    assert_eq!(versions[1].3, "official");
 }
 
 #[test]

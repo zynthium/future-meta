@@ -1,5 +1,6 @@
 pub mod announcement;
 pub mod baseline;
+pub mod cffex_metadata;
 pub mod coverage;
 pub mod czce;
 pub mod db;
@@ -144,6 +145,16 @@ enum Command {
         db: PathBuf,
         #[arg(long)]
         manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+    },
+    ImportCffexMetadata {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        product_manifest: PathBuf,
+        #[arg(long)]
+        calendar_manifest: PathBuf,
         #[arg(long)]
         snapshot_dir: PathBuf,
     },
@@ -417,6 +428,29 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportCffexMetadata {
+            db,
+            product_manifest,
+            calendar_manifest,
+            snapshot_dir,
+        } => {
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = cffex_metadata::import_contract_metadata(
+                &cffex_metadata::CffexMetadataImportOptions {
+                    history_db: db,
+                    product_manifest,
+                    calendar_manifest,
+                    snapshot_dir,
+                    observed_at,
+                },
+            )?;
+            eprintln!(
+                "CFFEX metadata imported: contracts={} specification_versions={}",
+                result.contracts, result.specification_versions
+            );
+            Ok(())
+        }
         Command::BackfillJin10 { db, from, to } => {
             let result = refresh::backfill_jin10(&db, &from, &to)?;
             eprintln!(
@@ -534,6 +568,37 @@ mod tests {
                 assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
             }
             _ => panic!("expected import-official-metadata command"),
+        }
+    }
+
+    #[test]
+    fn import_cffex_metadata_cli_requires_product_and_calendar_manifests() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-cffex-metadata",
+            "--db",
+            "/tmp/review.sqlite",
+            "--product-manifest",
+            "/tmp/cffex-products.tsv",
+            "--calendar-manifest",
+            "/tmp/cffex-calendars.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportCffexMetadata {
+                db,
+                product_manifest,
+                calendar_manifest,
+                snapshot_dir,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(product_manifest, PathBuf::from("/tmp/cffex-products.tsv"));
+                assert_eq!(calendar_manifest, PathBuf::from("/tmp/cffex-calendars.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+            }
+            _ => panic!("expected import-cffex-metadata command"),
         }
     }
 
