@@ -10,7 +10,7 @@ use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime, UtcOffset};
@@ -697,6 +697,19 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           body text not null,
           fetched_at text not null,
           primary key(canonical_url, body_sha256)
+        );
+
+        create table if not exists fee_version_evidence(
+          contract_id integer not null,
+          valid_from text not null,
+          rule_hash text not null,
+          evidence_level text not null
+            check(evidence_level in ('paired_official', 'official_parameter')),
+          canonical_url text not null,
+          body_sha256 text not null check(length(body_sha256) = 64),
+          recorded_at text not null,
+          primary key(contract_id, valid_from, rule_hash, canonical_url, body_sha256),
+          foreign key(contract_id) references contracts(id)
         );
         ",
     )?;
@@ -1657,6 +1670,208 @@ pub fn upsert_v11_baseline_rows(
     observed_at: &str,
 ) -> Result<()> {
     upsert_rows(conn, rows, observed_at, IngestMode::V11Baseline)
+}
+
+/// Complete fee tuple parsed from retained exchange parameter bytes.
+#[derive(Debug, Clone)]
+pub struct OfficialParameterRow {
+    pub row: AllowedRow,
+    /// First timestamp not covered by retained parameter sequence.
+    pub coverage_end_exclusive: String,
+    pub canonical_url: String,
+    pub body_sha256: String,
+}
+
+/// Atomically replace contradicted lower-confidence history with retained
+/// exchange parameters.
+///
+/// Existing paired-official versions remain immutable. Third-party and
+/// baseline versions inside retained observation interval are removed.
+///
+/// # Errors
+///
+/// Returns an error for malformed timestamps, conflicting same-instant rules,
+/// or database failures.
+#[allow(clippy::too_many_lines)]
+pub fn replace_with_official_parameter_history(
+    conn: &mut Connection,
+    rows: &[OfficialParameterRow],
+    observed_at: &str,
+) -> Result<usize> {
+    ensure_schema(conn)?;
+    parse_timestamp("observed_at", observed_at)?;
+    let prepared = rows
+        .iter()
+        .map(|item| {
+            let mut prepared = prepare_rows(std::slice::from_ref(&item.row), observed_at)?;
+            let prepared = prepared
+                .pop()
+                .ok_or_else(|| anyhow!("official parameter row disappeared during preparation"))?;
+            let coverage_end_at =
+                parse_timestamp("coverage_end_exclusive", &item.coverage_end_exclusive)?;
+            if coverage_end_at <= prepared.valid_from_at {
+                return Err(anyhow!(
+                    "official parameter coverage ends before observation for {}",
+                    item.row.symbol
+                ));
+            }
+            Ok((item, prepared, coverage_end_at))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut by_symbol = BTreeMap::<String, Vec<_>>::new();
+    for item in prepared {
+        by_symbol
+            .entry(item.1.row.symbol.clone())
+            .or_default()
+            .push(item);
+    }
+
+    let tx = conn.transaction()?;
+    let mut materialized = 0usize;
+    for items in by_symbol.values_mut() {
+        items.sort_by_key(|item| item.1.valid_from_at);
+        let latest_row = items
+            .last()
+            .map(|item| item.1.row.clone())
+            .ok_or_else(|| anyhow!("empty official parameter contract group"))?;
+        let contract_id = upsert_contract(&tx, &latest_row, observed_at, IngestMode::V11Baseline)?;
+        let first_at = items[0].1.valid_from_at;
+        let coverage_end_at = items
+            .iter()
+            .map(|item| item.2)
+            .max()
+            .ok_or_else(|| anyhow!("empty official parameter contract group"))?;
+
+        let existing_parameter_keys = {
+            let mut statement = tx.prepare(
+                "select valid_from, rule_hash from fee_version_evidence
+                 where contract_id = ?1 and evidence_level = 'official_parameter'",
+            )?;
+            statement
+                .query_map([contract_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<BTreeSet<_>>>()?
+        };
+        let existing = load_existing_versions(&tx, contract_id)?;
+        let paired_times = existing
+            .iter()
+            .filter(|version| {
+                version.source_kind == FeeSource::Official
+                    && !existing_parameter_keys
+                        .contains(&(version.valid_from.clone(), version.rule_hash.clone()))
+            })
+            .map(|version| version.valid_from_at)
+            .collect::<BTreeSet<_>>();
+
+        let mut versions = existing
+            .into_iter()
+            .filter(|version| {
+                let is_parameter = existing_parameter_keys
+                    .contains(&(version.valid_from.clone(), version.rule_hash.clone()));
+                if is_parameter {
+                    return false;
+                }
+                version.source_kind == FeeSource::Official
+                    || version.valid_from_at < first_at
+                    || version.valid_from_at >= coverage_end_at
+            })
+            .collect::<Vec<_>>();
+        let mut parameter_keys = BTreeSet::new();
+        let mut evidence = Vec::new();
+        for (source, prepared, _) in items.iter() {
+            if paired_times.contains(&prepared.valid_from_at) {
+                continue;
+            }
+            let key = (prepared.valid_from.clone(), prepared.rule_hash.clone());
+            parameter_keys.insert(key.clone());
+            evidence.push((
+                key,
+                source.canonical_url.clone(),
+                source.body_sha256.clone(),
+            ));
+            versions.push(VersionRecord {
+                row: prepared.row.clone(),
+                rule_hash: prepared.rule_hash.clone(),
+                valid_from: prepared.valid_from.clone(),
+                valid_from_at: prepared.valid_from_at,
+                first_seen_at: observed_at.to_owned(),
+                last_seen_at: observed_at.to_owned(),
+                source_kind: FeeSource::Official,
+            });
+        }
+        versions.sort_by(|left, right| {
+            left.valid_from_at
+                .cmp(&right.valid_from_at)
+                .then_with(|| left.rule_hash.cmp(&right.rule_hash))
+        });
+
+        let mut rebuilt = Vec::<VersionRecord>::new();
+        for version in versions {
+            let Some(previous) = rebuilt.last_mut() else {
+                rebuilt.push(version);
+                continue;
+            };
+            if previous.valid_from_at == version.valid_from_at {
+                if previous.rule_hash != version.rule_hash {
+                    return Err(anyhow!(
+                        "conflicting paired official rules for {} at {}",
+                        version.row.symbol,
+                        version.valid_from
+                    ));
+                }
+                merge_equivalent_version(previous, version)?;
+                continue;
+            }
+            if previous.rule_hash == version.rule_hash {
+                let previous_is_parameter = parameter_keys
+                    .contains(&(previous.valid_from.clone(), previous.rule_hash.clone()));
+                let current_is_parameter = parameter_keys
+                    .contains(&(version.valid_from.clone(), version.rule_hash.clone()));
+                if previous_is_parameter && !current_is_parameter {
+                    merge_equivalent_version(previous, version)?;
+                    continue;
+                }
+                if !current_is_parameter {
+                    merge_equivalent_version(previous, version)?;
+                    continue;
+                }
+            }
+            rebuilt.push(version);
+        }
+
+        tx.execute(
+            "delete from fee_version_evidence
+             where contract_id = ?1 and evidence_level = 'official_parameter'",
+            [contract_id],
+        )?;
+        replace_fee_versions(&tx, contract_id, &rebuilt)?;
+        for ((valid_from, rule_hash), canonical_url, body_sha256) in evidence {
+            if !rebuilt
+                .iter()
+                .any(|version| version.valid_from == valid_from && version.rule_hash == rule_hash)
+            {
+                continue;
+            }
+            tx.execute(
+                "insert into fee_version_evidence(
+                   contract_id, valid_from, rule_hash, evidence_level,
+                   canonical_url, body_sha256, recorded_at
+                 ) values (?1, ?2, ?3, 'official_parameter', ?4, ?5, ?6)",
+                params![
+                    contract_id,
+                    valid_from,
+                    rule_hash,
+                    canonical_url,
+                    body_sha256,
+                    observed_at
+                ],
+            )?;
+            materialized += 1;
+        }
+    }
+    tx.commit()?;
+    Ok(materialized)
 }
 
 /// Apply one complete, verified official fee tuple as a forward SCD2 version.

@@ -221,6 +221,22 @@ cargo run -p future-meta-daemon -- stage-official \
   --input path/to/adjustments.json
 ```
 
+交易所每日参数表可在保留原始字节后，以较低证据等级直接建立完整三腿手续费历史。
+例如 CZCE 导入只接受官方固定 URL、逐文件 SHA-256 和明确的绝对值/比例值单位，
+并将版本记录为 `official_parameter`；已有 `paired_official` 版本不会被覆盖：
+
+```bash
+cargo run -p future-meta-daemon -- import-czce-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/czce-daily-params-20200101-20260818.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01
+```
+
+该命令只应作用于审阅副本。它会先验证全部输入，再原子替换参数表覆盖期内相冲突的
+第三方版本；相邻相同参数不会制造重复版本。手续费参数页不证明合约乘数或最小变动
+价位，因此不会把派生规格冒充官方规格证据。
+
 在已有 seed 上应用最新截面：
 
 ```bash

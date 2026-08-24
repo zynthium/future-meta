@@ -36,6 +36,30 @@ The documents can prove only the fields they state. Omit every unchanged or
 unstated field rather than inferring it. A staged adjustment is not a complete
 fee rule and cannot be exported.
 
+## Evidence levels
+
+Two evidence levels may materialize a complete fee tuple in a review copy:
+
+- `paired_official`: an effective-date notice paired with a fee schedule or
+  parameter file;
+- `official_parameter`: a retained first-party parameter table that directly
+  states the complete open, close-yesterday and close-today tuple with explicit
+  units.
+
+`official_parameter` is intentionally lower confidence. It is allowed when no
+paired announcement has been retained, but only after the importer verifies the
+exchange URL, exact retained-byte SHA-256, complete tuple and units. It cannot
+overwrite a `paired_official` version. Identical adjacent observations are
+coalesced and conflicting third-party rows inside the retained observation
+interval are removed atomically.
+
+The CZCE importer maps `交易手续费` to open and close-yesterday, and
+`平今仓手续费` or `日内平今仓交易手续费` to close-today. `绝对值` means yuan per
+lot; `比例值` means per ten-thousand of turnover. Legacy pages without the mode
+column explicitly document yuan per lot in their notes. These fee pages do not
+state contract multipliers or tick sizes, so they cannot promote specification
+history to official provenance.
+
 ## Stage a reviewed document pair
 
 Download the official source files through an approved human-accessible path,

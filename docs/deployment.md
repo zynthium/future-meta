@@ -32,6 +32,21 @@ cargo run -p future-meta-daemon -- stage-official \
 
 官方证据库与 `data/future-meta.sqlite` 完全隔离，且不属于 Pages 发布物。满足完整、连续、人工复核条件前，禁止把候选材料写入生产历史。具体标准见 [官方历史证据流程](official-evidence.md)。
 
+完整交易所参数表可作为较低等级 `official_parameter` 证据，无需配对公告，但必须保留
+原始字节、核对官方 URL 与 SHA-256，并明确三腿手续费及单位。CZCE 审阅副本导入：
+
+```bash
+cargo run -p future-meta-daemon -- import-czce-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/czce-daily-params-20200101-20260818.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01
+```
+
+`fee_version_evidence.evidence_level` 区分 `paired_official` 与
+`official_parameter`。前者优先级更高，参数导入不得覆盖同一时点的前者。手续费参数
+文件不自动提升合约规格证据等级。
+
 经人工复核的官方证据只能先应用到审阅副本：
 
 ```bash

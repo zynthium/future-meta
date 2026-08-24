@@ -2,6 +2,7 @@ use future_meta::query::FutureMeta;
 use future_meta_daemon::coverage::{
     CoverageBoundary, CoverageFindingKind, audit_history_coverage, audit_history_coverage_to_path,
 };
+use future_meta_daemon::czce::{CzceParameterImportOptions, import_daily_parameters};
 use future_meta_daemon::db::{
     LatestCompletion, apply_official_fee_transition, apply_official_fee_tuple,
     apply_official_listed_contract_fee_tuple, compare_fee_rows_as_of, complete_latest_rows,
@@ -24,6 +25,391 @@ use future_meta_daemon::source::discover_sources_from_html;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use time::{Date, Month};
+
+fn czce_parameter_html(base_fee: &str, fee_mode: &str, close_today_fee: &str) -> String {
+    format!(
+        r"<html><body><p>2020-01-02</p><table>
+        <tr><td>合约代码</td><td>交易手续费</td><td>手续费收取方式</td><td>日内平今仓交易手续费</td></tr>
+        <tr><td>SR005</td><td>{base_fee}</td><td>{fee_mode}</td><td>{close_today_fee}</td></tr>
+        </table></body></html>"
+    )
+}
+
+fn write_czce_parameter_fixture(
+    directory: &std::path::Path,
+    html: &str,
+) -> (std::path::PathBuf, String) {
+    let sha256 = hex::encode(Sha256::digest(html.as_bytes()));
+    std::fs::write(directory.join(format!("{sha256}.htm")), html).unwrap();
+    let url =
+        "https://www.czce.com.cn/cn/DFSStaticFiles/Future/2020/20200102/FutureDataClearParams.htm";
+    let manifest = directory.join("manifest.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\tsha256\turl\tbyte_count\tcontent_type\n20200102\tok\t{sha256}\t{url}\t{}\ttext/html; charset=utf-8\n",
+            html.len()
+        ),
+    )
+    .unwrap();
+    (manifest, sha256)
+}
+
+#[test]
+fn czce_daily_parameter_import_records_lower_confidence_official_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "CZCE.SR005".to_owned();
+    baseline.listing_date = Some("20191201".to_owned());
+    baseline.expiry_date = Some("20200520".to_owned());
+    baseline.open_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::CnyPerLot,
+        value: Some(8.0),
+        raw_text: Some("8元/手".to_owned()),
+    };
+    baseline.close_yesterday_fee = baseline.open_fee.clone();
+    baseline.close_today_fee = baseline.open_fee.clone();
+    baseline.source_updated_at = Some("2019-12-31 22:00:00".to_owned());
+    upsert_v11_baseline_rows(&mut conn, &[baseline], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let html = czce_parameter_html("3.00", "绝对值", "0.00");
+    let (manifest, sha256) = write_czce_parameter_fixture(directory.path(), &html);
+    let result = import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.snapshots, 1);
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.versions, 1);
+    let conn = connect(&db_path).unwrap();
+    let (source, open, close_yesterday, close_today, level, retained_sha): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "select v.source_kind, v.open_fee_json, v.close_yesterday_fee_json,
+                    v.close_today_fee_json, e.evidence_level, e.body_sha256
+             from fee_versions v
+             join contracts c on c.id = v.contract_id
+             join fee_version_evidence e on e.contract_id = v.contract_id
+                  and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             where c.symbol = 'CZCE.SR005' and v.valid_from = '2020-01-02T00:00:00+08:00'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(source, "official");
+    assert_eq!(level, "official_parameter");
+    assert_eq!(retained_sha, sha256);
+    for json in [open, close_yesterday] {
+        let fee: future_meta::model::FeeSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(fee.kind, future_meta::model::FeeKind::CnyPerLot);
+        assert_eq!(fee.value, Some(3.0));
+    }
+    let fee: future_meta::model::FeeSpec = serde_json::from_str(&close_today).unwrap();
+    assert_eq!(fee.kind, future_meta::model::FeeKind::Zero);
+    assert_eq!(fee.value, Some(0.0));
+}
+
+#[test]
+fn czce_daily_parameter_import_rejects_hash_mismatch_before_writing() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    drop(conn);
+    let html = czce_parameter_html("3.00", "绝对值", "0.00");
+    let (manifest, sha256) = write_czce_parameter_fixture(directory.path(), &html);
+    std::fs::write(directory.path().join(format!("{sha256}.htm")), "changed").unwrap();
+
+    let error = import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("byte count mismatch"));
+    let conn = connect(&db_path).unwrap();
+    let evidence: i64 = conn
+        .query_row("select count(*) from fee_version_evidence", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(evidence, 0);
+}
+
+#[test]
+fn czce_daily_parameter_import_collapses_unchanged_adjacent_snapshots() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "CZCE.SR005".to_owned();
+    baseline.listing_date = Some("20191201".to_owned());
+    baseline.expiry_date = Some("20200520".to_owned());
+    baseline.source_updated_at = Some("2019-12-31 22:00:00".to_owned());
+    upsert_v11_baseline_rows(&mut conn, &[baseline], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let first = czce_parameter_html("3.00", "绝对值", "0.00");
+    let second = first.replace("2020-01-02", "2020-01-03");
+    let first_hash = hex::encode(Sha256::digest(first.as_bytes()));
+    let second_hash = hex::encode(Sha256::digest(second.as_bytes()));
+    std::fs::write(directory.path().join(format!("{first_hash}.htm")), &first).unwrap();
+    std::fs::write(directory.path().join(format!("{second_hash}.htm")), &second).unwrap();
+    let first_url =
+        "https://www.czce.com.cn/cn/DFSStaticFiles/Future/2020/20200102/FutureDataClearParams.htm";
+    let second_url =
+        "https://www.czce.com.cn/cn/DFSStaticFiles/Future/2020/20200103/FutureDataClearParams.htm";
+    let manifest = directory.path().join("manifest.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\tsha256\turl\tbyte_count\tcontent_type\n20200102\tok\t{first_hash}\t{first_url}\t{}\ttext/html\n20200103\tok\t{second_hash}\t{second_url}\t{}\ttext/html\n",
+            first.len(), second.len()
+        ),
+    )
+    .unwrap();
+
+    let result = import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path,
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.snapshots, 2);
+    assert_eq!(result.versions, 1);
+}
+
+#[test]
+fn czce_parameter_import_does_not_replace_paired_official_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "CZCE.SR005".to_owned();
+    baseline.listing_date = Some("20191201".to_owned());
+    baseline.expiry_date = Some("20200520".to_owned());
+    baseline.source_updated_at = Some("2019-12-31 22:00:00".to_owned());
+    upsert_v11_baseline_rows(&mut conn, &[baseline], "2026-08-24T00:00:00Z").unwrap();
+    let paired_fee = future_meta::model::FeeSpec {
+        kind: future_meta::model::FeeKind::CnyPerLot,
+        value: Some(9.0),
+        raw_text: Some("9元/手".to_owned()),
+    };
+    apply_official_fee_tuple(
+        &mut conn,
+        "CZCE.SR005",
+        "2020-01-02T00:00:00+08:00",
+        &[paired_fee.clone(), paired_fee.clone(), paired_fee],
+        "2026-08-24T00:00:00Z",
+    )
+    .unwrap();
+    drop(conn);
+    let html = czce_parameter_html("3.00", "绝对值", "0.00");
+    let (manifest, _) = write_czce_parameter_fixture(directory.path(), &html);
+
+    let result = import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.versions, 0);
+    let conn = connect(&db_path).unwrap();
+    let fee_json: String = conn
+        .query_row(
+            "select v.open_fee_json from fee_versions v join contracts c on c.id = v.contract_id
+             where c.symbol = 'CZCE.SR005' and v.valid_from = '2020-01-02T00:00:00+08:00'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let fee: future_meta::model::FeeSpec = serde_json::from_str(&fee_json).unwrap();
+    assert_eq!(fee.value, Some(9.0));
+}
+
+#[test]
+fn czce_parameter_import_admits_historical_contract_from_product_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "CZCE.SR999".to_owned();
+    exemplar.lot_size = 10.0;
+    exemplar.tick_size = 1.0;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+    let html = czce_parameter_html("3.00", "绝对值", "0.00");
+    let (manifest, _) = write_czce_parameter_fixture(directory.path(), &html);
+
+    import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    let conn = connect(&db_path).unwrap();
+    let contract: (String, f64, f64, String, String) = conn
+        .query_row(
+            "select c.listing_date, c.lot_size, c.tick_size, v.source_kind, s.source_kind
+             from contracts c join fee_versions v on v.contract_id = c.id
+             join contract_spec_versions s on s.contract_id = c.id
+             where c.symbol = 'CZCE.SR005'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        contract,
+        (
+            "20200102".to_owned(),
+            10.0,
+            1.0,
+            "official".to_owned(),
+            "v11_baseline".to_owned()
+        )
+    );
+}
+
+#[test]
+fn czce_parameter_presence_fills_missing_observed_lifecycle_bounds() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "CZCE.SR005".to_owned();
+    baseline.listing_date = None;
+    baseline.expiry_date = None;
+    baseline.source_updated_at = Some("2019-12-31 22:00:00".to_owned());
+    upsert_v11_baseline_rows(&mut conn, &[baseline], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+    let html = czce_parameter_html("3.00", "绝对值", "0.00");
+    let (manifest, _) = write_czce_parameter_fixture(directory.path(), &html);
+
+    import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    let conn = connect(&db_path).unwrap();
+    let dates: (String, Option<String>) = conn
+        .query_row(
+            "select listing_date, expiry_date from contracts where symbol = 'CZCE.SR005'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(dates, ("20200102".to_owned(), None));
+}
+
+#[test]
+fn czce_parameter_history_removes_contradicted_lower_confidence_versions() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "CZCE.SR005".to_owned();
+    baseline.listing_date = Some("20191201".to_owned());
+    baseline.expiry_date = Some("20200520".to_owned());
+    baseline.source_updated_at = Some("2019-12-31 22:00:00".to_owned());
+    upsert_v11_baseline_rows(&mut conn, &[baseline.clone()], "2019-12-31T22:00:00+08:00").unwrap();
+    let mut lower = baseline;
+    lower.open_fee.value = Some(99.0);
+    lower.close_yesterday_fee.value = Some(99.0);
+    lower.close_today_fee.value = Some(99.0);
+    lower.source_updated_at = Some("2020-01-03 22:00:00".to_owned());
+    upsert_allowed_rows(&mut conn, &[lower], "2020-01-03T22:00:00+08:00").unwrap();
+    drop(conn);
+
+    let first = czce_parameter_html("3.00", "绝对值", "0.00");
+    let second = first.replace("2020-01-02", "2020-01-04");
+    let first_hash = hex::encode(Sha256::digest(first.as_bytes()));
+    let second_hash = hex::encode(Sha256::digest(second.as_bytes()));
+    std::fs::write(directory.path().join(format!("{first_hash}.htm")), &first).unwrap();
+    std::fs::write(directory.path().join(format!("{second_hash}.htm")), &second).unwrap();
+    let manifest = directory.path().join("manifest.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\tsha256\turl\tbyte_count\tcontent_type\n20200102\tok\t{first_hash}\thttps://www.czce.com.cn/cn/DFSStaticFiles/Future/2020/20200102/FutureDataClearParams.htm\t{}\ttext/html\n20200104\tok\t{second_hash}\thttps://www.czce.com.cn/cn/DFSStaticFiles/Future/2020/20200104/FutureDataClearParams.htm\t{}\ttext/html\n",
+            first.len(), second.len()
+        ),
+    )
+    .unwrap();
+
+    import_daily_parameters(&CzceParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    let conn = connect(&db_path).unwrap();
+    let lower_count: i64 = conn
+        .query_row(
+            "select count(*) from fee_versions v join contracts c on c.id = v.contract_id
+             where c.symbol = 'CZCE.SR005' and v.source_kind != 'official'
+               and v.valid_from >= '2020-01-02T00:00:00+08:00'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(lower_count, 0);
+}
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";
 const CSV_V2: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.2元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-28 22:56:54,主力合约\n";

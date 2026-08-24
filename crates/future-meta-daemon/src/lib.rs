@@ -1,6 +1,7 @@
 pub mod announcement;
 pub mod baseline;
 pub mod coverage;
+pub mod czce;
 pub mod db;
 pub mod export;
 pub mod hash;
@@ -85,6 +86,16 @@ enum Command {
         db: PathBuf,
         #[arg(long)]
         evidence_db: PathBuf,
+    },
+    ImportCzceParameters {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
     },
     BackfillJin10 {
         #[arg(long)]
@@ -236,6 +247,28 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportCzceParameters {
+            db,
+            manifest,
+            snapshot_dir,
+            from,
+        } => {
+            let from = coverage::CoverageBoundary::parse(&from, &from)?.from;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = czce::import_daily_parameters(&czce::CzceParameterImportOptions {
+                history_db: db,
+                manifest,
+                snapshot_dir,
+                from,
+                observed_at,
+            })?;
+            eprintln!(
+                "CZCE parameters imported: snapshots={} contracts={} versions={}",
+                result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
         Command::BackfillJin10 { db, from, to } => {
             let result = refresh::backfill_jin10(&db, &from, &to)?;
             eprintln!(
@@ -296,6 +329,37 @@ mod tests {
     use super::{Cli, Command};
     use clap::Parser;
     use std::path::PathBuf;
+
+    #[test]
+    fn import_czce_parameters_cli_requires_retained_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-czce-parameters",
+            "--db",
+            "/tmp/review.sqlite",
+            "--manifest",
+            "/tmp/czce.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+            "--from",
+            "2020-01-01",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportCzceParameters {
+                db,
+                manifest,
+                snapshot_dir,
+                from,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(manifest, PathBuf::from("/tmp/czce.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+                assert_eq!(from, "2020-01-01");
+            }
+            _ => panic!("expected import-czce-parameters command"),
+        }
+    }
 
     #[test]
     fn scan_announcements_cli_enables_explicit_htfc_reconciliation() {
