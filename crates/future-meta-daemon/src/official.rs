@@ -486,7 +486,7 @@ fn ensure_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn validate_adjustment(adjustment: &OfficialFeeAdjustment) -> Result<()> {
+pub(crate) fn validate_adjustment(adjustment: &OfficialFeeAdjustment) -> Result<()> {
     let parsed = parse_symbol(&adjustment.symbol)?;
     if parsed.kind != SymbolKind::Futures {
         bail!("official adjustment requires a concrete futures symbol");

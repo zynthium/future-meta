@@ -1672,14 +1672,37 @@ pub fn upsert_v11_baseline_rows(
     upsert_rows(conn, rows, observed_at, IngestMode::V11Baseline)
 }
 
-/// Complete fee tuple parsed from retained exchange parameter bytes.
+/// Confidence assigned to one official fee-history input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfficialEvidenceLevel {
+    PairedOfficial,
+    OfficialParameter,
+}
+
+impl OfficialEvidenceLevel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::PairedOfficial => "paired_official",
+            Self::OfficialParameter => "official_parameter",
+        }
+    }
+}
+
+/// Retained official document linked to one fee version.
 #[derive(Debug, Clone)]
-pub struct OfficialParameterRow {
+pub struct OfficialEvidenceReference {
+    pub canonical_url: String,
+    pub body_sha256: String,
+}
+
+/// Complete fee tuple parsed from retained exchange bytes.
+#[derive(Debug, Clone)]
+pub struct OfficialHistoryRow {
     pub row: AllowedRow,
     /// First timestamp not covered by retained parameter sequence.
     pub coverage_end_exclusive: String,
-    pub canonical_url: String,
-    pub body_sha256: String,
+    pub evidence_level: OfficialEvidenceLevel,
+    pub evidence: Vec<OfficialEvidenceReference>,
 }
 
 /// Atomically replace contradicted lower-confidence history with retained
@@ -1695,7 +1718,7 @@ pub struct OfficialParameterRow {
 #[allow(clippy::too_many_lines)]
 pub fn replace_with_official_parameter_history(
     conn: &mut Connection,
-    rows: &[OfficialParameterRow],
+    rows: &[OfficialHistoryRow],
     observed_at: &str,
 ) -> Result<usize> {
     ensure_schema(conn)?;
@@ -1785,11 +1808,7 @@ pub fn replace_with_official_parameter_history(
             }
             let key = (prepared.valid_from.clone(), prepared.rule_hash.clone());
             parameter_keys.insert(key.clone());
-            evidence.push((
-                key,
-                source.canonical_url.clone(),
-                source.body_sha256.clone(),
-            ));
+            evidence.push((key, source.evidence_level, source.evidence.clone()));
             versions.push(VersionRecord {
                 row: prepared.row.clone(),
                 rule_hash: prepared.rule_hash.clone(),
@@ -1846,27 +1865,30 @@ pub fn replace_with_official_parameter_history(
             [contract_id],
         )?;
         replace_fee_versions(&tx, contract_id, &rebuilt)?;
-        for ((valid_from, rule_hash), canonical_url, body_sha256) in evidence {
+        for ((valid_from, rule_hash), evidence_level, references) in evidence {
             if !rebuilt
                 .iter()
                 .any(|version| version.valid_from == valid_from && version.rule_hash == rule_hash)
             {
                 continue;
             }
-            tx.execute(
-                "insert into fee_version_evidence(
-                   contract_id, valid_from, rule_hash, evidence_level,
-                   canonical_url, body_sha256, recorded_at
-                 ) values (?1, ?2, ?3, 'official_parameter', ?4, ?5, ?6)",
-                params![
-                    contract_id,
-                    valid_from,
-                    rule_hash,
-                    canonical_url,
-                    body_sha256,
-                    observed_at
-                ],
-            )?;
+            for reference in references {
+                tx.execute(
+                    "insert into fee_version_evidence(
+                       contract_id, valid_from, rule_hash, evidence_level,
+                       canonical_url, body_sha256, recorded_at
+                     ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        contract_id,
+                        valid_from,
+                        rule_hash,
+                        evidence_level.as_str(),
+                        reference.canonical_url,
+                        reference.body_sha256,
+                        observed_at
+                    ],
+                )?;
+            }
             materialized += 1;
         }
     }

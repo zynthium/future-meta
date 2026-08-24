@@ -149,7 +149,7 @@ pub fn import_daily_parameters(
             )
         };
         for observation in observations {
-            rows.push(db::OfficialParameterRow {
+            rows.push(db::OfficialHistoryRow {
                 row: AllowedRow {
                     symbol: observation.symbol.clone(),
                     listing_date: metadata.0.clone(),
@@ -166,8 +166,11 @@ pub fn import_daily_parameters(
                     is_main_contract: false,
                 },
                 coverage_end_exclusive: coverage_end_exclusive.clone(),
-                canonical_url: observation.canonical_url.clone(),
-                body_sha256: observation.body_sha256.clone(),
+                evidence_level: db::OfficialEvidenceLevel::OfficialParameter,
+                evidence: vec![db::OfficialEvidenceReference {
+                    canonical_url: observation.canonical_url.clone(),
+                    body_sha256: observation.body_sha256.clone(),
+                }],
             });
         }
     }

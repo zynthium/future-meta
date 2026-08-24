@@ -60,6 +60,28 @@ column explicitly document yuan per lot in their notes. These fee pages do not
 state contract multipliers or tick sizes, so they cannot promote specification
 history to official provenance.
 
+## Materialize paired history
+
+Use `import-official-history` only against a review copy. It reads one or more
+reviewed JSON inputs, a staged evidence database, or both. An optional exchange
+filter limits a run to one exchange.
+
+```bash
+cargo run -p future-meta-daemon -- import-official-history \
+  --db path/to/review-copy.sqlite \
+  --evidence-db data/official-evidence.sqlite \
+  --exchange CFFEX \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01 \
+  --through 2026-08-24
+```
+
+Every referenced digest must resolve to exactly one retained file and match
+its bytes. The importer rejects unverified records and incomplete document
+pairs. A partial adjustment may inherit unstated fields only from an earlier
+complete tuple for the same concrete contract. It never inherits from another
+contract, a third-party baseline, or a later observation.
+
 ## Stage a reviewed document pair
 
 Download the official source files through an approved human-accessible path,

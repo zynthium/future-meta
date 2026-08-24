@@ -30,6 +30,21 @@ cargo run -p future-meta-daemon -- stage-official \
   --input path/to/adjustments.json
 ```
 
+已复核且配对完整的材料只能先物化到审阅副本：
+
+```bash
+cargo run -p future-meta-daemon -- import-official-history \
+  --db path/to/review-copy.sqlite \
+  --evidence-db data/official-evidence.sqlite \
+  --exchange CFFEX \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01 \
+  --through 2026-08-24
+```
+
+命令逐份验证保留文件 SHA-256。部分调整必须能从同一具体合约此前的完整官方版本
+补齐；不得从品种众数、第三方基线或后继版本反向推断。
+
 官方证据库与 `data/future-meta.sqlite` 完全隔离，且不属于 Pages 发布物。满足完整、连续、人工复核条件前，禁止把候选材料写入生产历史。具体标准见 [官方历史证据流程](official-evidence.md)。
 
 完整交易所参数表可作为较低等级 `official_parameter` 证据，无需配对公告，但必须保留

@@ -17,6 +17,7 @@ use future_meta_daemon::official::{
     EvidenceKind, OfficialEvidence, OfficialFeeAdjustment, OfficialVerification,
     apply_verified_adjustments, stage_adjustment, stage_adjustment_json, stage_adjustments_json,
 };
+use future_meta_daemon::official_history::{OfficialHistoryImportOptions, import_adjustments};
 use future_meta_daemon::parse::parse_csv;
 use future_meta_daemon::refresh::{
     RefreshOptions, refresh_with_options, require_official_fee_change_admission, update_latest,
@@ -409,6 +410,151 @@ fn czce_parameter_history_removes_contradicted_lower_confidence_versions() {
         )
         .unwrap();
     assert_eq!(lower_count, 0);
+}
+
+#[test]
+fn paired_official_history_import_materializes_listing_tuple_and_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "CFFEX.IF9999".to_owned();
+    exemplar.lot_size = 300.0;
+    exemplar.tick_size = 0.2;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let notice = b"official listing notice";
+    let parameter = b"official settlement parameter";
+    let notice_sha = hex::encode(Sha256::digest(notice));
+    let parameter_sha = hex::encode(Sha256::digest(parameter));
+    std::fs::write(directory.path().join(format!("{notice_sha}.html")), notice).unwrap();
+    std::fs::write(
+        directory.path().join(format!("{parameter_sha}.csv")),
+        parameter,
+    )
+    .unwrap();
+    let input = directory.path().join("adjustments.json");
+    std::fs::write(
+        &input,
+        format!(
+            r#"[{{
+              "symbol":"CFFEX.IF2001",
+              "effective_at":"2020-01-02T00:00:00+08:00",
+              "scope":"listing-day fee schedule",
+              "open_fee":{{"kind":"TurnoverRatePerTenThousand","value":0.23,"raw_text":"万分之0.23"}},
+              "close_yesterday_fee":{{"kind":"TurnoverRatePerTenThousand","value":0.23,"raw_text":"万分之0.23"}},
+              "close_today_fee":{{"kind":"TurnoverRatePerTenThousand","value":3.45,"raw_text":"万分之3.45"}},
+              "previous_fees":null,
+              "evidence":[
+                {{"canonical_url":"http://www.cffex.com.cn/cn/jystz/20200101/1.html","mirror_url":null,"sha256":"{notice_sha}","published_at":"2020-01-01T00:00:00+08:00","kind":"notice"}},
+                {{"canonical_url":"http://www.cffex.com.cn/sj/jscs/202001/02/20200102_1.csv","mirror_url":null,"sha256":"{parameter_sha}","published_at":"2020-01-02T00:00:00+08:00","kind":"settlement_parameter"}}
+              ]
+            }}]"#
+        ),
+    )
+    .unwrap();
+
+    let result = import_adjustments(&OfficialHistoryImportOptions {
+        history_db: db_path.clone(),
+        inputs: vec![input],
+        evidence_db: None,
+        exchange: None,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        through: Date::from_calendar_date(2020, Month::December, 31).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.adjustments, 1);
+    assert_eq!(result.versions, 1);
+    let conn = connect(&db_path).unwrap();
+    let (listing_date, source_kind, evidence_count, level): (String, String, i64, String) = conn
+        .query_row(
+            "select c.listing_date, v.source_kind, count(e.canonical_url), min(e.evidence_level)
+             from contracts c join fee_versions v on v.contract_id = c.id
+             join fee_version_evidence e on e.contract_id = v.contract_id
+               and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             where c.symbol = 'CFFEX.IF2001' group by c.id, v.id",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(listing_date, "20200102");
+    assert_eq!(source_kind, "official");
+    assert_eq!(evidence_count, 2);
+    assert_eq!(level, "paired_official");
+}
+
+#[test]
+fn paired_official_history_reconstructs_partial_adjustment_from_prior_tuple() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "CFFEX.IF9999".to_owned();
+    exemplar.lot_size = 300.0;
+    exemplar.tick_size = 0.2;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+    let notice = b"official notice";
+    let parameter = b"official parameter";
+    let notice_sha = hex::encode(Sha256::digest(notice));
+    let parameter_sha = hex::encode(Sha256::digest(parameter));
+    std::fs::write(directory.path().join(format!("{notice_sha}.html")), notice).unwrap();
+    std::fs::write(
+        directory.path().join(format!("{parameter_sha}.csv")),
+        parameter,
+    )
+    .unwrap();
+    let evidence = format!(
+        r#"[
+          {{"canonical_url":"http://www.cffex.com.cn/cn/jystz/20200101/1.html","mirror_url":null,"sha256":"{notice_sha}","published_at":"2020-01-01T00:00:00+08:00","kind":"notice"}},
+          {{"canonical_url":"http://www.cffex.com.cn/sj/jscs/202001/02/20200102_1.csv","mirror_url":null,"sha256":"{parameter_sha}","published_at":"2020-01-02T00:00:00+08:00","kind":"settlement_parameter"}}
+        ]"#
+    );
+    let input = directory.path().join("adjustments.json");
+    std::fs::write(
+        &input,
+        format!(
+            r#"[
+              {{"symbol":"CFFEX.IF2001","effective_at":"2020-01-02T00:00:00+08:00","scope":"listing","open_fee":{{"kind":"TurnoverRatePerTenThousand","value":0.23,"raw_text":"0.23"}},"close_yesterday_fee":{{"kind":"TurnoverRatePerTenThousand","value":0.23,"raw_text":"0.23"}},"close_today_fee":{{"kind":"TurnoverRatePerTenThousand","value":3.45,"raw_text":"3.45"}},"previous_fees":null,"evidence":{evidence}}},
+              {{"symbol":"CFFEX.IF2001","effective_at":"2020-01-02T00:00:00+08:00","scope":"close-today adjustment","open_fee":null,"close_yesterday_fee":null,"close_today_fee":{{"kind":"TurnoverRatePerTenThousand","value":2.3,"raw_text":"2.3"}},"previous_fees":null,"evidence":{evidence}}}
+            ]"#
+        ),
+    )
+    .unwrap();
+
+    let result = import_adjustments(&OfficialHistoryImportOptions {
+        history_db: db_path.clone(),
+        inputs: vec![input],
+        evidence_db: None,
+        exchange: None,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        through: Date::from_calendar_date(2020, Month::December, 31).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.versions, 1);
+    let conn = connect(&db_path).unwrap();
+    let tuple: (String, String) = conn
+        .query_row(
+            "select open_fee_json, close_today_fee_json from fee_versions v
+             join contracts c on c.id = v.contract_id where c.symbol = 'CFFEX.IF2001'
+             order by v.valid_from desc limit 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    let open: future_meta::model::FeeSpec = serde_json::from_str(&tuple.0).unwrap();
+    let close_today: future_meta::model::FeeSpec = serde_json::from_str(&tuple.1).unwrap();
+    assert_eq!(open.value, Some(0.23));
+    assert_eq!(close_today.value, Some(2.3));
 }
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";

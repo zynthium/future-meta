@@ -221,6 +221,23 @@ cargo run -p future-meta-daemon -- stage-official \
   --input path/to/adjustments.json
 ```
 
+将证据库中已复核、已配对的公告与参数文件物化到审阅副本：
+
+```bash
+cargo run -p future-meta-daemon -- import-official-history \
+  --db path/to/review-copy.sqlite \
+  --evidence-db data/official-evidence.sqlite \
+  --exchange CFFEX \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01 \
+  --through 2026-08-24
+```
+
+导入器只读取 `verified` 记录，逐份验证保留文件的 SHA-256，并要求公告与收费表或
+结算参数配对。部分调整只能继承同一具体合约此前已导入的完整官方三腿参数；缺少
+完整前序时硬失败。也可重复传入 `--input reviewed.json`，导入未写入证据库的已复核
+JSON。
+
 交易所每日参数表可在保留原始字节后，以较低证据等级直接建立完整三腿手续费历史。
 例如 CZCE 导入只接受官方固定 URL、逐文件 SHA-256 和明确的绝对值/比例值单位，
 并将版本记录为 `official_parameter`；已有 `paired_official` 版本不会被覆盖：

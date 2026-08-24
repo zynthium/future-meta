@@ -8,6 +8,7 @@ pub mod hash;
 pub mod jin10;
 pub mod latest;
 pub mod official;
+pub mod official_history;
 pub mod parse;
 pub mod refresh;
 pub mod source;
@@ -96,6 +97,22 @@ enum Command {
         snapshot_dir: PathBuf,
         #[arg(long)]
         from: String,
+    },
+    ImportOfficialHistory {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long = "input")]
+        inputs: Vec<PathBuf>,
+        #[arg(long)]
+        evidence_db: Option<PathBuf>,
+        #[arg(long)]
+        exchange: Option<String>,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        through: String,
     },
     BackfillJin10 {
         #[arg(long)]
@@ -269,6 +286,36 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportOfficialHistory {
+            db,
+            inputs,
+            evidence_db,
+            exchange,
+            snapshot_dir,
+            from,
+            through,
+        } => {
+            let boundary = coverage::CoverageBoundary::parse(&from, &through)?;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = official_history::import_adjustments(
+                &official_history::OfficialHistoryImportOptions {
+                    history_db: db,
+                    inputs,
+                    evidence_db,
+                    exchange,
+                    snapshot_dir,
+                    from: boundary.from,
+                    through: boundary.through,
+                    observed_at,
+                },
+            )?;
+            eprintln!(
+                "official history imported: adjustments={} contracts={} versions={}",
+                result.adjustments, result.contracts, result.versions
+            );
+            Ok(())
+        }
         Command::BackfillJin10 { db, from, to } => {
             let result = refresh::backfill_jin10(&db, &from, &to)?;
             eprintln!(
@@ -329,6 +376,38 @@ mod tests {
     use super::{Cli, Command};
     use clap::Parser;
     use std::path::PathBuf;
+
+    #[test]
+    fn import_official_history_cli_accepts_multiple_reviewed_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-official-history",
+            "--db",
+            "/tmp/review.sqlite",
+            "--input",
+            "/tmp/listings.json",
+            "--input",
+            "/tmp/changes.json",
+            "--snapshot-dir",
+            "/tmp/evidence",
+            "--exchange",
+            "CFFEX",
+            "--from",
+            "2020-01-01",
+            "--through",
+            "2026-08-24",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportOfficialHistory {
+                inputs, exchange, ..
+            } => {
+                assert_eq!(inputs.len(), 2);
+                assert_eq!(exchange.as_deref(), Some("CFFEX"));
+            }
+            _ => panic!("expected import-official-history command"),
+        }
+    }
 
     #[test]
     fn import_czce_parameters_cli_requires_retained_evidence_inputs() {
