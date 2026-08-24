@@ -186,14 +186,11 @@ fn load_contracts(
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut contracts = Vec::new();
     for (id, symbol, listing, expiry) in rows {
-        let listing = listing
-            .as_deref()
-            .ok_or_else(|| anyhow!("product specification contract lacks listing date: {symbol}"))
-            .and_then(parse_compact_date)?;
-        let expiry = expiry
-            .as_deref()
-            .ok_or_else(|| anyhow!("product specification contract lacks expiry date: {symbol}"))
-            .and_then(parse_compact_date)?;
+        let (Some(listing), Some(expiry)) = (listing.as_deref(), expiry.as_deref()) else {
+            continue;
+        };
+        let listing = parse_compact_date(listing)?;
+        let expiry = parse_compact_date(expiry)?;
         if expiry < from {
             continue;
         }
@@ -342,8 +339,8 @@ fn persist_contracts(
 }
 
 fn validate_exchange(exchange: &str) -> Result<()> {
-    if !matches!(exchange, "SHFE" | "INE") {
-        bail!("product specification importer supports only SHFE or INE");
+    if !matches!(exchange, "SHFE" | "INE" | "GFEX") {
+        bail!("product specification importer supports only SHFE, INE, or GFEX");
     }
     Ok(())
 }
@@ -365,6 +362,7 @@ fn validate_number(value: f64, field: &str, product: &str) -> Result<()> {
 fn validate_specification_url(exchange: &str, value: &str) -> Result<()> {
     let url = Url::parse(value)?;
     let allowed_path = url.path().starts_with("/products/futures/")
+        || (exchange == "GFEX" && url.path().starts_with("/gfex/"))
         || (exchange == "SHFE" && url.path().starts_with("/upload/"))
         || (exchange == "SHFE"
             && url.path().starts_with("/publicnotice/notice/")
@@ -372,11 +370,12 @@ fn validate_specification_url(exchange: &str, value: &str) -> Result<()> {
                 url.path().rsplit_once('.').map(|(_, extension)| extension),
                 Some("doc" | "docx" | "pdf")
             ));
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || !allowed_path
-    {
+    let allowed_scheme = if exchange == "GFEX" {
+        matches!(url.scheme(), "http" | "https")
+    } else {
+        url.scheme() == "https"
+    };
+    if !allowed_scheme || !url.username().is_empty() || url.password().is_some() || !allowed_path {
         bail!("product specification URL must be an official HTTPS product page or attachment");
     }
     let host = url
@@ -392,6 +391,7 @@ fn validate_specification_url(exchange: &str, value: &str) -> Result<()> {
             host.as_str(),
             "ine.cn" | "www.ine.cn" | "ine.com.cn" | "www.ine.com.cn"
         ),
+        "GFEX" => matches!(host.as_str(), "gfex.com.cn" | "www.gfex.com.cn"),
         _ => false,
     };
     if !allowed {

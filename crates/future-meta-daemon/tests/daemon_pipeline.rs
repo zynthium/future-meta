@@ -1126,6 +1126,47 @@ fn cffex_metadata_import_uses_calendar_expiry_and_splits_ts_tick_history() {
 }
 
 #[test]
+fn product_spec_import_accepts_gfex_official_contract_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "GFEX.si2308".to_owned();
+    row.listing_date = Some("20221222".to_owned());
+    row.expiry_date = Some("20230814".to_owned());
+    row.lot_size = 5.0;
+    row.tick_size = 5.0;
+    let mut incomplete = row.clone();
+    incomplete.symbol = "GFEX.si9999".to_owned();
+    incomplete.expiry_date = None;
+    upsert_v11_baseline_rows(&mut conn, &[row, incomplete], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+    let body = b"official GFEX industrial silicon contract: 5 tonnes per lot, 5 yuan tick";
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.html")), body).unwrap();
+    let manifest = directory.path().join("gfex-spec.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "exchange\tproduct\tvalid_from\tvalid_to\tlot_size\ttick_size\tcanonical_url\tsha256\n\
+             GFEX\tsi\t2022-12-22\t\t5\t5\thttps://www.gfex.com.cn/gfex/gyeg/sspz.shtml\t{sha256}\n"
+        ),
+    )
+    .unwrap();
+    let result = import_product_specs(&ProductSpecImportOptions {
+        history_db: db_path,
+        exchange: "GFEX".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.contracts, 1);
+}
+
+#[test]
 fn gfex_daily_settlement_import_maps_complete_fee_tuple() {
     let directory = tempfile::tempdir().unwrap();
     let db_path = directory.path().join("future-meta.sqlite");
