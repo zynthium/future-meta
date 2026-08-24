@@ -32,6 +32,7 @@ use future_meta_daemon::official_metadata::{
     OfficialMetadataImportOptions, import_contract_metadata,
 };
 use future_meta_daemon::parse::parse_csv;
+use future_meta_daemon::product_spec::{ProductSpecImportOptions, import_product_specs};
 use future_meta_daemon::refresh::{
     RefreshOptions, refresh_with_options, require_official_fee_change_admission, update_latest,
 };
@@ -884,6 +885,98 @@ fn contract_base_info_import_uses_latest_official_expiry_revision() {
         )
         .unwrap();
     assert_eq!(lifecycle, ("20200923".to_owned(), latest_sha, 1));
+}
+
+#[test]
+fn product_spec_import_maps_official_product_versions_to_contract_lifetimes() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut rows = Vec::new();
+    for (symbol, listing, expiry) in [
+        ("INE.ec2404", "20230818", "20240429"),
+        ("INE.ec2606", "20250210", "20260629"),
+    ] {
+        let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+        row.symbol = symbol.to_owned();
+        row.listing_date = Some(listing.to_owned());
+        row.expiry_date = Some(expiry.to_owned());
+        row.lot_size = 50.0;
+        row.tick_size = 0.1;
+        rows.push(row);
+    }
+    upsert_v11_baseline_rows(&mut conn, &rows, "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let old_body = b"official EC standard contract: multiplier 50, tick 0.1";
+    let old_sha = hex::encode(Sha256::digest(old_body));
+    std::fs::write(directory.path().join(format!("{old_sha}.html")), old_body).unwrap();
+    let new_body = b"official EC revised standard contract: multiplier 50, tick 0.5";
+    let new_sha = hex::encode(Sha256::digest(new_body));
+    std::fs::write(directory.path().join(format!("{new_sha}.html")), new_body).unwrap();
+    let manifest = directory.path().join("product-spec.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "exchange\tproduct\tvalid_from\tvalid_to\tlot_size\ttick_size\tcanonical_url\tsha256\n\
+             INE\tec\t2023-08-17\t2026-05-11\t50\t0.1\thttps://www.ine.com.cn/products/futures/index_f/ec_f/standard_ec_f/202312/t20231205_802544.html\t{old_sha}\n\
+             INE\tec\t2026-05-11\t\t50\t0.5\thttps://www.ine.com.cn/products/futures/index_f/ec_f/standard_ec_f/202605/t20260511_831625.html\t{new_sha}\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_product_specs(&ProductSpecImportOptions {
+        history_db: db_path.clone(),
+        exchange: "INE".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.products, 1);
+    assert_eq!(result.contracts, 2);
+    assert_eq!(result.versions, 3);
+    let conn = connect(&db_path).unwrap();
+    let versions = conn
+        .prepare(
+            "select c.symbol, s.tick_size, s.valid_from, s.valid_to,
+                    s.source_kind, e.body_sha256
+             from contracts c join contract_spec_versions s on s.contract_id = c.id
+             join contract_spec_evidence e on e.contract_id = s.contract_id
+               and e.valid_from = s.valid_from
+             where c.symbol like 'INE.ec%' order by c.symbol, s.valid_from",
+        )
+        .unwrap()
+        .query_map([], |record| {
+            Ok((
+                record.get::<_, String>(0)?,
+                record.get::<_, f64>(1)?,
+                record.get::<_, String>(2)?,
+                record.get::<_, Option<String>>(3)?,
+                record.get::<_, String>(4)?,
+                record.get::<_, String>(5)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(versions.len(), 3);
+    assert_eq!(versions[0].0, "INE.ec2404");
+    assert!((versions[0].1 - 0.1).abs() < f64::EPSILON);
+    assert_eq!(versions[0].2, "2023-08-18T00:00:00+08:00");
+    assert_eq!(versions[0].3.as_deref(), Some("2024-04-30T00:00:00+08:00"));
+    assert_eq!(versions[0].4, "official");
+    assert_eq!(versions[0].5, old_sha);
+    assert_eq!(versions[1].0, "INE.ec2606");
+    assert!((versions[1].1 - 0.1).abs() < f64::EPSILON);
+    assert_eq!(versions[1].3.as_deref(), Some("2026-05-11T00:00:00+08:00"));
+    assert!((versions[2].1 - 0.5).abs() < f64::EPSILON);
+    assert_eq!(versions[2].2, "2026-05-11T00:00:00+08:00");
+    assert_eq!(versions[2].3.as_deref(), Some("2026-06-30T00:00:00+08:00"));
+    assert_eq!(versions[2].5, new_sha);
 }
 
 #[test]

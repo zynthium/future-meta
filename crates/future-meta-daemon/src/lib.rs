@@ -15,6 +15,7 @@ pub mod official;
 pub mod official_history;
 pub mod official_metadata;
 pub mod parse;
+pub mod product_spec;
 pub mod refresh;
 pub mod source;
 
@@ -168,6 +169,18 @@ enum Command {
         manifest: PathBuf,
         #[arg(long)]
         snapshot_dir: PathBuf,
+    },
+    ImportProductSpecs {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        exchange: String,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
     },
     BackfillJin10 {
         #[arg(long)]
@@ -485,6 +498,31 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportProductSpecs {
+            db,
+            exchange,
+            manifest,
+            snapshot_dir,
+            from,
+        } => {
+            let from = coverage::CoverageBoundary::parse(&from, &from)?.from;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result =
+                product_spec::import_product_specs(&product_spec::ProductSpecImportOptions {
+                    history_db: db,
+                    exchange: exchange.clone(),
+                    manifest,
+                    snapshot_dir,
+                    from,
+                    observed_at,
+                })?;
+            eprintln!(
+                "{exchange} product specifications imported: products={} contracts={} versions={}",
+                result.products, result.contracts, result.versions
+            );
+            Ok(())
+        }
         Command::BackfillJin10 { db, from, to } => {
             let result = refresh::backfill_jin10(&db, &from, &to)?;
             eprintln!(
@@ -664,6 +702,32 @@ mod tests {
                 assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
             }
             _ => panic!("expected import-contract-base-info command"),
+        }
+    }
+
+    #[test]
+    fn import_product_specs_cli_requires_boundary_and_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-product-specs",
+            "--db",
+            "/tmp/review.sqlite",
+            "--exchange",
+            "INE",
+            "--manifest",
+            "/tmp/product-spec.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+            "--from",
+            "2020-01-01",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportProductSpecs { exchange, from, .. } => {
+                assert_eq!(exchange, "INE");
+                assert_eq!(from, "2020-01-01");
+            }
+            _ => panic!("expected import-product-specs command"),
         }
     }
 

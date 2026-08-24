@@ -173,6 +173,36 @@ a not-yet-expired contract's expiry date after a holiday-calendar adjustment.
 Only snapshots stating the final observed boundary are linked as lifecycle
 evidence; listing-date conflicts remain fatal.
 
+### Product-level contract specifications
+
+Import reviewed official contract texts and exchange manuals as contiguous
+product-level multiplier and tick-size intervals:
+
+```bash
+cargo run -p future-meta-daemon -- import-product-specs \
+  --db path/to/review-copy.sqlite \
+  --exchange INE \
+  --manifest data/official-evidence/ine-product-spec.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01
+```
+
+The TSV columns are `exchange`, `product`, `valid_from`, `valid_to`,
+`lot_size`, `tick_size`, `canonical_url`, and `sha256`. Product intervals must
+be contiguous and end with an open interval. Every in-scope database contract
+must have official product evidence covering the later of its listing date and
+the requested boundary through the day after expiry. The importer intersects
+those product intervals with each exact contract lifetime, writes only
+`official` specification versions, and retains one evidence link per generated
+version.
+
+Only first-party SHFE or INE HTTPS product pages and their exchange-linked
+contract attachments are accepted. This includes the exchanges' official
+legacy hosts `shfe.cn` and `ine.com.cn`; foreign mirrors remain invalid. When a
+contract text is revised, retain both versions and use the stated effective day
+as the exclusive interval boundary. Do not use a current contract page to
+backfill a pre-revision interval.
+
 ### CFFEX product and calendar evidence
 
 CFFEX publishes exact contract last-trading-day events in its monthly trading
