@@ -146,6 +146,33 @@ its entire listed lifetime without gaps. The strict coverage audit also
 requires retained evidence links for every official fee, specification, and
 lifecycle claim.
 
+### SHFE and INE contract-base snapshots
+
+SHFE and INE publish exact listing and expiry dates in dated
+`ContractBaseInfoYYYYMMDD.dat` snapshots. Import a retained monthly corpus into
+a review copy:
+
+```bash
+cargo run -p future-meta-daemon -- import-contract-base-info \
+  --db path/to/review-copy.sqlite \
+  --exchange SHFE \
+  --manifest data/official-evidence/shfe-contract-base-info.tsv \
+  --snapshot-dir data/official-evidence
+```
+
+The manifest columns are `exchange`, `report_date`, `canonical_url`, `sha256`,
+and `record_count`. Only the exchange's exact official
+`/data/busiparamdata/future/ContractBaseInfoYYYYMMDD.dat` URL is accepted. Every
+database contract for the selected exchange must occur in at least one retained
+snapshot; missing coverage fails before writes.
+
+Exchange files may use space-padded contract identifiers. SHFE files can also
+contain INE rows, so the importer limits observations to concrete contracts
+already present for the selected exchange. A later official snapshot can revise
+a not-yet-expired contract's expiry date after a holiday-calendar adjustment.
+Only snapshots stating the final observed boundary are linked as lifecycle
+evidence; listing-date conflicts remain fatal.
+
 ### CFFEX product and calendar evidence
 
 CFFEX publishes exact contract last-trading-day events in its monthly trading

@@ -1,6 +1,7 @@
 pub mod announcement;
 pub mod baseline;
 pub mod cffex_metadata;
+pub mod contract_base_info;
 pub mod coverage;
 pub mod czce;
 pub mod db;
@@ -155,6 +156,16 @@ enum Command {
         product_manifest: PathBuf,
         #[arg(long)]
         calendar_manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+    },
+    ImportContractBaseInfo {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        exchange: String,
+        #[arg(long)]
+        manifest: PathBuf,
         #[arg(long)]
         snapshot_dir: PathBuf,
     },
@@ -451,6 +462,29 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportContractBaseInfo {
+            db,
+            exchange,
+            manifest,
+            snapshot_dir,
+        } => {
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = contract_base_info::import_contract_base_info(
+                &contract_base_info::ContractBaseInfoImportOptions {
+                    history_db: db,
+                    exchange: exchange.clone(),
+                    manifest,
+                    snapshot_dir,
+                    observed_at,
+                },
+            )?;
+            eprintln!(
+                "{exchange} contract base info imported: snapshots={} contracts={} evidence_links={}",
+                result.snapshots, result.contracts, result.evidence_links
+            );
+            Ok(())
+        }
         Command::BackfillJin10 { db, from, to } => {
             let result = refresh::backfill_jin10(&db, &from, &to)?;
             eprintln!(
@@ -599,6 +633,37 @@ mod tests {
                 assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
             }
             _ => panic!("expected import-cffex-metadata command"),
+        }
+    }
+
+    #[test]
+    fn import_contract_base_info_cli_requires_exchange_and_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-contract-base-info",
+            "--db",
+            "/tmp/review.sqlite",
+            "--exchange",
+            "SHFE",
+            "--manifest",
+            "/tmp/contract-base.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportContractBaseInfo {
+                db,
+                exchange,
+                manifest,
+                snapshot_dir,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(exchange, "SHFE");
+                assert_eq!(manifest, PathBuf::from("/tmp/contract-base.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+            }
+            _ => panic!("expected import-contract-base-info command"),
         }
     }
 

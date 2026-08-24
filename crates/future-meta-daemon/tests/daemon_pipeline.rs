@@ -2,6 +2,9 @@ use future_meta::query::FutureMeta;
 use future_meta_daemon::cffex_metadata::{
     CffexMetadataImportOptions, import_contract_metadata as import_cffex_metadata,
 };
+use future_meta_daemon::contract_base_info::{
+    ContractBaseInfoImportOptions, import_contract_base_info,
+};
 use future_meta_daemon::coverage::{
     CoverageBoundary, CoverageFindingKind, audit_history_coverage, audit_history_coverage_to_path,
 };
@@ -35,6 +38,7 @@ use future_meta_daemon::refresh::{
 use future_meta_daemon::source::discover_sources_from_html;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use time::{Date, Month};
 
 fn czce_parameter_html(base_fee: &str, fee_mode: &str, close_today_fee: &str) -> String {
@@ -637,6 +641,249 @@ fn official_metadata_import_replaces_lifecycle_and_specification_history() {
     );
     assert_eq!(persisted.4, sha256);
     assert_eq!(persisted.5, 1);
+}
+
+#[test]
+fn contract_base_info_import_sets_exact_shfe_lifecycle_with_retained_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut rows = Vec::new();
+    for symbol in ["SHFE.cu2001", "SHFE.cu2002"] {
+        let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+        row.symbol = symbol.to_owned();
+        row.listing_date = None;
+        row.expiry_date = None;
+        rows.push(row);
+    }
+    upsert_v11_baseline_rows(&mut conn, &rows, "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = br#"{"ContractBaseInfo":[
+      {"INSTRUMENTID":"cu2001","OPENDATE":"20190116","EXPIREDATE":"20200115","TRADINGDAY":"20200102"},
+      {"INSTRUMENTID":"cu2002 ","OPENDATE":"20190218","EXPIREDATE":"20200217","TRADINGDAY":"20200102"}
+    ]}"#;
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.dat")), body).unwrap();
+    let manifest = directory.path().join("contract-base-info.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "exchange\treport_date\tcanonical_url\tsha256\trecord_count\n\
+             SHFE\t20200102\thttps://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20200102.dat\t{sha256}\t2\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_contract_base_info(&ContractBaseInfoImportOptions {
+        history_db: db_path.clone(),
+        exchange: "SHFE".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.snapshots, 1);
+    assert_eq!(result.contracts, 2);
+    assert_eq!(result.evidence_links, 2);
+    let conn = connect(&db_path).unwrap();
+    let lifecycles = conn
+        .prepare(
+            "select c.symbol, c.listing_date, c.expiry_date, l.canonical_url, l.body_sha256
+             from contracts c join contract_lifecycle_evidence l on l.contract_id = c.id
+             where c.symbol like 'SHFE.%' order by c.symbol",
+        )
+        .unwrap()
+        .query_map([], |record| {
+            Ok((
+                record.get::<_, String>(0)?,
+                record.get::<_, String>(1)?,
+                record.get::<_, String>(2)?,
+                record.get::<_, String>(3)?,
+                record.get::<_, String>(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(lifecycles.len(), 2);
+    assert_eq!(lifecycles[0].0, "SHFE.cu2001");
+    assert_eq!(lifecycles[0].1, "20190116");
+    assert_eq!(lifecycles[0].2, "20200115");
+    assert_eq!(lifecycles[0].4, sha256);
+    assert_eq!(lifecycles[1].0, "SHFE.cu2002");
+    assert_eq!(lifecycles[1].1, "20190218");
+    assert_eq!(lifecycles[1].2, "20200217");
+}
+
+#[test]
+fn contract_base_info_import_rejects_incomplete_database_coverage_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut rows = Vec::new();
+    for symbol in ["INE.sc2001", "INE.sc2002"] {
+        let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+        row.symbol = symbol.to_owned();
+        row.listing_date = None;
+        row.expiry_date = None;
+        rows.push(row);
+    }
+    upsert_v11_baseline_rows(&mut conn, &rows, "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = br#"{"ContractBaseInfo":[
+      {"INSTRUMENTID":"sc2001","OPENDATE":"20190102","EXPIREDATE":"20200102","TRADINGDAY":"20200102"}
+    ]}"#;
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.dat")), body).unwrap();
+    let manifest = directory.path().join("contract-base-info.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "exchange\treport_date\tcanonical_url\tsha256\trecord_count\n\
+             INE\t20200102\thttps://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20200102.dat\t{sha256}\t1\n"
+        ),
+    )
+    .unwrap();
+
+    let error = import_contract_base_info(&ContractBaseInfoImportOptions {
+        history_db: db_path.clone(),
+        exchange: "INE".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("INE.sc2002"));
+    let conn = connect(&db_path).unwrap();
+    let changed: i64 = conn
+        .query_row(
+            "select count(*) from contracts
+             where symbol like 'INE.%' and listing_date is not null",
+            [],
+            |record| record.get(0),
+        )
+        .unwrap();
+    assert_eq!(changed, 0);
+}
+
+#[test]
+fn contract_base_info_import_rejects_duplicate_report_dates() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "SHFE.cu2001".to_owned();
+    row.listing_date = None;
+    row.expiry_date = None;
+    upsert_v11_baseline_rows(&mut conn, &[row], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let bodies = [
+        br#"{"ContractBaseInfo":[{"INSTRUMENTID":"cu2001","OPENDATE":"20190116","EXPIREDATE":"20200115","TRADINGDAY":"20200102"}]}"#.as_slice(),
+        br#"{"ContractBaseInfo":[{"INSTRUMENTID":"cu2001","OPENDATE":"20190116","EXPIREDATE":"20200115","TRADINGDAY":"20200102"}],"revision":2}"#.as_slice(),
+    ];
+    let hashes = bodies
+        .iter()
+        .map(|body| {
+            let sha256 = hex::encode(Sha256::digest(body));
+            std::fs::write(directory.path().join(format!("{sha256}.dat")), body).unwrap();
+            sha256
+        })
+        .collect::<Vec<_>>();
+    let url = "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20200102.dat";
+    let manifest = directory.path().join("contract-base-info.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "exchange\treport_date\tcanonical_url\tsha256\trecord_count\n\
+             SHFE\t20200102\t{url}\t{}\t1\n\
+             SHFE\t20200102\t{url}\t{}\t1\n",
+            hashes[0], hashes[1]
+        ),
+    )
+    .unwrap();
+
+    let error = import_contract_base_info(&ContractBaseInfoImportOptions {
+        history_db: db_path,
+        exchange: "SHFE".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap_err();
+
+    assert!(error.to_string().contains("duplicate report date"));
+}
+
+#[test]
+fn contract_base_info_import_uses_latest_official_expiry_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "INE.sc2010".to_owned();
+    row.listing_date = None;
+    row.expiry_date = None;
+    upsert_v11_baseline_rows(&mut conn, &[row], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let snapshots = [
+        (
+            "20200102",
+            "20200930",
+            br#"{"ContractBaseInfo":[{"INSTRUMENTID":"sc2010","OPENDATE":"20190924","EXPIREDATE":"20200930","TRADINGDAY":"20200102"}]}"#.as_slice(),
+        ),
+        (
+            "20200203",
+            "20200923",
+            br#"{"ContractBaseInfo":[{"INSTRUMENTID":"sc2010","OPENDATE":"20190924","EXPIREDATE":"20200923","TRADINGDAY":"20200203"}]}"#.as_slice(),
+        ),
+    ];
+    let manifest = directory.path().join("contract-base-info.tsv");
+    let mut manifest_body =
+        "exchange\treport_date\tcanonical_url\tsha256\trecord_count\n".to_owned();
+    let mut latest_sha = String::new();
+    for (report_date, _, body) in snapshots {
+        let sha256 = hex::encode(Sha256::digest(body));
+        std::fs::write(directory.path().join(format!("{sha256}.dat")), body).unwrap();
+        writeln!(
+            manifest_body,
+            "INE\t{report_date}\thttps://www.ine.cn/data/busiparamdata/future/ContractBaseInfo{report_date}.dat\t{sha256}\t1"
+        )
+        .unwrap();
+        latest_sha = sha256;
+    }
+    std::fs::write(&manifest, manifest_body).unwrap();
+
+    let result = import_contract_base_info(&ContractBaseInfoImportOptions {
+        history_db: db_path.clone(),
+        exchange: "INE".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.evidence_links, 1);
+    let conn = connect(&db_path).unwrap();
+    let lifecycle: (String, String, i64) = conn
+        .query_row(
+            "select c.expiry_date, l.body_sha256, count(*)
+             from contracts c join contract_lifecycle_evidence l on l.contract_id = c.id
+             where c.symbol = 'INE.sc2010' group by c.id, l.body_sha256",
+            [],
+            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(lifecycle, ("20200923".to_owned(), latest_sha, 1));
 }
 
 #[test]
