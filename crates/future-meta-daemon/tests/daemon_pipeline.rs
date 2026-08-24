@@ -18,7 +18,10 @@ use future_meta_daemon::db::{
     update_source_success, upsert_allowed_rows, upsert_latest_rows, upsert_v11_baseline_rows,
 };
 use future_meta_daemon::export::export_archive;
-use future_meta_daemon::gfex::{GfexParameterImportOptions, import_daily_settlement_parameters};
+use future_meta_daemon::gfex::{
+    GfexCalendarImportOptions, GfexParameterImportOptions, import_daily_settlement_parameters,
+    import_trading_calendar_lifecycles,
+};
 use future_meta_daemon::ine::{
     IneParameterImportOptions, import_daily_parameters as import_ine_parameters,
 };
@@ -1187,6 +1190,60 @@ fn gfex_daily_settlement_import_maps_complete_fee_tuple() {
     assert_eq!(close_yesterday.value, Some(1.0));
     assert_eq!(close_today.kind, future_meta::model::FeeKind::Zero);
     assert_eq!(tuple.3, "official_parameter");
+}
+
+#[test]
+fn gfex_calendar_import_records_exact_lifecycle_with_two_official_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+    row.symbol = "GFEX.si2308".to_owned();
+    row.listing_date = None;
+    row.expiry_date = None;
+    row.lot_size = 5.0;
+    row.tick_size = 5.0;
+    upsert_v11_baseline_rows(&mut connection, &[row], "2026-08-24T00:00:00Z").unwrap();
+    drop(connection);
+
+    let body = r#"{"code":"0","data":[
+      {"calendarDate":"20221222","contractId":"si2308合约","eventType":"期货合约开始交易日"},
+      {"calendarDate":"20230814","contractId":"si2308合约","eventType":"合约最后交易日"}
+    ]}"#
+    .as_bytes();
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.json")), body).unwrap();
+    let manifest = directory.path().join("gfex-calendar.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "report_date\tstatus\tsha256\turl\n\
+             20221222\tok\t{sha256}\thttp://www.gfex.com.cn/u/interfacesWebTpTradingCalendar/loadList\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_trading_calendar_lifecycles(&GfexCalendarImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.evidence_links, 1);
+    let connection = connect(&db_path).unwrap();
+    let lifecycle: (String, String, i64) = connection
+        .query_row(
+            "select c.listing_date, c.expiry_date, count(e.contract_id)
+             from contracts c join contract_lifecycle_evidence e on e.contract_id = c.id
+             where c.symbol = 'GFEX.si2308' group by c.id",
+            [],
+            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(lifecycle, ("20221222".to_owned(), "20230814".to_owned(), 1));
 }
 
 #[test]

@@ -115,6 +115,14 @@ enum Command {
         #[arg(long)]
         from: String,
     },
+    ImportGfexCalendar {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+    },
     ImportIneParameters {
         #[arg(long)]
         db: PathBuf,
@@ -389,6 +397,26 @@ pub fn run() -> anyhow::Result<()> {
             eprintln!(
                 "GFEX parameters imported: snapshots={} contracts={} versions={}",
                 result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
+        Command::ImportGfexCalendar {
+            db,
+            manifest,
+            snapshot_dir,
+        } => {
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result =
+                gfex::import_trading_calendar_lifecycles(&gfex::GfexCalendarImportOptions {
+                    history_db: db,
+                    manifest,
+                    snapshot_dir,
+                    observed_at,
+                })?;
+            eprintln!(
+                "GFEX calendar imported: snapshots={} contracts={} evidence_links={}",
+                result.snapshots, result.contracts, result.evidence_links
             );
             Ok(())
         }

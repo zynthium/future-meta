@@ -7,10 +7,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;
 use reqwest::Url;
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, OffsetDateTime};
@@ -353,4 +353,259 @@ fn parse_compact_date(value: &str) -> Result<Date> {
     }
     let format = time::format_description::parse("[year][month][day]")?;
     Ok(Date::parse(value, &format)?)
+}
+
+/// Inputs one offline, hash-verified GFEX trading-calendar lifecycle import.
+#[derive(Debug, Clone)]
+pub struct GfexCalendarImportOptions {
+    pub history_db: PathBuf,
+    pub manifest: PathBuf,
+    pub snapshot_dir: PathBuf,
+    pub observed_at: String,
+}
+
+/// Counts returned after a GFEX trading-calendar lifecycle import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GfexCalendarImportResult {
+    pub snapshots: usize,
+    pub contracts: usize,
+    pub evidence_links: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarManifestRow {
+    report_date: String,
+    status: String,
+    sha256: String,
+    url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarDocument {
+    code: String,
+    data: Vec<CalendarEvent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarEvent {
+    #[serde(rename = "calendarDate")]
+    calendar_date: String,
+    #[serde(rename = "contractId")]
+    contract_id: String,
+    #[serde(rename = "eventType")]
+    event_type: String,
+}
+
+#[derive(Debug, Clone)]
+struct CalendarLifecycle {
+    listing_date: String,
+    listing_evidence: (String, String),
+    expiry_date: String,
+    expiry_evidence: (String, String),
+}
+
+/// Import exact GFEX listing and last-trading dates from retained calendar data.
+///
+/// Each contract must have both official event types. The importer refuses to
+/// infer an expiry from a contract disappearing from another feed.
+///
+/// # Errors
+///
+/// Returns an error for malformed retained snapshots, incomplete event pairs,
+/// lifecycle conflicts, or database failures.
+#[allow(clippy::too_many_lines)]
+pub fn import_trading_calendar_lifecycles(
+    options: &GfexCalendarImportOptions,
+) -> Result<GfexCalendarImportResult> {
+    time::OffsetDateTime::parse(&options.observed_at, &Rfc3339)?;
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(&options.manifest)?;
+    let mut events = BTreeMap::<
+        String,
+        (
+            Option<(String, String, String)>,
+            Option<(String, String, String)>,
+        ),
+    >::new();
+    let mut snapshots = 0usize;
+
+    for row in reader.deserialize::<CalendarManifestRow>() {
+        let row = row?;
+        if row.status != "ok" {
+            continue;
+        }
+        parse_compact_date(&row.report_date)?;
+        validate_calendar_url(&row.url)?;
+        let bytes = read_retained_evidence(&options.snapshot_dir, &row.sha256)?;
+        let document: CalendarDocument = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse GFEX calendar snapshot {}", row.report_date))?;
+        if document.code != "0" {
+            bail!("GFEX calendar document unsuccessful {}", row.report_date);
+        }
+        for event in document.data {
+            if !matches!(
+                event.event_type.as_str(),
+                "期货合约开始交易日" | "合约最后交易日"
+            ) {
+                continue;
+            }
+            parse_compact_date(&event.calendar_date)?;
+            for contract_id in calendar_contract_ids(&event.contract_id) {
+                let entry = events.entry(format!("GFEX.{contract_id}")).or_default();
+                let evidence = (
+                    event.calendar_date.clone(),
+                    row.url.clone(),
+                    row.sha256.clone(),
+                );
+                let slot = if event.event_type == "期货合约开始交易日" {
+                    &mut entry.0
+                } else {
+                    &mut entry.1
+                };
+                if let Some(existing) = slot {
+                    if existing != &evidence {
+                        bail!(
+                            "conflicting GFEX calendar {} event for {}",
+                            event.event_type,
+                            contract_id
+                        );
+                    }
+                } else {
+                    *slot = Some(evidence);
+                }
+            }
+        }
+        snapshots += 1;
+    }
+
+    if snapshots == 0 {
+        bail!("GFEX calendar manifest has no successful snapshots");
+    }
+
+    let mut lifecycles = BTreeMap::new();
+    for (symbol, (listing, expiry)) in events {
+        let (Some(listing), Some(expiry)) = (listing, expiry) else {
+            continue;
+        };
+        if listing.0 > expiry.0 {
+            bail!("GFEX calendar listing after expiry for {symbol}");
+        }
+        lifecycles.insert(
+            symbol,
+            CalendarLifecycle {
+                listing_date: listing.0,
+                listing_evidence: (listing.1, listing.2),
+                expiry_date: expiry.0,
+                expiry_evidence: (expiry.1, expiry.2),
+            },
+        );
+    }
+
+    let mut connection = db::connect(&options.history_db)?;
+    db::ensure_schema(&connection)?;
+    let transaction = connection.transaction()?;
+    let mut evidence_links = 0usize;
+    let mut contracts = 0usize;
+    for (symbol, lifecycle) in lifecycles {
+        let Some((contract_id, listing, expiry)) = transaction
+            .query_row(
+                "select id, listing_date, expiry_date from contracts where symbol = ?1",
+                [&symbol],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            continue;
+        };
+        if listing
+            .as_deref()
+            .is_some_and(|value| value != lifecycle.listing_date)
+            || expiry
+                .as_deref()
+                .is_some_and(|value| value != lifecycle.expiry_date)
+        {
+            bail!("GFEX calendar lifecycle conflicts with database {symbol}");
+        }
+        transaction.execute(
+            "update contracts set listing_date = ?1, expiry_date = ?2 where id = ?3",
+            params![lifecycle.listing_date, lifecycle.expiry_date, contract_id],
+        )?;
+        transaction.execute(
+            "delete from contract_lifecycle_evidence where contract_id = ?1",
+            [contract_id],
+        )?;
+        let mut evidence = BTreeSet::new();
+        evidence.insert(lifecycle.listing_evidence);
+        evidence.insert(lifecycle.expiry_evidence);
+        for (url, sha256) in evidence {
+            transaction.execute(
+                "insert into contract_lifecycle_evidence(
+                     contract_id, listing_date, expiry_date, canonical_url, body_sha256, recorded_at
+                 ) values(?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    contract_id,
+                    lifecycle.listing_date,
+                    lifecycle.expiry_date,
+                    url,
+                    sha256,
+                    options.observed_at
+                ],
+            )?;
+            evidence_links += 1;
+        }
+        contracts += 1;
+    }
+    transaction.commit()?;
+    Ok(GfexCalendarImportResult {
+        snapshots,
+        contracts,
+        evidence_links,
+    })
+}
+
+fn calendar_contract_ids(value: &str) -> Vec<String> {
+    value
+        .split(['、', '，', ',', ' '])
+        .filter_map(|item| item.strip_suffix("合约").or(Some(item)))
+        .map(str::trim)
+        .filter(|item| is_contract_id(item))
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn validate_calendar_url(value: &str) -> Result<()> {
+    let url = Url::parse(value)?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("www.gfex.com.cn")
+        || url.path() != "/u/interfacesWebTpTradingCalendar/loadList"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("unexpected GFEX calendar URL {value}");
+    }
+    Ok(())
+}
+
+fn read_retained_evidence(snapshot_dir: &std::path::Path, sha256: &str) -> Result<Vec<u8>> {
+    if sha256.len() != 64
+        || !sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        bail!("invalid GFEX calendar SHA-256 {sha256}");
+    }
+    let path = snapshot_dir.join(format!("{sha256}.json"));
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("read retained GFEX calendar snapshot {}", path.display()))?;
+    if hex::encode(Sha256::digest(&bytes)) != sha256 {
+        bail!("retained GFEX calendar SHA-256 mismatch {sha256}");
+    }
+    Ok(bytes)
 }
