@@ -13,6 +13,9 @@ use future_meta_daemon::db::{
 };
 use future_meta_daemon::export::export_archive;
 use future_meta_daemon::gfex::{GfexParameterImportOptions, import_daily_settlement_parameters};
+use future_meta_daemon::ine::{
+    IneParameterImportOptions, import_daily_parameters as import_ine_parameters,
+};
 use future_meta_daemon::latest::parse_latest_html;
 use future_meta_daemon::official::{
     EvidenceKind, OfficialEvidence, OfficialFeeAdjustment, OfficialVerification,
@@ -749,6 +752,98 @@ fn gfex_parameter_import_selects_pre_transition_lithium_tick() {
         )
         .unwrap();
     assert!((tick - 50.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn ine_daily_parameter_import_requires_and_records_close_today_rule() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "INE.lu9999".to_owned();
+    exemplar.lot_size = 10.0;
+    exemplar.tick_size = 1.0;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = br#"{"o_code":"0","report_date":"20210416","o_cursor":[{"PRODUCTID":"lu_f","INSTRUMENTID":"lu2107","TRADEFEERATIO":0.01,"TRADEFEEUNIT":0}]}"#;
+    let parameter_sha = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{parameter_sha}.dat")), body).unwrap();
+    let manifest = directory.path().join("ine.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tupdate_date\tsha256\turl\trecord_count\tproducts\n\
+             20210416\tok\t20210416\t20210416 20:01:00\t{parameter_sha}\thttps://www.ine.cn/data/tradedata/future/dailydata/js20210416.dat\t1\tlu_f\n"
+        ),
+    )
+    .unwrap();
+
+    let rule_body = b"LU listing notice: close-today commission is not waived";
+    let rule_sha = hex::encode(Sha256::digest(rule_body));
+    std::fs::write(directory.path().join(format!("{rule_sha}.html")), rule_body).unwrap();
+    let rules = directory.path().join("ine-close-today.tsv");
+    std::fs::write(
+        &rules,
+        format!(
+            "scope\tvalid_from\tvalid_to\tclose_today_kind\tclose_today_value\tcanonical_url\tsha256\n\
+             INE.lu\t2020-06-22T00:00:00+08:00\t\tsame_as_general\t\thttps://www.ine.cn/publicnotice/notice/202006/t20200610_812278.html\t{rule_sha}\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_ine_parameters(&IneParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        close_today_rules: rules,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2021, Month::April, 16).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.snapshots, 1);
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.versions, 1);
+    let conn = connect(&db_path).unwrap();
+    let (open, close_yesterday, close_today, level, evidence_count): (
+        String,
+        String,
+        String,
+        String,
+        i64,
+    ) = conn
+        .query_row(
+            "select v.open_fee_json, v.close_yesterday_fee_json,
+                    v.close_today_fee_json, min(e.evidence_level), count(*)
+             from fee_versions v join contracts c on c.id = v.contract_id
+             join fee_version_evidence e on e.contract_id = v.contract_id
+               and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             where c.symbol = 'INE.lu2107' and v.source_kind = 'official'
+             group by v.id",
+            [],
+            |record| {
+                Ok((
+                    record.get(0)?,
+                    record.get(1)?,
+                    record.get(2)?,
+                    record.get(3)?,
+                    record.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    for json in [open, close_yesterday, close_today] {
+        let fee: future_meta::model::FeeSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            fee.kind,
+            future_meta::model::FeeKind::TurnoverRatePerTenThousand
+        );
+        assert_eq!(fee.value, Some(0.1));
+    }
+    assert_eq!(level, "paired_official");
+    assert_eq!(evidence_count, 2);
 }
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";

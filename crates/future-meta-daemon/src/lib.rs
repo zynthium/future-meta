@@ -6,6 +6,7 @@ pub mod db;
 pub mod export;
 pub mod gfex;
 pub mod hash;
+pub mod ine;
 pub mod jin10;
 pub mod latest;
 pub mod official;
@@ -105,6 +106,18 @@ enum Command {
         db: PathBuf,
         #[arg(long)]
         manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
+    },
+    ImportIneParameters {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        close_today_rules: PathBuf,
         #[arg(long)]
         snapshot_dir: PathBuf,
         #[arg(long)]
@@ -329,6 +342,30 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportIneParameters {
+            db,
+            manifest,
+            close_today_rules,
+            snapshot_dir,
+            from,
+        } => {
+            let from = coverage::CoverageBoundary::parse(&from, &from)?.from;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = ine::import_daily_parameters(&ine::IneParameterImportOptions {
+                history_db: db,
+                manifest,
+                close_today_rules,
+                snapshot_dir,
+                from,
+                observed_at,
+            })?;
+            eprintln!(
+                "INE parameters imported: snapshots={} contracts={} versions={}",
+                result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
         Command::ImportOfficialHistory {
             db,
             inputs,
@@ -520,6 +557,41 @@ mod tests {
                 assert_eq!(from, "2022-12-22");
             }
             _ => panic!("expected import-gfex-parameters command"),
+        }
+    }
+
+    #[test]
+    fn import_ine_parameters_cli_requires_close_today_rules() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-ine-parameters",
+            "--db",
+            "/tmp/review.sqlite",
+            "--manifest",
+            "/tmp/ine.tsv",
+            "--close-today-rules",
+            "/tmp/ine-close-today.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+            "--from",
+            "2020-01-01",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportIneParameters {
+                db,
+                manifest,
+                close_today_rules,
+                snapshot_dir,
+                from,
+            } => {
+                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
+                assert_eq!(manifest, PathBuf::from("/tmp/ine.tsv"));
+                assert_eq!(close_today_rules, PathBuf::from("/tmp/ine-close-today.tsv"));
+                assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
+                assert_eq!(from, "2020-01-01");
+            }
+            _ => panic!("expected import-ine-parameters command"),
         }
     }
 

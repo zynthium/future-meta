@@ -104,6 +104,29 @@ The command validates every selected official URL and retained-byte digest
 before atomically replacing conflicting lower-confidence history. It never
 overwrites a `paired_official` interval.
 
+INE `TRADEFEERATIO` and `TRADEFEEUNIT` fields state only the general fee. They
+cannot establish close-today fees by themselves. Pair the retained dailydata
+manifest with a reviewed close-today rule manifest:
+
+```bash
+cargo run -p future-meta-daemon -- import-ine-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/ine-dailydata-20200101-20260818.tsv \
+  --close-today-rules data/official-evidence/ine-close-today-rules.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01
+```
+
+The rule TSV columns are `scope`, `valid_from`, `valid_to`,
+`close_today_kind`, `close_today_value`, `canonical_url`, and `sha256`.
+`scope` is either an INE product or concrete contract. Allowed rule kinds are
+`same_as_general`, `Zero`, `CnyPerLot`, and
+`TurnoverRatePerTenThousand`. Every daily parameter observation must match one
+unambiguous highest-priority rule. Missing or same-scope overlapping rules,
+unretained bytes, invalid URLs, and digest mismatches fail before database
+writes. Materialized versions retain
+both sources at `paired_official` level.
+
 ## Materialize lifecycle and specifications
 
 Lifecycle and specification evidence is independent from fee evidence. Import

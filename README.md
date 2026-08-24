@@ -281,6 +281,23 @@ cargo run -p future-meta-daemon -- import-gfex-parameters \
 `绝对值` 表示元/手，`比例值` 表示成交额万分比，零值保留为明确的零手续费。
 `official_empty` 和 `pending` 清单项不构成覆盖证据，也不会被静默跳过后宣称完整。
 
+INE 日参数的 `TRADEFEERATIO`、`TRADEFEEUNIT` 只证明一般手续费，不能单独证明平今。
+导入时必须另给人工复核的官方平今规则：
+
+```bash
+cargo run -p future-meta-daemon -- import-ine-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/ine-dailydata-20200101-20260818.tsv \
+  --close-today-rules data/official-evidence/ine-close-today-rules.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01
+```
+
+规则可按品种或具体合约限定连续有效期，并明确 `same_as_general`、`Zero`、元/手或
+成交额万分比。每个日参数观察都必须命中唯一的最高优先级规则；缺失、同级重叠、URL
+或 SHA-256 不合法时，导入在写库前硬失败。成功版本同时保留日参数与平今规则两份
+官方证据，并标记为 `paired_official`。
+
 在已有 seed 上应用最新截面：
 
 ```bash

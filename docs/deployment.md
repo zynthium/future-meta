@@ -89,6 +89,22 @@ cargo run -p future-meta-daemon -- import-gfex-parameters \
 导入，`比例值` 按成交额万分比导入。只有 manifest 中状态为 `ok` 且通过 URL、SHA-256、
 字段和单位校验的快照会参与历史物化；`official_empty` 与 `pending` 仍是覆盖缺口。
 
+INE 日参数只含一般手续费，必须与独立复核的官方平今规则配对：
+
+```bash
+cargo run -p future-meta-daemon -- import-ine-parameters \
+  --db path/to/review-copy.sqlite \
+  --manifest data/official-evidence/ine-dailydata-20200101-20260818.tsv \
+  --close-today-rules data/official-evidence/ine-close-today-rules.tsv \
+  --snapshot-dir data/official-evidence \
+  --from 2020-01-01
+```
+
+平今规则 TSV 列为 `scope`、`valid_from`、`valid_to`、`close_today_kind`、
+`close_today_value`、`canonical_url`、`sha256`。`scope` 仅接受 `INE.<品种>` 或
+`INE.<具体合约>`。导入器要求每个参数观察命中唯一有效规则，并将两份官方来源记录为
+`paired_official`；不得把一般手续费默认复制为平今。
+
 经人工复核的官方证据只能先应用到审阅副本：
 
 ```bash
