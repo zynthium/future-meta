@@ -12,6 +12,7 @@ use future_meta_daemon::db::{
     update_source_success, upsert_allowed_rows, upsert_latest_rows, upsert_v11_baseline_rows,
 };
 use future_meta_daemon::export::export_archive;
+use future_meta_daemon::gfex::{GfexParameterImportOptions, import_daily_settlement_parameters};
 use future_meta_daemon::latest::parse_latest_html;
 use future_meta_daemon::official::{
     EvidenceKind, OfficialEvidence, OfficialFeeAdjustment, OfficialVerification,
@@ -630,6 +631,124 @@ fn official_metadata_import_replaces_lifecycle_and_specification_history() {
     );
     assert_eq!(persisted.4, sha256);
     assert_eq!(persisted.5, 1);
+}
+
+#[test]
+fn gfex_daily_settlement_import_maps_complete_fee_tuple() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "GFEX.si9999".to_owned();
+    exemplar.lot_size = 5.0;
+    exemplar.tick_size = 5.0;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = r#"{"code":"0","data":[{"contractId":"si2308","openFee":1,"offsetFee":1,"shortOpenFee":1,"shortOffsetFee":0,"style":"比例值"}]}"#
+        .as_bytes();
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.json")), body).unwrap();
+    let manifest = directory.path().join("gfex.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tsha256\turl\trecord_count\tproducts\tcontent_type\n\
+             20221222\tok\t20221222\t{sha256}\thttp://www.gfex.com.cn/u/interfacesWebTiFutAndOptSettle/loadList\t1\tsi\tapplication/json\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_daily_settlement_parameters(&GfexParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2022, Month::December, 22).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    assert_eq!(result.snapshots, 1);
+    assert_eq!(result.contracts, 1);
+    let conn = connect(&db_path).unwrap();
+    let tuple: (String, String, String, String) = conn
+        .query_row(
+            "select v.open_fee_json, v.close_yesterday_fee_json,
+                    v.close_today_fee_json, e.evidence_level
+             from fee_versions v join contracts c on c.id = v.contract_id
+             join fee_version_evidence e on e.contract_id = v.contract_id
+               and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             where c.symbol = 'GFEX.si2308' and v.source_kind = 'official'",
+            [],
+            |record| {
+                Ok((
+                    record.get(0)?,
+                    record.get(1)?,
+                    record.get(2)?,
+                    record.get(3)?,
+                ))
+            },
+        )
+        .unwrap();
+    let open: future_meta::model::FeeSpec = serde_json::from_str(&tuple.0).unwrap();
+    let close_yesterday: future_meta::model::FeeSpec = serde_json::from_str(&tuple.1).unwrap();
+    let close_today: future_meta::model::FeeSpec = serde_json::from_str(&tuple.2).unwrap();
+    assert_eq!(open.value, Some(1.0));
+    assert_eq!(close_yesterday.value, Some(1.0));
+    assert_eq!(close_today.kind, future_meta::model::FeeKind::Zero);
+    assert_eq!(tuple.3, "official_parameter");
+}
+
+#[test]
+fn gfex_parameter_import_selects_pre_transition_lithium_tick() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    let mut old = exemplar.clone();
+    old.symbol = "GFEX.lc9998".to_owned();
+    old.lot_size = 1.0;
+    old.tick_size = 50.0;
+    let mut current = exemplar;
+    current.symbol = "GFEX.lc9999".to_owned();
+    current.lot_size = 1.0;
+    current.tick_size = 20.0;
+    upsert_v11_baseline_rows(&mut conn, &[old, current], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = r#"{"code":"0","data":[{"contractId":"lc2408","openFee":0.8,"offsetFee":0.8,"shortOffsetFee":0.8,"style":"比例值"}]}"#.as_bytes();
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.json")), body).unwrap();
+    let manifest = directory.path().join("gfex.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tsha256\turl\trecord_count\tproducts\tcontent_type\n\
+             20230721\tok\t20230721\t{sha256}\thttp://www.gfex.com.cn/u/interfacesWebTiFutAndOptSettle/loadList\t1\tlc\tapplication/json\n"
+        ),
+    )
+    .unwrap();
+
+    import_daily_settlement_parameters(&GfexParameterImportOptions {
+        history_db: db_path.clone(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2023, Month::July, 21).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+
+    let conn = connect(&db_path).unwrap();
+    let tick: f64 = conn
+        .query_row(
+            "select tick_size from contracts where symbol = 'GFEX.lc2408'",
+            [],
+            |record| record.get(0),
+        )
+        .unwrap();
+    assert!((tick - 50.0).abs() < f64::EPSILON);
 }
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";

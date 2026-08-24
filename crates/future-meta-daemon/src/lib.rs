@@ -4,6 +4,7 @@ pub mod coverage;
 pub mod czce;
 pub mod db;
 pub mod export;
+pub mod gfex;
 pub mod hash;
 pub mod jin10;
 pub mod latest;
@@ -90,6 +91,16 @@ enum Command {
         evidence_db: PathBuf,
     },
     ImportCzceParameters {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
+    },
+    ImportGfexParameters {
         #[arg(long)]
         db: PathBuf,
         #[arg(long)]
@@ -295,6 +306,29 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Command::ImportGfexParameters {
+            db,
+            manifest,
+            snapshot_dir,
+            from,
+        } => {
+            let from = coverage::CoverageBoundary::parse(&from, &from)?.from;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result =
+                gfex::import_daily_settlement_parameters(&gfex::GfexParameterImportOptions {
+                    history_db: db,
+                    manifest,
+                    snapshot_dir,
+                    from,
+                    observed_at,
+                })?;
+            eprintln!(
+                "GFEX parameters imported: snapshots={} contracts={} versions={}",
+                result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
         Command::ImportOfficialHistory {
             db,
             inputs,
@@ -463,6 +497,29 @@ mod tests {
                 assert_eq!(snapshot_dir, PathBuf::from("/tmp/evidence"));
             }
             _ => panic!("expected import-official-metadata command"),
+        }
+    }
+
+    #[test]
+    fn import_gfex_parameters_cli_requires_retained_evidence_inputs() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "import-gfex-parameters",
+            "--db",
+            "/tmp/review.sqlite",
+            "--manifest",
+            "/tmp/gfex.tsv",
+            "--snapshot-dir",
+            "/tmp/evidence",
+            "--from",
+            "2022-12-22",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::ImportGfexParameters { from, .. } => {
+                assert_eq!(from, "2022-12-22");
+            }
+            _ => panic!("expected import-gfex-parameters command"),
         }
     }
 
