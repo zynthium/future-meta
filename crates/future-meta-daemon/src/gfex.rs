@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use time::format_description::well_known::Rfc3339;
-use time::{Date, Duration, OffsetDateTime};
+use time::{Date, Duration, OffsetDateTime, Time, UtcOffset};
 
 /// Inputs for one offline, hash-verified GFEX parameter import.
 #[derive(Debug, Clone)]
@@ -90,7 +90,14 @@ pub fn import_daily_settlement_parameters(
     let mut corpus_last = String::new();
     for observation in observations {
         corpus_last = corpus_last.max(observation.valid_from.clone());
-        last_observed.insert(observation.symbol.clone(), observation.valid_from.clone());
+        last_observed
+            .entry(observation.symbol.clone())
+            .and_modify(|latest| {
+                if observation.valid_from > *latest {
+                    *latest = observation.valid_from.clone();
+                }
+            })
+            .or_insert_with(|| observation.valid_from.clone());
         let rows = by_symbol.entry(observation.symbol.clone()).or_default();
         if rows
             .last()
@@ -197,8 +204,6 @@ fn materialize_rows(
         let symbol_last = last_observed
             .get(&first.symbol)
             .ok_or_else(|| anyhow!("GFEX contract has no last observation"))?;
-        let coverage_end =
-            (OffsetDateTime::parse(symbol_last, &Rfc3339)? + Duration::days(1)).format(&Rfc3339)?;
         let existing = load_existing_metadata(connection, &first.symbol)?;
         let inferred_listing = first.valid_from[..10].replace('-', "");
         let inferred_expiry =
@@ -222,6 +227,14 @@ fn materialize_rows(
                 candidate.tick_size,
             )
         };
+        let coverage_end = (OffsetDateTime::parse(symbol_last, &Rfc3339)? + Duration::days(1))
+            .max(
+                compact_day_start(listing.as_deref().ok_or_else(|| {
+                    anyhow!("GFEX contract listing date missing {}", first.symbol)
+                })?)?
+                    + Duration::days(1),
+            )
+            .format(&Rfc3339)?;
         for observation in observations {
             result.push(db::OfficialHistoryRow {
                 row: AllowedRow {
@@ -353,6 +366,12 @@ fn parse_compact_date(value: &str) -> Result<Date> {
     }
     let format = time::format_description::parse("[year][month][day]")?;
     Ok(Date::parse(value, &format)?)
+}
+
+fn compact_day_start(value: &str) -> Result<OffsetDateTime> {
+    Ok(parse_compact_date(value)?
+        .with_time(Time::MIDNIGHT)
+        .assume_offset(UtcOffset::from_hms(8, 0, 0)?))
 }
 
 /// Inputs one offline, hash-verified GFEX trading-calendar lifecycle import.

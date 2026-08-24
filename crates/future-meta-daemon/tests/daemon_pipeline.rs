@@ -1234,6 +1234,82 @@ fn gfex_daily_settlement_import_maps_complete_fee_tuple() {
 }
 
 #[test]
+fn gfex_parameter_import_uses_latest_observation_when_manifest_dates_are_not_sorted() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "GFEX.si2609".to_owned();
+    exemplar.lot_size = 5.0;
+    exemplar.tick_size = 5.0;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = r#"{"code":"0","data":[{"contractId":"si2609","openFee":1,"offsetFee":1,"shortOffsetFee":0,"style":"比例值"}]}"#;
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.json")), body).unwrap();
+    let manifest = directory.path().join("gfex-unsorted.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tsha256\turl\trecord_count\tproducts\tcontent_type\n\
+             20260818\tok\t20260818\t{sha256}\thttp://www.gfex.com.cn/u/interfacesWebTiFutAndOptSettle/loadList\t1\tsi\tapplication/json\n\
+             20260817\tok\t20260817\t{sha256}\thttp://www.gfex.com.cn/u/interfacesWebTiFutAndOptSettle/loadList\t1\tsi\tapplication/json\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_daily_settlement_parameters(&GfexParameterImportOptions {
+        history_db: db_path,
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    });
+
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
+fn gfex_parameter_import_covers_contract_listing_after_pre_listing_observation() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+    let mut exemplar = parse_csv(CSV_V1).unwrap().remove(0);
+    exemplar.symbol = "GFEX.lc2708".to_owned();
+    exemplar.listing_date = Some("20260818".to_owned());
+    exemplar.lot_size = 1.0;
+    exemplar.tick_size = 20.0;
+    upsert_v11_baseline_rows(&mut conn, &[exemplar], "2026-08-24T00:00:00Z").unwrap();
+    drop(conn);
+
+    let body = r#"{"code":"0","data":[{"contractId":"lc2708","openFee":1.6,"offsetFee":1.6,"shortOffsetFee":3.2,"style":"比例值"}]}"#;
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.json")), body).unwrap();
+    let manifest = directory.path().join("gfex-pre-listing.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "requested_date\tstatus\treport_date\tsha256\turl\trecord_count\tproducts\tcontent_type\n\
+             20260817\tok\t20260817\t{sha256}\thttp://www.gfex.com.cn/u/interfacesWebTiFutAndOptSettle/loadList\t1\tlc\tapplication/json\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_daily_settlement_parameters(&GfexParameterImportOptions {
+        history_db: db_path,
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    });
+
+    assert!(result.is_ok(), "{result:?}");
+}
+
+#[test]
 fn gfex_calendar_import_records_exact_lifecycle_with_two_official_events() {
     let directory = tempfile::tempdir().unwrap();
     let db_path = directory.path().join("future-meta.sqlite");
