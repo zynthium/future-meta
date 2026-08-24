@@ -17,6 +17,7 @@ pub mod official_metadata;
 pub mod parse;
 pub mod product_spec;
 pub mod refresh;
+pub mod shfe;
 pub mod source;
 
 use clap::{Parser, Subcommand};
@@ -125,6 +126,20 @@ enum Command {
         snapshot_dir: PathBuf,
         #[arg(long)]
         from: String,
+    },
+    ImportShfeParameters {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        parameter_manifest: PathBuf,
+        #[arg(long)]
+        close_today_rules: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        through: String,
     },
     ImportOfficialHistory {
         #[arg(long)]
@@ -397,6 +412,32 @@ pub fn run() -> anyhow::Result<()> {
             })?;
             eprintln!(
                 "INE parameters imported: snapshots={} contracts={} versions={}",
+                result.snapshots, result.contracts, result.versions
+            );
+            Ok(())
+        }
+        Command::ImportShfeParameters {
+            db,
+            parameter_manifest,
+            close_today_rules,
+            snapshot_dir,
+            from,
+            through,
+        } => {
+            let boundary = coverage::CoverageBoundary::parse(&from, &through)?;
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result = shfe::import_monthly_parameters(&shfe::ShfeParameterImportOptions {
+                history_db: db,
+                parameter_manifest,
+                close_today_rules,
+                snapshot_dir,
+                from: boundary.from,
+                through: boundary.through,
+                observed_at,
+            })?;
+            eprintln!(
+                "SHFE parameters imported: snapshots={} contracts={} versions={}",
                 result.snapshots, result.contracts, result.versions
             );
             Ok(())

@@ -36,6 +36,9 @@ use future_meta_daemon::product_spec::{ProductSpecImportOptions, import_product_
 use future_meta_daemon::refresh::{
     RefreshOptions, refresh_with_options, require_official_fee_change_admission, update_latest,
 };
+use future_meta_daemon::shfe::{
+    ShfeParameterImportOptions, import_monthly_parameters as import_shfe_parameters,
+};
 use future_meta_daemon::source::discover_sources_from_html;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -1434,6 +1437,109 @@ fn ine_daily_parameter_import_selects_official_product_spec_at_observation_date(
         )
         .unwrap();
     assert!((tick - 0.1).abs() < f64::EPSILON);
+}
+
+#[test]
+fn shfe_monthly_parameter_import_pairs_general_fee_with_close_today_notice() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let mut connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    let mut baseline = parse_csv(CSV_V1).unwrap().remove(0);
+    baseline.symbol = "SHFE.cu2001".to_owned();
+    baseline.listing_date = Some("20190116".to_owned());
+    baseline.expiry_date = Some("20200115".to_owned());
+    upsert_v11_baseline_rows(&mut connection, &[baseline], "2026-08-24T00:00:00Z").unwrap();
+    drop(connection);
+
+    let parameter_body = b"official SHFE monthly parameter table";
+    let parameter_sha = hex::encode(Sha256::digest(parameter_body));
+    std::fs::write(
+        directory.path().join(format!("{parameter_sha}.html")),
+        parameter_body,
+    )
+    .unwrap();
+    let parameters = directory.path().join("shfe-monthly.tsv");
+    std::fs::write(
+        &parameters,
+        format!(
+            "reported_month\tsource_kind\tparent_url\tsource_url\tsha256\tproduct\tcontract\tadjustment_date_text\tfee_context\traw_fee_value\tsource_cell\n\
+             2020-01\thtml\thttps://www.shfe.com.cn/reports/businessdata/adjtomonthlysettlementprm/202001/t20200131_795583.html\thttps://www.shfe.com.cn/reports/businessdata/adjtomonthlysettlementprm/202001/t20200131_795583.html\t{parameter_sha}\tCU\tCU2001\t12月31日(星期二)\t交易手续费 | ‰\t0.05\tR1C1\n"
+        ),
+    )
+    .unwrap();
+
+    let notice_body = b"official SHFE notice: CU2001 close-today is 2 CNY";
+    let notice_sha = hex::encode(Sha256::digest(notice_body));
+    std::fs::write(
+        directory.path().join(format!("{notice_sha}.html")),
+        notice_body,
+    )
+    .unwrap();
+    let rules = directory.path().join("shfe-close-today.tsv");
+    std::fs::write(
+        &rules,
+        format!(
+            "symbol\tvalid_from\tvalid_to\tclose_today_kind\tclose_today_value\tcanonical_url\tsha256\n\
+             SHFE.cu2001\t2019-12-31T00:00:00+08:00\t\tCnyPerLot\t2\thttps://www.shfe.com.cn/publicnotice/notice/201910/t20191008_795105.html\t{notice_sha}\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_shfe_parameters(&ShfeParameterImportOptions {
+        history_db: db_path.clone(),
+        parameter_manifest: parameters,
+        close_today_rules: rules,
+        snapshot_dir: directory.path().to_path_buf(),
+        from: Date::from_calendar_date(2020, Month::January, 1).unwrap(),
+        through: Date::from_calendar_date(2020, Month::January, 15).unwrap(),
+        observed_at: "2026-08-24T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.contracts, 1);
+    assert_eq!(result.versions, 1);
+
+    let connection = connect(&db_path).unwrap();
+    let (open, close_yesterday, close_today, level, evidence_count): (
+        String,
+        String,
+        String,
+        String,
+        i64,
+    ) = connection
+        .query_row(
+            "select v.open_fee_json, v.close_yesterday_fee_json,
+                    v.close_today_fee_json, min(e.evidence_level), count(*)
+             from fee_versions v join contracts c on c.id = v.contract_id
+             join fee_version_evidence e on e.contract_id = v.contract_id
+               and e.valid_from = v.valid_from and e.rule_hash = v.rule_hash
+             where c.symbol = 'SHFE.cu2001' and v.source_kind = 'official'
+             group by v.id",
+            [],
+            |record| {
+                Ok((
+                    record.get(0)?,
+                    record.get(1)?,
+                    record.get(2)?,
+                    record.get(3)?,
+                    record.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    for json in [open, close_yesterday] {
+        let fee: future_meta::model::FeeSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            fee.kind,
+            future_meta::model::FeeKind::TurnoverRatePerTenThousand
+        );
+        assert_eq!(fee.value, Some(0.5));
+    }
+    let close_today: future_meta::model::FeeSpec = serde_json::from_str(&close_today).unwrap();
+    assert_eq!(close_today.kind, future_meta::model::FeeKind::CnyPerLot);
+    assert_eq!(close_today.value, Some(2.0));
+    assert_eq!(level, "paired_official");
+    assert_eq!(evidence_count, 2);
 }
 
 const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-27 22:56:54,主力合约\n";
