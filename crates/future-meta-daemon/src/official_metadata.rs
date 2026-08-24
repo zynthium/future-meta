@@ -126,7 +126,7 @@ fn persist_contract(
                         "insert into contracts(
                          symbol, listing_date, expiry_date, lot_size, tick_size,
                          first_seen_at, last_seen_at, active
-                     ) values(?1, ?2, ?3, ?4, ?5, ?6, ?6, 1)",
+                     ) values(?1, ?2, ?3, ?4, ?5, ?6, ?6, 0)",
                         params![
                             first.source.symbol,
                             compact_date(first.listing),
