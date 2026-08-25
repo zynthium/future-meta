@@ -275,10 +275,16 @@ fn validate_manifest_row(row: &ManifestRow) -> Result<()> {
         bail!("DCE parameter response not JSON {}", row.report_date);
     }
     let url = Url::parse(&row.url)?;
+    let mut query_pairs = url.query_pairs();
+    let has_browser_token = query_pairs
+        .next()
+        .is_some_and(|(key, value)| key == "VoGRv6Ir" && !value.is_empty())
+        && query_pairs.next().is_none();
+    let query_is_allowed = url.query().is_none() || has_browser_token;
     if url.scheme() != "http"
         || url.host_str() != Some("www.dce.com.cn")
         || url.path() != "/dcereport/publicweb/tradepara/futAndOptSettle"
-        || url.query().is_some()
+        || !query_is_allowed
         || url.fragment().is_some()
     {
         bail!("unexpected DCE settlement URL {}", row.url);
@@ -553,4 +559,45 @@ fn read_calendar_evidence(snapshot_dir: &std::path::Path, sha256: &str) -> Resul
         bail!("retained DCE calendar SHA-256 mismatch {sha256}");
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ManifestRow, validate_manifest_row};
+
+    fn row(url: &str) -> ManifestRow {
+        ManifestRow {
+            requested_date: "20250106".to_owned(),
+            status: "ok".to_owned(),
+            report_date: "20250106".to_owned(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+            url: url.to_owned(),
+            record_count: Some(1),
+            content_type: "application/json;charset=UTF-8".to_owned(),
+        }
+    }
+
+    #[test]
+    fn accepts_browser_signed_dce_settlement_url() {
+        let result = validate_manifest_row(&row(
+            "http://www.dce.com.cn/dcereport/publicweb/tradepara/futAndOptSettle?VoGRv6Ir=token",
+        ));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rejects_unexpected_dce_settlement_query_parameters() {
+        let result = validate_manifest_row(&row(
+            "http://www.dce.com.cn/dcereport/publicweb/tradepara/futAndOptSettle?date=20250106",
+        ));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_extra_dce_settlement_query_parameters() {
+        let result = validate_manifest_row(&row(
+            "http://www.dce.com.cn/dcereport/publicweb/tradepara/futAndOptSettle?VoGRv6Ir=token&date=20250106",
+        ));
+        assert!(result.is_err());
+    }
 }
