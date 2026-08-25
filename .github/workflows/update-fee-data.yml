@@ -58,7 +58,18 @@ jobs:
           else
             cargo run -p future-meta-daemon -- scan-announcements --db "$DB_PATH"
           fi
-          cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed
+          set +e
+          cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed 2> /tmp/update-latest.stderr
+          refresh_status=$?
+          set -e
+          if [ "$refresh_status" -ne 0 ]; then
+            cat /tmp/update-latest.stderr >&2
+            if ! grep -Eq "latest fee candidates before history write|require staged verified official evidence before history write" /tmp/update-latest.stderr; then
+              echo "latest refresh failed unexpectedly (exit=$refresh_status)" >&2
+              exit "$refresh_status"
+            fi
+            echo "latest fee changes deferred: waiting for official evidence"
+          fi
 
       - name: Validate Jin10 secondary source
         continue-on-error: true
