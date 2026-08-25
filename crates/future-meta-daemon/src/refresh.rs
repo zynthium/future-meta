@@ -393,10 +393,6 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
     crate::baseline::ensure_v11_baseline(&conn)?;
 
     let observed_at = now_string()?;
-    let migrated_specs = db::migrate_known_contract_spec_history(&mut conn, &observed_at)?;
-    if migrated_specs > 0 {
-        eprintln!("official contract specification history migrated: contracts={migrated_specs}");
-    }
     let announcement_health = db::announcement_health(&conn, &observed_at)?;
     eprintln!(
         "announcement health accepted: fresh_sources={} pending_candidates={}",
@@ -474,6 +470,12 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
                 verified.degraded_new_contracts.join(",")
             );
         }
+    }
+    // Do not mutate specification history until latest fee admission succeeds.
+    // A rejected snapshot must leave the seeded database queryable and auditable.
+    let migrated_specs = db::migrate_known_contract_spec_history(&mut conn, &observed_at)?;
+    if migrated_specs > 0 {
+        eprintln!("official contract specification history migrated: contracts={migrated_specs}");
     }
     db::mark_latest_contracts_seen(&mut conn, &completion.rows, &observed_at)?;
     db::update_source_success(&conn, TOTAL_URL, &probe_hash, &rows_hash, &observed_at)?;
