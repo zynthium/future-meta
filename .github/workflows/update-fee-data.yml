@@ -69,6 +69,8 @@ jobs:
               exit "$refresh_status"
             fi
             echo "latest fee changes deferred: waiting for official evidence"
+            echo "restoring reviewed seed after deferred refresh"
+            gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
           fi
 
       - name: Validate Jin10 secondary source
