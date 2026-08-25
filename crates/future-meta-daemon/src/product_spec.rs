@@ -383,10 +383,13 @@ fn validate_specification_url(exchange: &str, value: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("product specification URL has no host"))?
         .to_ascii_lowercase();
     let allowed = match exchange {
-        "SHFE" => matches!(
-            host.as_str(),
-            "shfe.com.cn" | "www.shfe.com.cn" | "shfe.cn" | "www.shfe.cn"
-        ),
+        "SHFE" => {
+            matches!(
+                host.as_str(),
+                "shfe.com.cn" | "www.shfe.com.cn" | "shfe.cn" | "www.shfe.cn"
+            ) || (matches!(host.as_str(), "ine.cn" | "www.ine.cn")
+                && url.path().starts_with("/products/futures/"))
+        }
         "INE" => matches!(
             host.as_str(),
             "ine.cn" | "www.ine.cn" | "ine.com.cn" | "www.ine.com.cn"
@@ -471,6 +474,15 @@ mod tests {
         validate_specification_url(
             "SHFE",
             "https://www.shfe.cn/publicnotice/notice/201912/P020240320685331759846.docx",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn specification_url_accepts_ine_bc_page_for_shfe_contract_base_rows() {
+        validate_specification_url(
+            "SHFE",
+            "https://www.ine.cn/products/futures/metal/nonferrousmetal/bc_f/standard_bc_f/202312/t20231205_802543.html",
         )
         .unwrap();
     }

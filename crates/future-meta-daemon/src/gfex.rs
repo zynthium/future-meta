@@ -488,7 +488,10 @@ pub fn import_trading_calendar_lifecycles(
                     &mut entry.1
                 };
                 if let Some(existing) = slot {
-                    if existing != &evidence {
+                    // The endpoint republishes the same lifecycle event in later
+                    // snapshots.  The date is the contract fact; retain the first
+                    // official snapshot as provenance when the date agrees.
+                    if existing.0 != evidence.0 {
                         bail!(
                             "conflicting GFEX calendar {} event for {}",
                             event.event_type,
