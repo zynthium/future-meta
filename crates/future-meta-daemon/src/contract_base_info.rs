@@ -2,7 +2,7 @@
 
 use crate::db;
 use anyhow::{Context, Result, anyhow, bail};
-use future_meta::symbol::{SymbolKind, parse_symbol};
+use future_meta::symbol::{SymbolKind, derive_underlying_symbol, parse_symbol};
 use rusqlite::{Transaction, params};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -87,8 +87,16 @@ pub fn import_contract_base_info(
     validate_exchange(&options.exchange)?;
     let mut connection = db::connect(&options.history_db)?;
     db::ensure_schema(&connection)?;
-    let targets = load_targets(&connection, &options.exchange)?;
-    let (lifecycles, snapshots) = load_lifecycles(options, &targets)?;
+    let transaction = connection.transaction()?;
+    let mut targets = load_targets(&transaction, &options.exchange)?;
+    let (lifecycles, snapshots) = load_lifecycles(options)?;
+    admit_discovered_contracts(
+        &transaction,
+        &options.exchange,
+        &mut targets,
+        &lifecycles,
+        &options.observed_at,
+    )?;
     let missing = targets
         .keys()
         .filter(|symbol| !lifecycles.contains_key(*symbol))
@@ -103,7 +111,6 @@ pub fn import_contract_base_info(
         );
     }
 
-    let transaction = connection.transaction()?;
     let evidence_links =
         persist_lifecycles(&transaction, &targets, &lifecycles, &options.observed_at)?;
     transaction.commit()?;
@@ -116,7 +123,6 @@ pub fn import_contract_base_info(
 
 fn load_lifecycles(
     options: &ContractBaseInfoImportOptions,
-    targets: &BTreeMap<String, i64>,
 ) -> Result<(BTreeMap<String, Lifecycle>, usize)> {
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
@@ -162,9 +168,6 @@ fn load_lifecycles(
                 bail!("contract-base trading day mismatch for {}", row.report_date);
             }
             let symbol = format!("{}.{}", options.exchange, item.instrument_id.trim());
-            if !targets.contains_key(&symbol) {
-                continue;
-            }
             let Ok(parsed) = parse_symbol(&symbol) else {
                 continue;
             };
@@ -207,12 +210,9 @@ fn load_lifecycles(
     Ok((lifecycles, snapshots))
 }
 
-fn load_targets(
-    connection: &rusqlite::Connection,
-    exchange: &str,
-) -> Result<BTreeMap<String, i64>> {
+fn load_targets(transaction: &Transaction<'_>, exchange: &str) -> Result<BTreeMap<String, i64>> {
     let prefix = format!("{exchange}.%");
-    let mut statement = connection
+    let mut statement = transaction
         .prepare("select id, symbol from contracts where symbol like ?1 order by symbol")?;
     let targets = statement
         .query_map([prefix], |row| {
@@ -223,6 +223,98 @@ fn load_targets(
         bail!("database has no {exchange} contracts");
     }
     Ok(targets)
+}
+
+/// Admit concrete contracts present in an official snapshot but absent from
+/// the provisional seed.  Static multiplier/tick metadata comes from an
+/// already-imported official product specification for the same product.
+fn admit_discovered_contracts(
+    transaction: &Transaction<'_>,
+    exchange: &str,
+    targets: &mut BTreeMap<String, i64>,
+    lifecycles: &BTreeMap<String, Lifecycle>,
+    observed_at: &str,
+) -> Result<()> {
+    for (symbol, lifecycle) in lifecycles {
+        if targets.contains_key(symbol) {
+            continue;
+        }
+
+        let parsed = parse_symbol(symbol)?;
+        if parsed.kind != SymbolKind::Futures || parsed.exchange != exchange {
+            continue;
+        }
+        let product = derive_underlying_symbol(symbol)?;
+        // SHFE's retained ContractBaseInfo feed also carries the INE BC
+        // product. Match the product component across exchange namespaces so
+        // that its official INE specification can seed the SHFE lifecycle
+        // row without duplicating static evidence.
+        let product_code = product
+            .split_once('.')
+            .map_or(product.as_str(), |(_, local)| local);
+        let pattern = format!("*.{product_code}[0-9][0-9][0-9][0-9]");
+        let mut statement = transaction.prepare(
+            "select distinct s.lot_size, s.tick_size
+             from contract_spec_versions s
+             join contracts c on c.id = s.contract_id
+             where c.symbol glob ?1
+               and s.source_kind = 'official'
+               and julianday(s.valid_from) <= julianday(?2)
+               and (s.valid_to is null or julianday(?2) < julianday(s.valid_to))
+             order by s.lot_size, s.tick_size",
+        )?;
+        let mut candidates = statement
+            .query_map(params![pattern, lifecycle.listing_date], |row| {
+                Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        // A newly listed month can be later than the retained product
+        // interval's right edge.  In that case carry forward the latest
+        // official product tuple; this is safe only when the latest tuple is
+        // unambiguous (the check below enforces that invariant).
+        if candidates.is_empty() {
+            let mut statement = transaction.prepare(
+                "select distinct s.lot_size, s.tick_size
+                 from contract_spec_versions s
+                 join contracts c on c.id = s.contract_id
+                 where c.symbol glob ?1 and s.source_kind = 'official'
+                 order by s.valid_from desc
+                 limit 1",
+            )?;
+            candidates = statement
+                .query_map([&pattern], |row| {
+                    Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+        }
+        let Some(&(lot_size, tick_size)) = candidates.first() else {
+            bail!("official product specification missing for discovered contract {symbol}");
+        };
+        if candidates.iter().any(|candidate| {
+            candidate.0.to_bits() != lot_size.to_bits()
+                || candidate.1.to_bits() != tick_size.to_bits()
+        }) {
+            bail!("ambiguous official product specification for discovered contract {symbol}");
+        }
+
+        transaction.execute(
+            "insert into contracts(
+                 symbol, listing_date, expiry_date, lot_size, tick_size,
+                 first_seen_at, last_seen_at, active
+             ) values(?1, ?2, ?3, ?4, ?5, ?6, ?6, 0)",
+            params![
+                symbol,
+                lifecycle.listing_date,
+                lifecycle.expiry_date,
+                lot_size,
+                tick_size,
+                observed_at,
+            ],
+        )?;
+        targets.insert(symbol.clone(), transaction.last_insert_rowid());
+    }
+    Ok(())
 }
 
 fn persist_lifecycles(

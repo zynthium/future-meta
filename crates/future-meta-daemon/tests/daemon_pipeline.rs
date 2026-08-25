@@ -62,6 +62,84 @@ fn czce_parameter_html(base_fee: &str, fee_mode: &str, close_today_fee: &str) ->
     )
 }
 
+#[test]
+fn contract_base_info_import_discovers_unseeded_contract_from_official_spec() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    connection
+        .execute(
+            "insert into contracts(
+                 symbol, listing_date, expiry_date, lot_size, tick_size,
+                 first_seen_at, last_seen_at, active
+             ) values('SHFE.cu2001', null, null, 5.0, 10.0,
+                      '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z', 0)",
+            [],
+        )
+        .unwrap();
+    let contract_id: i64 = connection.last_insert_rowid();
+    connection
+        .execute(
+            "insert into contract_spec_versions(
+                 contract_id, lot_size, tick_size, valid_from, valid_to,
+                 source_kind, source_url, first_seen_at, last_seen_at
+             ) values(?1, 5.0, 10.0, '2019-01-01T00:00:00+08:00',
+                      null, 'official',
+                      'https://www.shfe.com.cn/products/futures/metal/cu_f/',
+                      '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')",
+            [contract_id],
+        )
+        .unwrap();
+    drop(connection);
+
+    let body = br#"{"ContractBaseInfo":[
+        {"INSTRUMENTID":"cu2001","OPENDATE":"20190116","EXPIREDATE":"20200115","TRADINGDAY":"20200102"},
+        {"INSTRUMENTID":"cu2002","OPENDATE":"20190218","EXPIREDATE":"20200217","TRADINGDAY":"20200102"}
+    ]}"#;
+    let sha256 = hex::encode(Sha256::digest(body));
+    std::fs::write(directory.path().join(format!("{sha256}.dat")), body).unwrap();
+    let manifest = directory.path().join("contract-base-info.tsv");
+    std::fs::write(
+        &manifest,
+        format!(
+            "exchange\treport_date\tcanonical_url\tsha256\trecord_count\nSHFE\t20200102\thttps://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20200102.dat\t{sha256}\t2\n"
+        ),
+    )
+    .unwrap();
+
+    let result = import_contract_base_info(&ContractBaseInfoImportOptions {
+        history_db: db_path.clone(),
+        exchange: "SHFE".to_owned(),
+        manifest,
+        snapshot_dir: directory.path().to_path_buf(),
+        observed_at: "2026-08-25T00:00:00Z".to_owned(),
+    })
+    .unwrap();
+    assert_eq!(result.contracts, 2);
+    let connection = connect(&db_path).unwrap();
+    let discovered: (String, String, f64, f64, i64) = connection
+        .query_row(
+            "select listing_date, expiry_date, lot_size, tick_size, active
+             from contracts where symbol = 'SHFE.cu2002'",
+            [],
+            |record| {
+                Ok((
+                    record.get(0)?,
+                    record.get(1)?,
+                    record.get(2)?,
+                    record.get(3)?,
+                    record.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        discovered,
+        ("20190218".to_owned(), "20200217".to_owned(), 5.0, 10.0, 0)
+    );
+}
+
 fn write_czce_parameter_fixture(
     directory: &std::path::Path,
     html: &str,
