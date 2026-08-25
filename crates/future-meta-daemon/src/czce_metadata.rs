@@ -231,12 +231,10 @@ fn load_calendar(
                         expiry_url: row.canonical_url.clone(),
                         expiry_sha256: row.sha256.clone(),
                     });
-                    if entry
-                        .expiry_date
-                        .is_some_and(|previous| previous != event_date)
-                    {
-                        bail!("conflicting CZCE expiry events: {symbol}");
-                    }
+                    // CZCE may republish a contract's final trading day after a
+                    // holiday or rule change.  The calendar manifest is ordered
+                    // by month, so the latest official observation is the
+                    // authoritative boundary and its snapshot remains attached.
                     entry.expiry_date = Some(event_date);
                     entry.expiry_url.clone_from(&row.canonical_url);
                     entry.expiry_sha256.clone_from(&row.sha256);
@@ -309,7 +307,7 @@ fn load_lifecycle_manifest(
                 &mut entry.expiry_sha256,
             )
         };
-        if date_slot.is_some_and(|previous| previous != date) {
+        if row.event == "listing" && date_slot.is_some_and(|previous| previous != date) {
             bail!("conflicting CZCE {} event: {}", row.event, row.symbol);
         }
         *date_slot = Some(date);
@@ -323,7 +321,10 @@ fn validate_lifecycle_url(value: &str) -> Result<()> {
     let url = reqwest::Url::parse(value)
         .with_context(|| format!("invalid CZCE lifecycle URL: {value}"))?;
     if url.scheme() != "https"
-        || !matches!(url.host_str(), Some("www.czce.com.cn" | "czce.com.cn"))
+        || !matches!(
+            url.host_str(),
+            Some("app.czce.com.cn" | "www.czce.com.cn" | "czce.com.cn")
+        )
         || !url.username().is_empty()
         || url.password().is_some()
     {
@@ -505,7 +506,7 @@ fn extract_contracts(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_contracts, load_lifecycle_manifest};
+    use super::{extract_contracts, load_lifecycle_manifest, validate_lifecycle_url};
     use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
 
@@ -515,6 +516,14 @@ mod tests {
             extract_contracts("今日AP2701、CF2703C/P、ZC2701合约挂盘"),
             vec!["AP701", "ZC701"]
         );
+    }
+
+    #[test]
+    fn accepts_official_app_api_lifecycle_url() {
+        validate_lifecycle_url(
+            "https://app.czce.com.cn/cmsapi/cmsapp/content/selectJyyl?Jv5sQwFC=token",
+        )
+        .expect("official CZCE calendar API URL");
     }
 
     #[test]
