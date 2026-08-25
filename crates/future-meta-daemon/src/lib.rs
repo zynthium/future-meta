@@ -4,6 +4,7 @@ pub mod cffex_metadata;
 pub mod contract_base_info;
 pub mod coverage;
 pub mod czce;
+pub mod czce_metadata;
 pub mod db;
 pub mod dce;
 pub mod export;
@@ -197,6 +198,14 @@ enum Command {
         db: PathBuf,
         #[arg(long)]
         product_manifest: PathBuf,
+        #[arg(long)]
+        calendar_manifest: PathBuf,
+        #[arg(long)]
+        snapshot_dir: PathBuf,
+    },
+    ImportCzceMetadata {
+        #[arg(long)]
+        db: PathBuf,
         #[arg(long)]
         calendar_manifest: PathBuf,
         #[arg(long)]
@@ -602,6 +611,26 @@ pub fn run() -> anyhow::Result<()> {
             eprintln!(
                 "CFFEX metadata imported: contracts={} specification_versions={}",
                 result.contracts, result.specification_versions
+            );
+            Ok(())
+        }
+        Command::ImportCzceMetadata {
+            db,
+            calendar_manifest,
+            snapshot_dir,
+        } => {
+            let observed_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let result =
+                czce_metadata::import_metadata(&czce_metadata::CzceMetadataImportOptions {
+                    history_db: db,
+                    calendar_manifest,
+                    snapshot_dir,
+                    observed_at,
+                })?;
+            eprintln!(
+                "CZCE metadata imported: snapshots={} contracts={} lifecycle_evidence={}",
+                result.calendar_snapshots, result.contracts, result.lifecycle_evidence
             );
             Ok(())
         }
