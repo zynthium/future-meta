@@ -209,6 +209,8 @@ enum Command {
         #[arg(long)]
         calendar_manifest: PathBuf,
         #[arg(long)]
+        lifecycle_manifest: Option<PathBuf>,
+        #[arg(long)]
         snapshot_dir: PathBuf,
     },
     ImportContractBaseInfo {
@@ -617,6 +619,7 @@ pub fn run() -> anyhow::Result<()> {
         Command::ImportCzceMetadata {
             db,
             calendar_manifest,
+            lifecycle_manifest,
             snapshot_dir,
         } => {
             let observed_at = time::OffsetDateTime::now_utc()
@@ -625,6 +628,7 @@ pub fn run() -> anyhow::Result<()> {
                 czce_metadata::import_metadata(&czce_metadata::CzceMetadataImportOptions {
                     history_db: db,
                     calendar_manifest,
+                    lifecycle_manifest,
                     snapshot_dir,
                     observed_at,
                 })?;

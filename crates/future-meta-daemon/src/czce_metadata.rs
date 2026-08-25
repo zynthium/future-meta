@@ -16,6 +16,9 @@ use time::{Date, OffsetDateTime};
 pub struct CzceMetadataImportOptions {
     pub history_db: PathBuf,
     pub calendar_manifest: PathBuf,
+    /// Optional field-level lifecycle evidence extracted from other official
+    /// CZCE publications (for example, a product launch notice PDF).
+    pub lifecycle_manifest: Option<PathBuf>,
     pub snapshot_dir: PathBuf,
     pub observed_at: String,
 }
@@ -36,6 +39,16 @@ struct CalendarManifestRow {
     bytes: usize,
     record_count: usize,
     content_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LifecycleManifestRow {
+    symbol: String,
+    event: String,
+    date: String,
+    canonical_url: String,
+    sha256: String,
+    bytes: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,7 +93,11 @@ struct Contract {
 pub fn import_metadata(options: &CzceMetadataImportOptions) -> Result<CzceMetadataImportResult> {
     OffsetDateTime::parse(&options.observed_at, &Rfc3339)
         .context("invalid CZCE metadata observed_at")?;
-    let events = load_calendar(&options.calendar_manifest, &options.snapshot_dir)?;
+    let events = load_calendar(
+        &options.calendar_manifest,
+        options.lifecycle_manifest.as_deref(),
+        &options.snapshot_dir,
+    )?;
     let mut connection = db::connect(&options.history_db)?;
     db::ensure_schema(&connection)?;
     let contracts = load_contracts(&connection)?;
@@ -134,7 +151,11 @@ struct CalendarEvents {
     events: BTreeMap<String, Lifecycle>,
 }
 
-fn load_calendar(manifest: &Path, snapshot_dir: &Path) -> Result<CalendarEvents> {
+fn load_calendar(
+    manifest: &Path,
+    lifecycle_manifest: Option<&Path>,
+    snapshot_dir: &Path,
+) -> Result<CalendarEvents> {
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
         .from_path(manifest)
@@ -226,7 +247,106 @@ fn load_calendar(manifest: &Path, snapshot_dir: &Path) -> Result<CalendarEvents>
     if snapshots == 0 {
         bail!("CZCE calendar manifest is empty");
     }
+    if let Some(manifest) = lifecycle_manifest {
+        load_lifecycle_manifest(manifest, snapshot_dir, &mut events)?;
+    }
+
     Ok(CalendarEvents { snapshots, events })
+}
+
+fn load_lifecycle_manifest(
+    manifest: &Path,
+    snapshot_dir: &Path,
+    events: &mut BTreeMap<String, Lifecycle>,
+) -> Result<()> {
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(b'\t')
+        .from_path(manifest)
+        .with_context(|| format!("open CZCE lifecycle manifest {}", manifest.display()))?;
+
+    for row in reader.deserialize::<LifecycleManifestRow>() {
+        let row = row?;
+        let parsed = parse_symbol(&row.symbol)?;
+        if parsed.exchange != "CZCE" || parsed.kind != SymbolKind::Futures {
+            bail!(
+                "CZCE lifecycle manifest requires concrete futures symbol: {}",
+                row.symbol
+            );
+        }
+        let date = parse_date(&row.date)?;
+        if row.event != "listing" && row.event != "expiry" {
+            bail!(
+                "CZCE lifecycle manifest event must be listing or expiry: {}",
+                row.event
+            );
+        }
+        validate_lifecycle_url(&row.canonical_url)?;
+        validate_sha256(&row.sha256)?;
+        let bytes = read_lifecycle_snapshot(snapshot_dir, &row.sha256)?;
+        if bytes.len() != row.bytes {
+            bail!("CZCE lifecycle byte count mismatch: {}", row.canonical_url);
+        }
+
+        let local = row.symbol.strip_prefix("CZCE.").unwrap_or(&row.symbol);
+        let entry = events.entry(local.to_owned()).or_insert_with(|| Lifecycle {
+            listing_date: None,
+            listing_url: row.canonical_url.clone(),
+            listing_sha256: row.sha256.clone(),
+            expiry_date: None,
+            expiry_url: row.canonical_url.clone(),
+            expiry_sha256: row.sha256.clone(),
+        });
+        let (date_slot, url_slot, sha_slot) = if row.event == "listing" {
+            (
+                &mut entry.listing_date,
+                &mut entry.listing_url,
+                &mut entry.listing_sha256,
+            )
+        } else {
+            (
+                &mut entry.expiry_date,
+                &mut entry.expiry_url,
+                &mut entry.expiry_sha256,
+            )
+        };
+        if date_slot.is_some_and(|previous| previous != date) {
+            bail!("conflicting CZCE {} event: {}", row.event, row.symbol);
+        }
+        *date_slot = Some(date);
+        *url_slot = row.canonical_url;
+        *sha_slot = row.sha256;
+    }
+    Ok(())
+}
+
+fn validate_lifecycle_url(value: &str) -> Result<()> {
+    let url = reqwest::Url::parse(value)
+        .with_context(|| format!("invalid CZCE lifecycle URL: {value}"))?;
+    if url.scheme() != "https"
+        || !matches!(url.host_str(), Some("www.czce.com.cn" | "czce.com.cn"))
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        bail!("unexpected CZCE lifecycle URL: {value}");
+    }
+    Ok(())
+}
+
+fn read_lifecycle_snapshot(snapshot_dir: &Path, sha256: &str) -> Result<Vec<u8>> {
+    for suffix in ["", ".pdf", ".dat", ".bin", ".html", ".htm", ".json"] {
+        let path = snapshot_dir.join(format!("{sha256}{suffix}"));
+        if !path.is_file() {
+            continue;
+        }
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read retained CZCE lifecycle snapshot {}", path.display()))?;
+        let actual = hex::encode(Sha256::digest(&bytes));
+        if actual != sha256 {
+            bail!("retained CZCE lifecycle SHA-256 mismatch: {sha256}");
+        }
+        return Ok(bytes);
+    }
+    bail!("retained CZCE lifecycle snapshot not found: {sha256}")
 }
 
 fn load_contracts(connection: &rusqlite::Connection) -> Result<Vec<Contract>> {
@@ -385,7 +505,9 @@ fn extract_contracts(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_contracts;
+    use super::{extract_contracts, load_lifecycle_manifest};
+    use sha2::{Digest, Sha256};
+    use std::collections::BTreeMap;
 
     #[test]
     fn extracts_futures_and_skips_options() {
@@ -393,5 +515,31 @@ mod tests {
             extract_contracts("今日AP2701、CF2703C/P、ZC2701合约挂盘"),
             vec!["AP701", "ZC701"]
         );
+    }
+
+    #[test]
+    fn imports_field_level_lifecycle_manifest() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let body = b"official launch notice";
+        let digest = hex::encode(Sha256::digest(body));
+        std::fs::write(directory.path().join(format!("{digest}.pdf")), body).expect("snapshot");
+        let manifest = directory.path().join("lifecycle.tsv");
+        std::fs::write(
+            &manifest,
+            format!(
+                "symbol\tevent\tdate\tcanonical_url\tsha256\tbytes\nCZCE.CJ001\tlisting\t2019-04-30\thttps://www.czce.com.cn/cn/rootfiles/2019/04/24/notice.pdf\t{digest}\t{}\n",
+                body.len()
+            ),
+        )
+        .expect("manifest");
+
+        let mut events = BTreeMap::new();
+        load_lifecycle_manifest(&manifest, directory.path(), &mut events).expect("import");
+        let lifecycle = events.get("CJ001").expect("contract");
+        assert_eq!(
+            lifecycle.listing_date,
+            Some(super::parse_date("2019-04-30").unwrap())
+        );
+        assert!(lifecycle.expiry_date.is_none());
     }
 }
