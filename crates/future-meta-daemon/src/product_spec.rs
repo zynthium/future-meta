@@ -339,14 +339,14 @@ fn persist_contracts(
 }
 
 fn validate_exchange(exchange: &str) -> Result<()> {
-    if !matches!(exchange, "SHFE" | "INE" | "GFEX") {
-        bail!("product specification importer supports only SHFE, INE, or GFEX");
+    if !matches!(exchange, "SHFE" | "INE" | "GFEX" | "CZCE") {
+        bail!("product specification importer supports only SHFE, INE, GFEX, or CZCE");
     }
     Ok(())
 }
 
 fn validate_product(product: &str) -> Result<()> {
-    if product.is_empty() || !product.bytes().all(|byte| byte.is_ascii_lowercase()) {
+    if product.is_empty() || !product.bytes().all(|byte| byte.is_ascii_alphabetic()) {
         bail!("invalid product specification product: {product}");
     }
     Ok(())
@@ -370,6 +370,7 @@ fn validate_specification_url(exchange: &str, value: &str) -> Result<()> {
                 url.path().rsplit_once('.').map(|(_, extension)| extension),
                 Some("doc" | "docx" | "pdf")
             ));
+    let allowed_path = allowed_path || (exchange == "CZCE" && url.path().starts_with("/cn/sspz/"));
     let allowed_scheme = if exchange == "GFEX" {
         matches!(url.scheme(), "http" | "https")
     } else {
@@ -395,6 +396,10 @@ fn validate_specification_url(exchange: &str, value: &str) -> Result<()> {
             "ine.cn" | "www.ine.cn" | "ine.com.cn" | "www.ine.com.cn"
         ),
         "GFEX" => matches!(host.as_str(), "gfex.com.cn" | "www.gfex.com.cn"),
+        "CZCE" => {
+            matches!(host.as_str(), "czce.com.cn" | "www.czce.com.cn")
+                && url.path().starts_with("/cn/sspz/")
+        }
         _ => false,
     };
     if !allowed {
@@ -483,6 +488,15 @@ mod tests {
         validate_specification_url(
             "SHFE",
             "https://www.ine.cn/products/futures/metal/nonferrousmetal/bc_f/standard_bc_f/202312/t20231205_802543.html",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn specification_url_accepts_czce_standard_contract_page() {
+        validate_specification_url(
+            "CZCE",
+            "https://www.czce.com.cn/cn/sspz/pg/bzhy/qhhy/H077002021001001index_1.htm",
         )
         .unwrap();
     }

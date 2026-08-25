@@ -164,9 +164,14 @@ fn load_calendar(manifest: &Path, snapshot_dir: &Path) -> Result<CalendarEvents>
 
         for item in response.result {
             let event_date = parse_date(&item.xsrq)?;
-            let listing_text = item.hygp.as_deref().unwrap_or("");
-            if listing_text.contains("挂盘") {
-                for symbol in extract_contracts(listing_text) {
+            for event_text in [item.hygp.as_deref(), item.hydq.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if !event_text.contains("挂盘") {
+                    continue;
+                }
+                for symbol in extract_contracts(event_text) {
                     let entry = events.entry(symbol.clone()).or_insert_with(|| Lifecycle {
                         listing_date: Some(event_date),
                         listing_url: row.canonical_url.clone(),
@@ -189,9 +194,14 @@ fn load_calendar(manifest: &Path, snapshot_dir: &Path) -> Result<CalendarEvents>
                     entry.listing_sha256.clone_from(&row.sha256);
                 }
             }
-            let expiry_text = item.hydq.as_deref().unwrap_or("");
-            if expiry_text.contains("最后交易日") || expiry_text.contains("到期") {
-                for symbol in extract_contracts(expiry_text) {
+            for event_text in [item.hygp.as_deref(), item.hydq.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if !event_text.contains("最后交易日") && !event_text.contains("到期") {
+                    continue;
+                }
+                for symbol in extract_contracts(event_text) {
                     let entry = events.entry(symbol.clone()).or_insert_with(|| Lifecycle {
                         listing_date: None,
                         listing_url: row.canonical_url.clone(),
