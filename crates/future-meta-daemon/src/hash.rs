@@ -1,10 +1,10 @@
 //! Canonical allowed-field hashing.
 
 use crate::parse::AllowedRow;
-use future_meta::model::{FeeSpec, TradingStatus};
+use future_meta::model::{FeeKind, FeeSpec};
 use serde::Serialize;
 
-/// Hash the allowed identity and rule fields for one row.
+/// Hash the three fee-rule legs for one row.
 ///
 /// The source update timestamp is intentionally excluded because it describes
 /// observation time, not fee-rule identity.
@@ -17,18 +17,9 @@ use serde::Serialize;
 pub fn row_rule_hash(row: &AllowedRow) -> String {
     assert_finite_row(row);
     let canonical = CanonicalRow {
-        symbol: row.symbol.as_str(),
-        listing_date: row.listing_date.as_deref(),
-        expiry_date: row.expiry_date.as_deref(),
-        trading_status: &row.trading_status,
-        buy_margin_rate: row.buy_margin_rate,
-        sell_margin_rate: row.sell_margin_rate,
-        open_fee: &row.open_fee,
-        close_yesterday_fee: &row.close_yesterday_fee,
-        close_today_fee: &row.close_today_fee,
-        lot_size: row.lot_size,
-        tick_size: row.tick_size,
-        is_main_contract: row.is_main_contract,
+        open: canonical_fee(&row.open_fee),
+        close_yesterday: canonical_fee(&row.close_yesterday_fee),
+        close_today: canonical_fee(&row.close_today_fee),
     };
     let text =
         serde_json::to_string(&canonical).expect("canonical allowed row should serialize to JSON");
@@ -75,19 +66,43 @@ pub fn source_probe_hash(csv_url: &str, detail_url: &str) -> String {
 }
 
 #[derive(Serialize)]
-struct CanonicalRow<'a> {
-    symbol: &'a str,
-    listing_date: Option<&'a str>,
-    expiry_date: Option<&'a str>,
-    trading_status: &'a TradingStatus,
-    buy_margin_rate: Option<f64>,
-    sell_margin_rate: Option<f64>,
-    open_fee: &'a FeeSpec,
-    close_yesterday_fee: &'a FeeSpec,
-    close_today_fee: &'a FeeSpec,
-    lot_size: f64,
-    tick_size: f64,
-    is_main_contract: bool,
+struct CanonicalRow {
+    open: CanonicalFee,
+    close_yesterday: CanonicalFee,
+    close_today: CanonicalFee,
+}
+
+#[derive(Serialize)]
+struct CanonicalFee {
+    kind: &'static str,
+    value_bits: Option<u64>,
+}
+
+fn canonical_fee(fee: &FeeSpec) -> CanonicalFee {
+    if is_semantically_zero(fee) {
+        return CanonicalFee {
+            kind: "Zero",
+            value_bits: Some(0.0_f64.to_bits()),
+        };
+    }
+
+    CanonicalFee {
+        kind: match fee.kind {
+            FeeKind::CnyPerLot => "CnyPerLot",
+            FeeKind::TurnoverRatePerTenThousand => "TurnoverRatePerTenThousand",
+            FeeKind::Zero => "Zero",
+            FeeKind::Unknown => "Unknown",
+        },
+        value_bits: fee.value.map(f64::to_bits),
+    }
+}
+
+fn is_semantically_zero(fee: &FeeSpec) -> bool {
+    fee.value == Some(0.0)
+        && matches!(
+            fee.kind,
+            FeeKind::CnyPerLot | FeeKind::TurnoverRatePerTenThousand | FeeKind::Zero
+        )
 }
 
 #[must_use]

@@ -28,10 +28,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         fee.source_updated_at
     );
 
-    let main = meta.main_contract_fee_asof("KQ.m@SHFE.cu", &at)?;
+    let concrete = fee;
     println!(
-        "main=KQ.m@SHFE.cu at={} contract_id={} open_fee={:?}",
-        at, main.contract_id, main.open_fee
+        "concrete={} at={} contract_id={} open_fee={:?}",
+        symbol, at, concrete.contract_id, concrete.open_fee
     );
 
     Ok(())

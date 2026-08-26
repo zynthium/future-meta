@@ -440,18 +440,59 @@ fn trading_day_snapshot_rejects_dates_before_history() {
 }
 
 #[test]
-fn queries_underlying_and_main_continuous() {
+fn queries_concrete_contracts_and_rejects_kq_fee_aliases() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let fees = meta
         .underlying_fees_asof("SHFE.cu", "2026-06-04T12:00:00+08:00")
         .unwrap();
 
     assert_eq!(fees.len(), 1);
+    assert_eq!(fees[0].contract_id, 1);
 
-    let main = meta
-        .main_contract_fee_asof("KQ.m@SHFE.cu", "2026-06-04T12:00:00+08:00")
-        .unwrap();
-    assert_eq!(main.rule_hash, "abc");
+    for symbol in ["KQ.m@SHFE.cu", "KQ.i@SHFE.cu"] {
+        let err = meta
+            .contract_fee_asof(symbol, "2026-06-04T12:00:00+08:00")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            FutureMetaError::UnsupportedSymbolKind(rejected) if rejected == symbol
+        ));
+    }
+}
+
+#[test]
+fn rejects_kq_aliases_for_contract_metadata_and_specs() {
+    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
+
+    for symbol in ["KQ.m@SHFE.cu", "KQ.i@SHFE.cu"] {
+        let contract_err = meta.contract(symbol).unwrap_err();
+        assert!(matches!(
+            contract_err,
+            FutureMetaError::UnsupportedSymbolKind(rejected) if rejected == symbol
+        ));
+
+        let spec_err = meta
+            .contract_spec_asof(symbol, "2026-06-04T12:00:00+08:00")
+            .unwrap_err();
+        assert!(matches!(
+            spec_err,
+            FutureMetaError::UnsupportedSymbolKind(rejected) if rejected == symbol
+        ));
+    }
+}
+
+#[test]
+fn rejects_archives_that_persist_kq_aliases_as_contracts() {
+    let mut archive = FeeArchiveV2::from(sample_archive());
+    archive.contracts[0].symbol = "KQ.m@SHFE.cu".to_owned();
+
+    let err = FutureMeta::from_archive(archive).unwrap_err();
+
+    assert!(matches!(
+        err,
+        FutureMetaError::CorruptArchive(message)
+            if message.contains("non-concrete contract symbol KQ.m@SHFE.cu")
+    ));
 }
 
 #[test]
@@ -463,7 +504,7 @@ fn clone_shares_indexed_storage() {
 }
 
 #[test]
-fn parsed_time_underlying_and_main_queries() {
+fn parsed_time_underlying_queries_return_concrete_contracts() {
     let meta = FutureMeta::from_archive(sample_archive()).unwrap();
     let at = OffsetDateTime::parse("2026-06-04T12:00:00+08:00", &Rfc3339).unwrap();
     let trading_date = Date::from_calendar_date(2026, Month::June, 4).unwrap();
@@ -479,31 +520,22 @@ fn parsed_time_underlying_and_main_queries() {
 
     assert_eq!(at_fees.len(), 1);
     assert_eq!(on_fees.len(), 1);
-    assert_eq!(
-        meta.main_contract_fee_at("KQ.m@SHFE.cu", at)
-            .unwrap()
-            .rule_hash,
-        "abc"
-    );
-    assert_eq!(
-        meta.main_contract_fee_on("KQ.m@SHFE.cu", trading_date)
-            .unwrap()
-            .rule_hash,
-        "abc"
-    );
+    assert_eq!(at_fees[0].contract_id, 1);
+    assert_eq!(on_fees[0].contract_id, 1);
 }
 
 #[test]
-fn rejects_index_for_main_contract_query() {
-    let meta = FutureMeta::from_archive(sample_archive()).unwrap();
-    let err = meta
-        .main_contract_fee_asof("KQ.i@SHFE.cu", "2026-06-04T12:00:00+08:00")
-        .unwrap_err();
+fn underlying_query_keeps_concrete_fees_with_unknown_trading_status() {
+    let mut archive = FeeArchiveV2::from(sample_archive());
+    archive.fee_versions[0].trading_status = TradingStatus::Unknown;
+    let meta = FutureMeta::from_archive(archive).unwrap();
 
-    assert!(matches!(
-        err,
-        FutureMetaError::UnsupportedSymbolKind(symbol) if symbol == "KQ.i@SHFE.cu"
-    ));
+    let fees = meta
+        .underlying_fees_asof("SHFE.cu", "2026-06-04T12:00:00+08:00")
+        .unwrap();
+
+    assert_eq!(fees.len(), 1);
+    assert_eq!(fees[0].contract_id, 1);
 }
 
 #[test]

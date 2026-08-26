@@ -9,7 +9,7 @@ use crate::model::{
     Contract, ContractFee, ContractSpecVersion, FeeArchiveV2, FeeKind, FeeSpec, SCHEMA_VERSION,
     TradingStatus,
 };
-use crate::symbol::{derive_underlying_symbol, main_continuous_underlying};
+use crate::symbol::{SymbolKind, parse_symbol};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Month, OffsetDateTime, UtcOffset};
 
@@ -455,7 +455,19 @@ impl FutureMeta {
                     contract.expiry_date.as_deref(),
                 )?,
             });
-            let underlying = derive_underlying_symbol(&contract.symbol)?;
+            let parsed = parse_symbol(&contract.symbol)?;
+            if parsed.kind != SymbolKind::Futures {
+                return Err(FutureMetaError::CorruptArchive(format!(
+                    "fee archive contains non-concrete contract symbol {}",
+                    contract.symbol
+                )));
+            }
+            let underlying = parsed.underlying_symbol.ok_or_else(|| {
+                FutureMetaError::CorruptArchive(format!(
+                    "concrete contract has no underlying symbol {}",
+                    contract.symbol
+                ))
+            })?;
             contracts_by_underlying
                 .entry(underlying)
                 .or_default()
@@ -564,7 +576,7 @@ impl FutureMeta {
     ///
     /// Returns an error when `symbol` is not present in the archive.
     pub fn contract(&self, symbol: &str) -> Result<&Contract, FutureMetaError> {
-        let handle = self.resolve_contract(symbol)?;
+        let handle = self.resolve_concrete_contract(symbol)?;
         self.contract_for_handle(handle)
     }
 
@@ -611,7 +623,7 @@ impl FutureMeta {
         at: OffsetDateTime,
     ) -> Result<&ContractSpecVersion, FutureMetaError> {
         self.reject_date_before_history(exchange_date(at))?;
-        let handle = self.resolve_contract(symbol)?;
+        let handle = self.resolve_concrete_contract(symbol)?;
         self.contract_spec_for_handle_at(handle, at)
     }
 
@@ -626,7 +638,7 @@ impl FutureMeta {
         trading_date: Date,
     ) -> Result<&ContractSpecVersion, FutureMetaError> {
         self.reject_date_before_history(trading_date)?;
-        let handle = self.resolve_contract(symbol)?;
+        let handle = self.resolve_concrete_contract(symbol)?;
         self.contract_spec_for_handle_on(handle, trading_date)
     }
 
@@ -684,7 +696,7 @@ impl FutureMeta {
     ) -> Result<&ContractFee, FutureMetaError> {
         let trading_date = exchange_date(at);
         self.reject_date_before_history(trading_date)?;
-        let handle = self.resolve_contract(symbol)?;
+        let handle = self.resolve_concrete_contract(symbol)?;
         self.fee_for_contract_handle_on(handle, trading_date)?
             .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
     }
@@ -706,7 +718,7 @@ impl FutureMeta {
         trading_date: Date,
     ) -> Result<&ContractFee, FutureMetaError> {
         self.reject_date_before_history(trading_date)?;
-        let handle = self.resolve_contract(symbol)?;
+        let handle = self.resolve_concrete_contract(symbol)?;
         self.fee_for_contract_handle_on(handle, trading_date)?
             .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
     }
@@ -901,55 +913,6 @@ impl FutureMeta {
             .filter_map(move |handle| self.contract_fee_for_underlying_on(*handle, trading_date)))
     }
 
-    /// Return the main-contract fee rule for a `KQ.m@...` query alias.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the symbol is not a supported main-continuous
-    /// alias, the underlying is unknown, or no main fee version covers `at`.
-    pub fn main_contract_fee_asof(
-        &self,
-        symbol: &str,
-        at: &str,
-    ) -> Result<&ContractFee, FutureMetaError> {
-        self.main_contract_fee_at(symbol, parse_query_timestamp(at)?)
-    }
-
-    /// Return the main-contract fee rule at a parsed timestamp.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `symbol` is not a main-continuous alias, its
-    /// underlying is unknown, or no main fee version covers `at`.
-    #[inline]
-    pub fn main_contract_fee_at(
-        &self,
-        symbol: &str,
-        at: OffsetDateTime,
-    ) -> Result<&ContractFee, FutureMetaError> {
-        self.main_contract_fee_on(symbol, exchange_date(at))
-    }
-
-    /// Return the main-contract fee rule on an exchange-local trading date.
-    ///
-    /// This parsed-date tier allocates nothing on successful queries.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `symbol` is not a main-continuous alias, its
-    /// underlying is unknown, or no main fee version covers `trading_date`.
-    #[inline]
-    pub fn main_contract_fee_on(
-        &self,
-        symbol: &str,
-        trading_date: Date,
-    ) -> Result<&ContractFee, FutureMetaError> {
-        let underlying = main_continuous_underlying(symbol)?;
-        self.underlying_fees_on(underlying, trading_date)?
-            .find(|fee| fee.is_main_contract)
-            .ok_or_else(|| FutureMetaError::NoVersionAt(symbol.to_owned()))
-    }
-
     /// Return contract metadata in archive order.
     #[must_use]
     pub fn contracts(&self) -> &[Contract] {
@@ -961,6 +924,13 @@ impl FutureMeta {
             return Err(FutureMetaError::NotAvailableBeforeHistoryStart);
         }
         Ok(())
+    }
+
+    fn resolve_concrete_contract(&self, symbol: &str) -> Result<ContractHandle, FutureMetaError> {
+        if parse_symbol(symbol)?.kind != SymbolKind::Futures {
+            return Err(FutureMetaError::UnsupportedSymbolKind(symbol.to_owned()));
+        }
+        self.resolve_contract(symbol)
     }
 
     fn contract_index(&self, handle: ContractHandle) -> Result<&ContractIndex, FutureMetaError> {
@@ -1082,10 +1052,10 @@ impl FutureMeta {
         let fee = self
             .fee_for_contract_handle_on(handle, trading_date)
             .ok()??;
-        if fee.trading_status == TradingStatus::Trading {
-            Some(fee)
-        } else {
+        if fee.trading_status == TradingStatus::NotTrading {
             None
+        } else {
+            Some(fee)
         }
     }
 

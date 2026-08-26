@@ -126,13 +126,13 @@ let next_meta = refresh_meta().await?;
 ```rust
 let fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")?;
 let fee = meta.contract_fee_on("SHFE.cu2607", trading_date)?;
-let main = meta.main_contract_fee_asof("KQ.m@SHFE.cu", "2026-06-08T10:48:06Z")?;
 ```
 
 说明：
 
-- `symbol` 使用 TqSdk 风格，例如 `SHFE.cu2607`、`CZCE.SR903`、
-  `KQ.m@SHFE.cu`。
+- 手续费和规格只接受具体期货合约 symbol，例如 `SHFE.cu2607`、`CZCE.SR903`。
+- `KQ.m@...`、`KQ.i@...` 是别名而非具体合约，不能查询手续费或规格，会返回
+  `UnsupportedSymbolKind`。需要品种视图时使用 `underlying_fees_*`，结果始终是具体合约。
 - 手续费按交易所本地日期生效，不在日内盘中变化。
 - `contract_fee_asof` 会把时间戳映射到交易所本地日期，再选择该日手续费。
 - raw rule API 返回 `ContractFee`，适合展示、核对、审计和低频逻辑。

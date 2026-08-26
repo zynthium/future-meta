@@ -3,6 +3,15 @@
 `future-meta` loads a published fee archive into a local `FutureMeta` query
 client. Queries do not call the network after the archive is loaded.
 
+## Concrete contracts only
+
+Fee and specification records belong only to concrete futures contracts. Pass symbols such as
+`SHFE.cu2607` to `contract`, `resolve_contract`, `contract_spec_*`, and `contract_fee_*`.
+`KQ.m@...` and `KQ.i@...` are aliases, not contracts; these APIs reject them with
+`UnsupportedSymbolKind` and archives containing them are corrupt. For a product-family view, call
+`underlying_fees_*` with an underlying such as `SHFE.cu`; it returns concrete contracts and excludes
+only `NotTrading` records, retaining `Unknown` when status was not independently refreshed.
+
 ## Tick-Level Backtests
 
 Use `FutureMeta` for setup and validation. Do not query raw fee rules inside a

@@ -136,7 +136,6 @@ fn import_v11_baseline_with_optional_patches(
 ///
 /// Returns an error when the database is unavailable or has no V11 manifest.
 pub fn ensure_v11_baseline(conn: &Connection) -> Result<()> {
-    ensure_schema(conn)?;
     let exists: bool = conn.query_row(
         "select exists(
            select 1 from baseline_state where baseline_version = ?1

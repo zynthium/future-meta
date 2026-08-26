@@ -17,9 +17,9 @@ use time::format_description::well_known::Rfc3339;
 ///
 /// Returns an error if archive export fails.
 pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
-    let conn = Connection::open(db)?;
-    crate::db::ensure_schema(&conn)?;
+    let conn = crate::db::connect_readonly(db)?;
     ensure_no_untrusted_jin10_fee_versions(&conn)?;
+    crate::db::validate_fee_history_integrity(&conn)?;
     std::fs::create_dir_all(out.join("artifacts"))?;
     let archive = load_archive(&conn)?;
     let bytes = encode_archive_bytes(&archive)?;
@@ -39,6 +39,7 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         generated_at: archive.generated_at.clone(),
         history_start: archive.history_start.clone(),
         history_end: archive.history_end.clone(),
+        fee_effective_from: Some(archive.history_end.clone()),
         artifact: "latest.fmeta.zst".to_owned(),
         sha256: sha,
         size: bytes.len() as u64,
@@ -139,12 +140,17 @@ fn load_archive(conn: &Connection) -> Result<FeeArchiveV2> {
         .map(|version| version.valid_from.clone())
         .min()
         .unwrap_or_else(|| generated_at.clone());
+    let history_end = fee_versions
+        .iter()
+        .map(|version| version.valid_from.clone())
+        .max()
+        .unwrap_or_else(|| generated_at.clone());
 
     Ok(FeeArchiveV2 {
         schema_version: SCHEMA_VERSION,
         generated_at: generated_at.clone(),
         history_start,
-        history_end: generated_at,
+        history_end,
         contracts,
         contract_spec_versions,
         fee_versions,

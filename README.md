@@ -13,13 +13,13 @@
 
 ## 功能特性
 
-- 使用 TqSdk 风格 `symbol` 作为合约唯一标识，例如 `SHFE.cu2607`、`CZCE.SR903`、`KQ.m@SHFE.cu`。
-- 支持具体合约、品种下全部合约、主连别名的 as-of 手续费查询。
+- 手续费和规格只属于具体期货合约，例如 `SHFE.cu2607`、`CZCE.SR903`。
+- 支持具体合约、品种下具体合约的 as-of 手续费查询；`KQ.m@...`、`KQ.i@...` 不返回手续费或规格。
 - 提供可按历史时间查询的合约乘数、最小变动价位，以及派生的每手每跳价值。
 - 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
 - daemon 使用 SQLite 保存历史版本，按手续费规则变化生成有效期区间。
-- GitHub Actions 每天北京时间 18:45 增量更新，Cloudflare Pages 免费层分发静态文件。
+- GitHub Actions 每天北京时间 18:45 采集候选；仅人工审阅的官方证据可创建新的具体合约费率记录并发布。
 
 ## 架构
 
@@ -81,9 +81,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")?;
     println!("open={:?}, close_today={:?}", fee.open_fee, fee.close_today_fee);
 
-    let main = meta.main_contract_fee_asof("KQ.m@SHFE.cu", "2026-06-08T10:48:06Z")?;
-    println!("main contract fee rule: {}", main.rule_hash);
-
     Ok(())
 }
 ```
@@ -95,6 +92,10 @@ https://future-meta.pages.dev/manifest.json
 ```
 
 可用 `FUTURE_META_CACHE_DIR` 覆盖客户端 artifact 缓存目录。
+
+`Manifest.generated_at` 与 `data_version` 表示 artifact 构建时间；
+`history_end` 与 `fee_effective_from` 表示最后一条已批准手续费的生效时间。两者不同，
+不应把构建时间当作费率最新时间。
 
 ## 查询 API
 
@@ -116,8 +117,7 @@ https://future-meta.pages.dev/manifest.json
 | `TradingDayMeta::prepare_fee(handle)` | 单日内将手续费编译为紧凑数值结构 |
 | `TradingDayMeta::prepare_fee_book(handles)` | 单日内按 caller slot 顺序构建连续 `PreparedFee` 表 |
 | `TradingDayMeta::prepare_fee_cursors(handles, start_unix_nanos)` | 单日内按 caller slot 顺序构建可跨日推进的 cursor 表 |
-| `underlying_fees_asof(underlying_symbol, at)` | 查询某个品种在该时间点可交易合约的手续费列表 |
-| `main_contract_fee_asof("KQ.m@...", at)` | 查询主连别名对应的主力合约手续费 |
+| `underlying_fees_asof(underlying_symbol, at)` | 查询某个品种在该时间点不是 `NotTrading` 的具体合约手续费列表；`Unknown` 保留 |
 
 tick 回测通常跨多日。推荐先解析合约，再构建跨日 cursor 表：
 
@@ -298,11 +298,15 @@ cargo run -p future-meta-daemon -- import-ine-parameters \
 或 SHA-256 不合法时，导入在写库前硬失败。成功版本同时保留日参数与平今规则两份
 官方证据，并标记为 `paired_official`。
 
-在已有 seed 上应用最新截面：
+检查最新第三方截面（只读，不会改写或创建手续费历史）：
 
 ```bash
 cargo run -p future-meta-daemon -- update-latest --db data/future-meta.sqlite --require-seed
 ```
+
+有候选但没有新合格费率时，该命令以 `Deferred` 原因非零退出；定时任务将它视为预期
+的“不发布”。发现候选后，先保留并人工复核交易所原始证据，再只在审阅副本中创建前向
+生效的具体合约记录。
 
 只读核验 Jin10（不会修改手续费历史）：
 
@@ -314,16 +318,23 @@ cargo run -p future-meta-daemon -- validate-jin10 \
   --out /tmp/jin10-validation.json
 ```
 
-导出 Cloudflare Pages artifacts：
+仅在审阅副本通过完整性与覆盖审计后导出 Cloudflare Pages artifacts：
 
 ```bash
-cargo run -p future-meta-daemon -- export --db data/future-meta.sqlite --out public
+cargo run -p future-meta-daemon -- audit-coverage \
+  --db path/to/review-copy.sqlite \
+  --from 2020-01-01 --through YYYY-MM-DD \
+  --out /tmp/future-meta-coverage.json --strict
+
+cargo run -p future-meta-daemon -- export \
+  --db path/to/review-copy.sqlite --out public
 mkdir -p public/ops
-gzip -c data/future-meta.sqlite > public/ops/future-meta.sqlite.gz
+gzip -c path/to/review-copy.sqlite > public/ops/future-meta.sqlite.gz
 ```
 
 > [!WARNING]
-> 初始全量历史抓取请求较多，建议在本地稳定网络或代理环境中手动执行。GitHub Actions 只负责增量更新，不从零构建历史库。
+> 初始全量历史抓取请求较多，建议在本地稳定网络或代理环境中手动执行。GitHub Actions
+> 不从零构建历史库，也不会导出、替换 seed 或部署 Pages；发布只来自审阅副本。
 
 ## 部署
 

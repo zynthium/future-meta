@@ -68,9 +68,14 @@ cargo run -p future-meta-daemon -- update-latest \
   --db "$DAY_DIR/future-meta.sqlite" --require-seed
 ```
 
-周五运行必须附加 `scan-announcements --reconcile-htfc`。若当日发现实质费率差异，`update-latest` 的预期行为是：在创建任何第三方来源的 `fee_versions` 前因缺少精确官方证据而安全失败；没有费率差异时允许完成最新截面状态更新。无论结果如何，不导出、压缩或发布任何 artifact。
+周五运行必须附加 `scan-announcements --reconcile-htfc`。`update-latest` 只读诊断：无候选时
+返回 `Noop`；有候选、新合约或安全门控拒绝时以 `Deferred` 原因非零退出，且不会写
+`fee_versions`、合约状态、保证金、主力标记或 source state。无论结果如何，不导出、压缩
+或发布 artifact。
 
-每天记录公告源、源错误、候选状态、9qihuo/Jin10 可用性、命令退出状态，以及运行前后 `fee_versions` 的差异。发现任一非官方来源创建或改写手续费版本、过期未决候选未阻止更新、或主备公告扫描同时失败但更新仍继续时，该日影子运行失败。
+每天记录公告源、源错误、候选状态、9qihuo/Jin10 可用性、命令退出状态，以及运行前后
+`fee_versions` 的差异。发现任一非官方来源创建或改写手续费版本、最新诊断写入状态字段、
+过期未决候选未阻止更新、或主备公告扫描同时失败但更新仍继续时，该日影子运行失败。
 
 ## 官方受控应用测试
 

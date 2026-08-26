@@ -65,6 +65,14 @@ enum Command {
         #[arg(long)]
         db: PathBuf,
     },
+    RepairReviewHistory {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        time_repairs: PathBuf,
+        #[arg(long, required = true)]
+        confirm_review_copy: bool,
+    },
     DiagnoseLatest {
         #[arg(long)]
         db: PathBuf,
@@ -313,13 +321,42 @@ pub fn run() -> anyhow::Result<()> {
             Ok(())
         }
         Command::SeedHistory { db, force_full } => refresh::refresh(&db, force_full),
-        Command::UpdateLatest { db, require_seed } => refresh::update_latest(&db, require_seed),
+        Command::UpdateLatest { db, require_seed } => {
+            let outcome = refresh::update_latest(&db, require_seed)?;
+            eprintln!("latest update outcome: {outcome:?}");
+            Ok(())
+        }
         Command::MigrateContractSpecs { db } => {
             let mut conn = self::db::connect(&db)?;
             let observed_at = time::OffsetDateTime::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)?;
             let changed = self::db::migrate_known_contract_spec_history(&mut conn, &observed_at)?;
             eprintln!("contract specification history migrated: contracts={changed}");
+            Ok(())
+        }
+        Command::RepairReviewHistory {
+            db,
+            time_repairs,
+            confirm_review_copy,
+        } => {
+            if !confirm_review_copy {
+                return Err(anyhow::anyhow!(
+                    "repair-review-history requires --confirm-review-copy"
+                ));
+            }
+            let repairs = serde_json::from_slice::<Vec<self::db::ReviewObservationTimeRepair>>(
+                &std::fs::read(&time_repairs)?,
+            )?;
+            let mut conn = self::db::connect(&db)?;
+            let repaired_at = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)?;
+            let observation_times =
+                self::db::repair_review_observation_times(&mut conn, &repairs, &repaired_at)?;
+            let rekey = self::db::rekey_fee_history_for_review(&mut conn, &repaired_at)?;
+            eprintln!(
+                "review history repaired: observation_times={} fee_versions={} evidence={}",
+                observation_times, rekey.fee_versions, rekey.evidence
+            );
             Ok(())
         }
         Command::DiagnoseLatest { db, out } => {
@@ -777,6 +814,20 @@ mod tests {
             }
             _ => panic!("expected import-official-history command"),
         }
+    }
+
+    #[test]
+    fn repair_review_history_cli_requires_explicit_review_copy_confirmation() {
+        let result = Cli::try_parse_from([
+            "future-meta-daemon",
+            "repair-review-history",
+            "--db",
+            "/tmp/review.sqlite",
+            "--time-repairs",
+            "/tmp/time-repairs.json",
+        ]);
+
+        assert!(result.unwrap_err().to_string().contains("required"));
     }
 
     #[test]

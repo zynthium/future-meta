@@ -1,9 +1,8 @@
 //! Refresh orchestration.
 
-use crate::db::{self, connect, ensure_schema};
-use crate::hash::{rule_set_hash, source_probe_hash};
+use crate::db::{self, connect, connect_readonly, ensure_schema};
 use crate::jin10::{parse_snapshots_with_candidates, range_url};
-use crate::latest::{LATEST_TABLE_PROBE_KEY, LatestSnapshot, parse_latest_html};
+use crate::latest::{LatestSnapshot, parse_latest_html};
 use crate::parse::{AllowedRow, parse_csv};
 use crate::source::{TOTAL_URL, discover_sources_from_html, fetch_text, http_client};
 use anyhow::{Result, anyhow};
@@ -28,6 +27,72 @@ pub struct RefreshOptions {
     pub force_full: bool,
     /// Require an existing locally seeded history database before fetching.
     pub require_seed: bool,
+}
+
+/// Result of evaluating a third-party latest-table snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LatestUpdateOutcome {
+    /// The snapshot introduced no eligible concrete-contract fee record.
+    Noop,
+    /// A snapshot requires retained official evidence before a separate review
+    /// release may add an approved fee record.
+    Deferred { reason: String },
+}
+
+/// Classify latest-table candidates without changing approved history.
+#[must_use]
+pub fn classify_latest_update(
+    verification: &db::LatestCandidateVerification,
+) -> LatestUpdateOutcome {
+    if !verification.rejected.is_empty() {
+        let symbols = verification
+            .rejected
+            .iter()
+            .take(12)
+            .map(|rejection| rejection.symbol.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        return LatestUpdateOutcome::Deferred {
+            reason: format!(
+                "refused {} latest fee candidates before history write; candidates need Jin10 confirmation or staged official evidence; examples={symbols}",
+                verification.rejected.len()
+            ),
+        };
+    }
+
+    if !verification.accepted.is_empty() {
+        let symbols = verification
+            .accepted
+            .iter()
+            .take(12)
+            .map(|row| row.symbol.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        return LatestUpdateOutcome::Deferred {
+            reason: format!(
+                "{} third-party fee changes require staged verified official evidence before history write; examples={symbols}",
+                verification.accepted.len()
+            ),
+        };
+    }
+
+    if !verification.new_contracts.is_empty() {
+        let symbols = verification
+            .new_contracts
+            .iter()
+            .take(12)
+            .map(|row| row.symbol.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        return LatestUpdateOutcome::Deferred {
+            reason: format!(
+                "{} new concrete contracts require staged official fee evidence before history write; examples={symbols}",
+                verification.new_contracts.len()
+            ),
+        };
+    }
+
+    LatestUpdateOutcome::Noop
 }
 
 /// Result summary for one or more Jin10 source snapshot payloads.
@@ -256,8 +321,7 @@ pub fn validate_jin10(
 /// be fetched or parsed, candidate verification fails, or the report cannot be
 /// written.
 pub fn diagnose_latest(db_path: &Path, out: &Path) -> Result<LatestCandidateDiagnosis> {
-    let conn = connect(db_path)?;
-    ensure_schema(&conn)?;
+    let conn = connect_readonly(db_path)?;
     db::ensure_seeded(&conn)?;
     crate::baseline::ensure_v11_baseline(&conn)?;
 
@@ -386,9 +450,11 @@ pub fn refresh_with_options(_db: &Path, _options: RefreshOptions) -> Result<()> 
 /// Returns an error if the seed is missing, latest page fetch fails, or parsing
 /// and version maintenance fail. Unconfirmed 9qihuo fee candidates are retained
 /// as a source error and omitted without preventing a no-change baseline export.
-pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
-    let mut conn = connect(db)?;
-    ensure_schema(&conn)?;
+pub fn update_latest(db: &Path, _require_seed: bool) -> Result<LatestUpdateOutcome> {
+    if !db.is_file() {
+        return Err(anyhow!("seeded daemon database required: {}", db.display()));
+    }
+    let conn = connect_readonly(db)?;
     db::ensure_seeded(&conn)?;
     crate::baseline::ensure_v11_baseline(&conn)?;
 
@@ -420,71 +486,26 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         ));
     }
 
-    let rows_hash = rule_set_hash(&completion.rows);
-    let probe_hash = source_probe_hash(TOTAL_URL, LATEST_TABLE_PROBE_KEY);
-    if db::source_rule_set_hash(&conn, TOTAL_URL)?.as_deref() == Some(&rows_hash) {
-        db::update_source_success(&conn, TOTAL_URL, &probe_hash, &rows_hash, &observed_at)?;
-        eprintln!(
-            "latest table unchanged: rows={} skipped_invalid_symbols={} skipped_missing_metadata={} url={}",
-            completion.rows.len(),
-            snapshot.skipped_invalid_symbols,
-            completion.skipped_missing_metadata,
-            TOTAL_URL
-        );
-        return Ok(());
-    }
-
     let jin10_rows = match cached_jin10_rows {
         Some(rows) => rows,
         None => recent_jin10_rows(&conn, OffsetDateTime::parse(&observed_at, &Rfc3339)?)?,
     };
     let verified = db::cross_verify_latest_candidates(&conn, &completion.rows, &jin10_rows)?;
-    if !verified.rejected.is_empty() {
-        let symbols = verified
-            .rejected
-            .iter()
-            .take(12)
-            .map(|rejection| rejection.symbol.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        let message = format!(
-            "refused {} latest fee candidates before history write; candidates need Jin10 confirmation or staged official evidence; examples={symbols}",
-            verified.rejected.len()
-        );
-        db::update_source_error(&conn, TOTAL_URL, &observed_at, &message)?;
-        return Err(anyhow!("{message}; no fee history changes were applied"));
+    let outcome = classify_latest_update(&verified);
+    match &outcome {
+        LatestUpdateOutcome::Noop => eprintln!(
+            "latest table has no eligible concrete-contract fee records: rows={} unchanged_fee_rows={} skipped_invalid_symbols={} skipped_missing_metadata={} url={}",
+            completion.rows.len(),
+            verified.unchanged,
+            snapshot.skipped_invalid_symbols,
+            completion.skipped_missing_metadata,
+            TOTAL_URL
+        ),
+        LatestUpdateOutcome::Deferred { reason } => {
+            return Err(anyhow!("{reason}; no fee history changes were applied"));
+        }
     }
-
-    if let Err(error) = require_official_fee_change_admission(&verified) {
-        db::update_source_error(&conn, TOTAL_URL, &observed_at, &error.to_string())?;
-        return Err(error);
-    }
-    db::persist_new_contract_admissions(&mut conn, &verified, &observed_at)?;
-
-    if !verified.degraded_new_contracts.is_empty() {
-        eprintln!(
-            "new contracts admitted with degraded product-level Jin10 verification: count={} symbols={}",
-            verified.degraded_new_contracts.len(),
-            verified.degraded_new_contracts.join(",")
-        );
-    }
-    // Do not mutate specification history until latest fee admission succeeds.
-    // A rejected snapshot must leave the seeded database queryable and auditable.
-    let migrated_specs = db::migrate_known_contract_spec_history(&mut conn, &observed_at)?;
-    if migrated_specs > 0 {
-        eprintln!("official contract specification history migrated: contracts={migrated_specs}");
-    }
-    db::mark_latest_contracts_seen(&mut conn, &completion.rows, &observed_at)?;
-    db::update_source_success(&conn, TOTAL_URL, &probe_hash, &rows_hash, &observed_at)?;
-    eprintln!(
-        "latest table verified unchanged: rows={} unchanged_fee_rows={} skipped_invalid_symbols={} skipped_missing_metadata={} url={}",
-        completion.rows.len(),
-        verified.unchanged,
-        snapshot.skipped_invalid_symbols,
-        completion.skipped_missing_metadata,
-        TOTAL_URL
-    );
-    Ok(())
+    Ok(outcome)
 }
 
 fn complete_latest_snapshot(

@@ -147,25 +147,27 @@ GitHub Actions 不从零构建历史库。每次运行：
 
 Cloudflare seed 的 `baseline_state.source_sha256` 必须匹配仓库内的
 `assets/future-meta-v18-reviewed.sqlite.gz` 内记录的审阅基线指纹。V18 指纹为
-`84ffaa15468b8cbdc6203d25f0ecfe668c677193a7d42c32a243143be44d241e`；旧 seed
+`5690905cd18dcd9d5e32c9ffca9f8eb998978432dd67f0129dc5f9c7e0c7c242`；旧 seed
 只在该指纹不匹配时迁移一次，匹配后继续沿用线上 seed，避免定时任务覆盖后续经官方证据批准的增量。V18 在 V17 及线上增量基础上修正了 6 个大商所合约的固定手续费偏移，并合并 5 条无实质变化的冗余版本。
 
 1. 从 Cloudflare 下载 `ops/future-meta.sqlite.gz`。
 2. 解压为 `data/future-meta.sqlite`。
 3. 每日先执行 `future-meta-daemon scan-announcements`：中信期货为主发现源；中信无法完成有效扫描时同轮切换华泰期货；每周五额外执行华泰完整补漏扫描。扫描仅保存券商正文、哈希、交易所原文链接和手续费候选，绝不直接改变 `fee_versions`。
 4. 执行 `future-meta-daemon update-latest --require-seed`。
-5. 将 9qihuo 的实质费率候选与同日、同合约的 Jin10 快照交叉核验；无论是否一致，任何候选都必须先由精确的交易所原文/附件完成分阶段官方核验并写入，第三方只能用于交叉核对。未获确认、触发安全门控，或有超过 24 小时未决公告候选时，整个 workflow 失败并保留既有已发布产物。
-6. 导出 `public/manifest.json` 和 `public/latest.fmeta.zst`。
-7. 重新 gzip 更新后的 SQLite seed 到 `public/ops/future-meta.sqlite.gz`。
-8. 部署整个 `public/` 到 Cloudflare Pages。
+5. 将 9qihuo 候选与 Jin10 交叉核验；候选无论是否一致都需要精确交易所原文/附件和人工审阅，第三方不会创建、覆盖或回写 `fee_versions`。
+6. 固定写入 `publish=false`。不会导出 artifact、gzip seed 或部署 Pages。
 
-最新截面来自 9qihuo 总页 HTML 的 `table#heyuetbl`。页面上的 Excel 按钮是 `tableToExcel('heyuetbl', ...)` 生成，不存在稳定的 `heyue=all` CSV 下载端点，因此 daemon 直接解析 HTML 表格。此日更路径只维护最新截面，不为历史回填提供证据。
+`update-latest` 是只读诊断：无差异返回 `Noop`；候选、新具体合约或安全门控拒绝以
+`Deferred` 原因非零退出。workflow 将该退出视为预期的“不发布”，绝不触发发布。生产
+artifact 与 daemon seed 因此保持上一个审阅通过版本。
+
+最新截面来自 9qihuo 总页 HTML 的 `table#heyuetbl`。页面上的 Excel 按钮是 `tableToExcel('heyuetbl', ...)` 生成，不存在稳定的 `heyue=all` CSV 下载端点，因此 daemon 直接解析 HTML 表格。此日更路径只诊断候选，不为历史回填或发布提供证据。
 
 Jin10 只作为 9qihuo 最新截面候选的同日交叉确认，不会独立写入生产费率版本，也不能作为 9qihuo 失败时的自动替代源。固定值/成交金额比例切换、平昨/平今字段置换、零费率切换、单腿超过两倍的跳变、超过 12 条的同批变更，以及疑似 `0.1 元`占位或统一 `+0.01/+0.09/+0.1` 固定费偏移都会在交叉核验阶段明确标记风险；但即使普通候选双源一致，也必须进入交易所官方证据与人工审阅流程。实时路径不会以产品众数或固定费偏移规则覆写已有费率。
 
-新上市 symbol 不属于手续费“变更”。它必须满足单品种 CSV 的乘数/跳价与总表每跳毛利恒等，并由 Jin10 核验静态规格。优先要求 Jin10 同日同合约手续费一致；Jin10 尚未列出远月时，只允许该费率完整匹配 V11 中已有同品种合约，同时 Jin10 同日同品种规格一致，并记录为 `contract_metadata_admissions.verification_level = 'degraded_product'`。该降级规则绝不适用于已有合约费率变化。
+新上市 symbol 也需要完整官方手续费、生命周期和规格证据，随后仅在审阅副本创建前向生效的具体合约记录。Jin10 覆盖只能辅助核对，不能代替官方证据。
 
-archive schema v2 导出 `contract_spec_versions`，用于查询历史乘数和最小变动价位。部署前可在生产副本显式运行已审阅的交易所规格迁移：
+archive schema v2 导出 `contract_spec_versions`，用于查询历史乘数和最小变动价位。可在审阅副本显式运行已审阅的交易所规格迁移：
 
 ```bash
 cargo run -p future-meta-daemon -- migrate-contract-specs \
@@ -173,6 +175,42 @@ cargo run -p future-meta-daemon -- migrate-contract-specs \
 ```
 
 当前内置迁移覆盖 DCE 棕榈油/豆油、GFEX 碳酸锂和 INE 集运欧线的官方调整，并逐合约保留有效期和公告 URL。schema v2 客户端继续兼容读取 schema v1 artifact。
+
+## 人工审阅发布
+
+发布只能从隔离审阅副本开始，不能原地修复线上 seed。先完成交易所原文、附件、SHA-256、
+完整三腿手续费与生效日的人工复核，并通过 `import-official-history` 或交易所参数导入
+物化历史。旧库若出现历史哈希断链或 `first_seen_at > last_seen_at`，必须先提供逐条时间
+修正 JSON，明确确认审阅副本后执行：
+
+```bash
+cargo run -p future-meta-daemon -- repair-review-history \
+  --db path/to/review-copy.sqlite \
+  --time-repairs path/to/observation-time-repairs.json \
+  --confirm-review-copy
+```
+
+该命令重算仅由三腿费率的哈希、重接保留 evidence，并在
+`review_fee_history_repairs` 记录每项修复；不会删除 evidence，也不会接受未列入 JSON 的
+时间修正。它不是日常任务，也不替代官方证据复核。
+
+当前可声明的严格完整覆盖边界是 `2020-01-01`。2010–2019 数据可以留存，但在补齐
+官方费率、生命周期和规格证据前不得宣称该期间完整。发布前依次完成：
+
+```bash
+cargo run -p future-meta-daemon -- audit-coverage \
+  --db path/to/review-copy.sqlite \
+  --from 2020-01-01 --through YYYY-MM-DD \
+  --out /tmp/future-meta-coverage.json --strict
+
+cargo run -p future-meta-daemon -- export \
+  --db path/to/review-copy.sqlite --out public
+gzip -c path/to/review-copy.sqlite > public/ops/future-meta.sqlite.gz
+```
+
+`export` 以只读方式打开数据库，并拒绝孤儿 fee evidence、倒置观察时间、非法或重叠
+区间、以及早于合约上市日的费率版本。只有这些检查通过后，才可在取得发布授权后部署
+`public/`。
 
 ## Required GitHub Secrets
 

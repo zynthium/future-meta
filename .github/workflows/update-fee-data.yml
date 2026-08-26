@@ -27,7 +27,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Test
-        run: cargo test --workspace && cargo test -p future-meta --features download
+        run: |
+          cargo fmt --all -- --check
+          cargo check --workspace --all-targets
+          cargo test --workspace
+          cargo test -p future-meta --features download
 
       - name: Restore Cloudflare daemon seed
         run: |
@@ -69,6 +73,7 @@ jobs:
           fi
 
       - name: Refresh data
+        id: refresh
         timeout-minutes: 20
         run: |
           set -euo pipefail
@@ -83,14 +88,16 @@ jobs:
           set -e
           if [ "$refresh_status" -ne 0 ]; then
             cat /tmp/update-latest.stderr >&2
-            if ! grep -Eq "latest fee candidates before history write|require staged verified official evidence before history write" /tmp/update-latest.stderr; then
+            if ! grep -Eq "latest fee candidates before history write|require staged verified official evidence before history write|new concrete contracts require staged official fee evidence" /tmp/update-latest.stderr; then
               echo "latest refresh failed unexpectedly (exit=$refresh_status)" >&2
               exit "$refresh_status"
             fi
             echo "latest fee changes deferred: waiting for official evidence"
           fi
+          echo "publish=false" >> "$GITHUB_OUTPUT"
 
       - name: Validate Jin10 secondary source
+        if: steps.refresh.outputs.publish == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -103,19 +110,23 @@ jobs:
           cat /tmp/jin10-validation.json
 
       - name: Export Pages artifact
+        if: steps.refresh.outputs.publish == 'true'
         run: cargo run -p future-meta-daemon -- export --db "$DB_PATH" --out public
 
       - name: Publish updated daemon seed
+        if: steps.refresh.outputs.publish == 'true'
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "$SEED_ARCHIVE")"
           gzip -c "$DB_PATH" > "$SEED_ARCHIVE"
 
       - name: Compute artifact hash
+        if: steps.refresh.outputs.publish == 'true'
         id: artifact
         run: echo "sha=$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloudflare Pages
+        if: steps.refresh.outputs.publish == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

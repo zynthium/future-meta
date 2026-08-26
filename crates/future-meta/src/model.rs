@@ -21,6 +21,10 @@ pub struct Manifest {
     pub history_start: String,
     /// Latest date covered by the artifact.
     pub history_end: String,
+    /// Latest approved fee-rule effective timestamp, when provided by the
+    /// publisher. Older manifests omit this field.
+    #[serde(default)]
+    pub fee_effective_from: Option<String>,
     /// Artifact path or URL.
     pub artifact: String,
     /// SHA-256 checksum of the artifact bytes.

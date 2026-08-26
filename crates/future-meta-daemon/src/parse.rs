@@ -213,6 +213,14 @@ pub(crate) mod tests {
                 ("手续费(开+平)/元", "99"),
                 ("每跳净利/元", "-999"),
                 ("手续费更新时间", "2030-01-01 00:00:00"),
+                ("上市日期", "20200101"),
+                ("到期日期", "20300101"),
+                ("是否正在交易", "暂停交易"),
+                ("买开保证金%", "99"),
+                ("卖开保证金%", "98"),
+                ("每手数量", "10"),
+                ("每跳价差", "1"),
+                ("备注", "主力合约"),
             ],
         );
         let base_hash = row_rule_hash(&parse_csv(BASE).unwrap()[0]);
@@ -228,6 +236,15 @@ pub(crate) mod tests {
         let changed_hash = row_rule_hash(&parse_csv(&changed).unwrap()[0]);
 
         assert_ne!(base_hash, changed_hash);
+    }
+
+    #[test]
+    fn equivalent_fee_text_does_not_change_rule_hash() {
+        let changed = update_cells(BASE, &[("开仓手续费", "0.10元")]);
+        let base_hash = row_rule_hash(&parse_csv(BASE).unwrap()[0]);
+        let changed_hash = row_rule_hash(&parse_csv(&changed).unwrap()[0]);
+
+        assert_eq!(base_hash, changed_hash);
     }
 
     #[test]

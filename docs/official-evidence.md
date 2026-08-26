@@ -50,8 +50,15 @@ Two evidence levels may materialize a complete fee tuple in a review copy:
 paired announcement has been retained, but only after the importer verifies the
 exchange URL, exact retained-byte SHA-256, complete tuple and units. It cannot
 overwrite a `paired_official` version. Identical adjacent observations are
-coalesced and conflicting third-party rows inside the retained observation
-interval are removed atomically.
+coalesced only when the later version has no retained evidence; a later
+evidence-backed version remains separately traceable. Conflicting third-party
+rows inside the retained observation interval are removed atomically.
+
+When a retained paired-official version already has the same complete fee tuple,
+a later reviewed import adds its evidence links instead of silently skipping the
+documents. A different tuple at that same effective instant is a hard conflict.
+Never delete orphan evidence or alter `first_seen_at`/`last_seen_at` merely to
+make an export pass.
 
 The CZCE importer maps `交易手续费` to open and close-yesterday, and
 `平今仓手续费` or `日内平今仓交易手续费` to close-today. `绝对值` means yuan per
@@ -103,6 +110,27 @@ cargo run -p future-meta-daemon -- import-gfex-parameters \
 The command validates every selected official URL and retained-byte digest
 before atomically replacing conflicting lower-confidence history. It never
 overwrites a `paired_official` interval.
+
+### Repair a legacy review copy
+
+Hash definition changes or old observation-time defects are repaired only in a
+copy, after a human has reviewed every affected official tuple and timestamp.
+Prepare an untracked JSON array containing every reversed observation, its
+chosen `last_seen_at`, and a non-empty rationale. Then run:
+
+```bash
+cargo run -p future-meta-daemon -- repair-review-history \
+  --db path/to/review-copy.sqlite \
+  --time-repairs path/to/observation-time-repairs.json \
+  --confirm-review-copy
+```
+
+The command requires an exact correction for each reversed row, rekeys fee
+versions using fee kind and numeric value only, reattaches retained evidence by
+the concrete `(contract, valid_from)` version, and records the changes in
+`review_fee_history_repairs`. It is idempotent for the same reviewed JSON.
+Re-import the verified official inputs afterward so their document links are
+materialized on the rekeyed version. Do not run this against a production seed.
 
 INE `TRADEFEERATIO` and `TRADEFEEUNIT` fields state only the general fee. They
 cannot establish close-today fees by themselves. Pair the retained dailydata

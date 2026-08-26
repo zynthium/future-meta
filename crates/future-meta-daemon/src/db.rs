@@ -8,7 +8,8 @@ use crate::parse::AllowedRow;
 use anyhow::{Result, anyhow};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -597,6 +598,449 @@ pub fn connect(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// Open an existing daemon history database without permitting mutations.
+///
+/// # Errors
+///
+/// Returns an error when the database cannot be opened or configured.
+pub fn connect_readonly(path: &Path) -> Result<Connection> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    conn.execute_batch("pragma foreign_keys = on;")?;
+    Ok(conn)
+}
+
+/// Validate fee-history invariants required for a publishable archive.
+///
+/// # Errors
+///
+/// Returns an error when fee evidence cannot be linked to a fee version, an
+/// observation timestamp is reversed, or persisted intervals overlap.
+pub fn validate_fee_history_integrity(conn: &Connection) -> Result<()> {
+    let orphan_evidence: i64 = conn.query_row(
+        "select count(*)
+         from fee_version_evidence evidence
+         where not exists (
+           select 1 from fee_versions version
+           where version.contract_id = evidence.contract_id
+             and version.valid_from = evidence.valid_from
+             and version.rule_hash = evidence.rule_hash
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if orphan_evidence > 0 {
+        return Err(anyhow!("orphan fee-version evidence: {orphan_evidence}"));
+    }
+
+    let reverse_observations: i64 = conn.query_row(
+        "select count(*) from fee_versions
+         where julianday(first_seen_at) > julianday(last_seen_at)",
+        [],
+        |row| row.get(0),
+    )?;
+    if reverse_observations > 0 {
+        return Err(anyhow!(
+            "reverse fee observation times: {reverse_observations}"
+        ));
+    }
+
+    let prelisting_versions: i64 = conn.query_row(
+        "select count(*)
+         from fee_versions version
+         join contracts contract on contract.id = version.contract_id
+         where contract.listing_date is not null
+           and julianday(version.valid_from) < julianday(
+             case length(contract.listing_date)
+               when 8 then substr(contract.listing_date, 1, 4) || '-' ||
+                           substr(contract.listing_date, 5, 2) || '-' ||
+                           substr(contract.listing_date, 7, 2) || 'T00:00:00+08:00'
+               when 10 then contract.listing_date || 'T00:00:00+08:00'
+               else contract.listing_date
+             end
+           )",
+        [],
+        |row| row.get(0),
+    )?;
+    if prelisting_versions > 0 {
+        return Err(anyhow!(
+            "fee versions before contract listing: {prelisting_versions}"
+        ));
+    }
+    let invalid_intervals: i64 = conn.query_row(
+        "select count(*) from fee_versions
+         where valid_to is not null and julianday(valid_to) <= julianday(valid_from)",
+        [],
+        |row| row.get(0),
+    )?;
+    if invalid_intervals > 0 {
+        return Err(anyhow!("invalid fee intervals: {invalid_intervals}"));
+    }
+
+    let overlaps: i64 = conn.query_row(
+        "select count(*)
+         from fee_versions earlier
+         join fee_versions later
+           on later.contract_id = earlier.contract_id
+          and julianday(later.valid_from) > julianday(earlier.valid_from)
+         where earlier.valid_to is not null
+           and julianday(earlier.valid_to) > julianday(later.valid_from)",
+        [],
+        |row| row.get(0),
+    )?;
+    if overlaps > 0 {
+        return Err(anyhow!("overlapping fee intervals: {overlaps}"));
+    }
+
+    Ok(())
+}
+
+/// Explicit, human-reviewed correction for one reversed observation interval.
+///
+/// This type is accepted only by the review-copy repair command. `rationale`
+/// becomes part of the persistent repair audit trail.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewObservationTimeRepair {
+    pub symbol: String,
+    pub valid_from: String,
+    pub last_seen_at: String,
+    pub rationale: String,
+}
+
+/// Counts changed by one review-only fee-hash migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReviewFeeHistoryRekey {
+    pub fee_versions: usize,
+    pub evidence: usize,
+}
+
+#[derive(Debug)]
+struct FeeHashRekey {
+    version_id: i64,
+    contract_id: i64,
+    valid_from: String,
+    old_rule_hash: String,
+    new_rule_hash: String,
+}
+
+/// Rekey every fee version and its retained evidence using the fee-only rule
+/// hash. This migration is review-copy-only: it records each changed version
+/// and never drops retained evidence bytes.
+///
+/// # Errors
+///
+/// Returns an error if an evidence record cannot be associated with exactly
+/// one concrete contract version on its effective timestamp, if timestamps are
+/// malformed, or if the resulting history fails publication integrity checks.
+#[allow(clippy::too_many_lines)]
+pub fn rekey_fee_history_for_review(
+    conn: &mut Connection,
+    repaired_at: &str,
+) -> Result<ReviewFeeHistoryRekey> {
+    ensure_schema(conn)?;
+    parse_timestamp("repaired_at", repaired_at)?;
+    let tx = conn.transaction()?;
+    let rekeys = {
+        let mut statement = tx.prepare(
+            "select v.id, v.contract_id, v.rule_hash, v.valid_from,
+                    c.symbol, c.listing_date, c.expiry_date, c.lot_size, c.tick_size,
+                    v.buy_margin_rate, v.sell_margin_rate,
+                    v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json,
+                    v.trading_status, v.source_updated_at, v.is_main_contract
+             from fee_versions v
+             join contracts c on c.id = v.contract_id
+             order by v.id",
+        )?;
+        let mut rows = statement.query([])?;
+        let mut rekeys = Vec::new();
+        while let Some(record) = rows.next()? {
+            let row = AllowedRow {
+                symbol: record.get(4)?,
+                listing_date: record.get(5)?,
+                expiry_date: record.get(6)?,
+                trading_status: parse_trading_status_text(&record.get::<_, String>(14)?)?,
+                buy_margin_rate: record.get(9)?,
+                sell_margin_rate: record.get(10)?,
+                open_fee: parse_fee_json(&record.get::<_, String>(11)?)?,
+                close_yesterday_fee: parse_fee_json(&record.get::<_, String>(12)?)?,
+                close_today_fee: parse_fee_json(&record.get::<_, String>(13)?)?,
+                lot_size: record.get(7)?,
+                tick_size: record.get(8)?,
+                source_updated_at: record.get(15)?,
+                is_main_contract: record.get::<_, i64>(16)? != 0,
+            };
+            rekeys.push(FeeHashRekey {
+                version_id: record.get(0)?,
+                contract_id: record.get(1)?,
+                valid_from: record.get(3)?,
+                old_rule_hash: record.get(2)?,
+                new_rule_hash: row_rule_hash(&row),
+            });
+        }
+        rekeys
+    };
+    let rekeys_by_version = rekeys
+        .iter()
+        .map(|rekey| ((rekey.contract_id, rekey.valid_from.clone()), rekey))
+        .collect::<BTreeMap<_, _>>();
+    if rekeys_by_version.len() != rekeys.len() {
+        return Err(anyhow!(
+            "multiple fee versions share a contract effective timestamp"
+        ));
+    }
+
+    let evidence = {
+        let mut statement = tx.prepare(
+            "select contract_id, valid_from, rule_hash, evidence_level,
+                    canonical_url, body_sha256, recorded_at
+             from fee_version_evidence
+             order by contract_id, valid_from, rule_hash, canonical_url, body_sha256",
+        )?;
+        statement
+            .query_map([], |record| {
+                Ok((
+                    record.get::<_, i64>(0)?,
+                    record.get::<_, String>(1)?,
+                    record.get::<_, String>(2)?,
+                    record.get::<_, String>(3)?,
+                    record.get::<_, String>(4)?,
+                    record.get::<_, String>(5)?,
+                    record.get::<_, String>(6)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut changed_evidence = 0usize;
+    for (
+        contract_id,
+        valid_from,
+        old_rule_hash,
+        evidence_level,
+        canonical_url,
+        body_sha256,
+        recorded_at,
+    ) in evidence
+    {
+        let rekey = rekeys_by_version
+            .get(&(contract_id, valid_from.clone()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "review fee-hash rekey cannot associate evidence with a version: contract_id={contract_id} valid_from={valid_from}"
+                )
+            })?;
+        if old_rule_hash == rekey.new_rule_hash {
+            continue;
+        }
+        tx.execute(
+            "insert into fee_version_evidence(
+               contract_id, valid_from, rule_hash, evidence_level,
+               canonical_url, body_sha256, recorded_at
+             ) values(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             on conflict(contract_id, valid_from, rule_hash, canonical_url, body_sha256)
+             do update set evidence_level = case
+               when fee_version_evidence.evidence_level = 'paired_official'
+                 or excluded.evidence_level = 'paired_official'
+               then 'paired_official'
+               else 'official_parameter'
+             end",
+            params![
+                contract_id,
+                valid_from,
+                rekey.new_rule_hash,
+                evidence_level,
+                canonical_url,
+                body_sha256,
+                recorded_at,
+            ],
+        )?;
+        tx.execute(
+            "delete from fee_version_evidence
+             where contract_id = ?1 and valid_from = ?2 and rule_hash = ?3
+               and canonical_url = ?4 and body_sha256 = ?5",
+            params![
+                contract_id,
+                valid_from,
+                old_rule_hash,
+                canonical_url,
+                body_sha256
+            ],
+        )?;
+        changed_evidence += 1;
+    }
+
+    let mut changed_versions = 0usize;
+    for rekey in &rekeys {
+        if rekey.old_rule_hash == rekey.new_rule_hash {
+            continue;
+        }
+        tx.execute(
+            "update fee_versions set rule_hash = ?1 where id = ?2",
+            params![rekey.new_rule_hash, rekey.version_id],
+        )?;
+        tx.execute(
+            "insert into review_fee_history_repairs(
+               repair_kind, contract_id, valid_from, old_rule_hash, new_rule_hash,
+               old_first_seen_at, old_last_seen_at, new_last_seen_at, rationale, repaired_at
+             ) values(
+               'fee_hash_rekey', ?1, ?2, ?3, ?4, null, null, null, ?5, ?6
+             )",
+            params![
+                rekey.contract_id,
+                rekey.valid_from,
+                rekey.old_rule_hash,
+                rekey.new_rule_hash,
+                "Canonical fee hash now contains only fee kind and numeric value.",
+                repaired_at,
+            ],
+        )?;
+        changed_versions += 1;
+    }
+    validate_fee_history_integrity(&tx)?;
+    tx.commit()?;
+    Ok(ReviewFeeHistoryRekey {
+        fee_versions: changed_versions,
+        evidence: changed_evidence,
+    })
+}
+
+/// Apply explicitly reviewed corrections for all reversed observation times.
+///
+/// The input must cover every reversed record and may not contain unrelated
+/// records. This prevents a timestamp repair from becoming a silent bulk edit.
+///
+/// # Errors
+///
+/// Returns an error when a correction is missing, duplicated, unrelated,
+/// malformed, or predates its version's first observation.
+#[allow(clippy::too_many_lines)]
+pub fn repair_review_observation_times(
+    conn: &mut Connection,
+    repairs: &[ReviewObservationTimeRepair],
+    repaired_at: &str,
+) -> Result<usize> {
+    ensure_schema(conn)?;
+    parse_timestamp("repaired_at", repaired_at)?;
+    let tx = conn.transaction()?;
+    let reversed = {
+        let mut statement = tx.prepare(
+            "select v.id, v.contract_id, c.symbol, v.valid_from,
+                    v.first_seen_at, v.last_seen_at
+             from fee_versions v
+             join contracts c on c.id = v.contract_id
+             where julianday(v.first_seen_at) > julianday(v.last_seen_at)
+             order by c.symbol, v.valid_from, v.id",
+        )?;
+        statement
+            .query_map([], |record| {
+                Ok((
+                    record.get::<_, i64>(0)?,
+                    record.get::<_, i64>(1)?,
+                    record.get::<_, String>(2)?,
+                    record.get::<_, String>(3)?,
+                    record.get::<_, String>(4)?,
+                    record.get::<_, String>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut repairs_by_key = BTreeMap::new();
+    for repair in repairs {
+        if repair.rationale.trim().is_empty() {
+            return Err(anyhow!(
+                "review observation-time repair requires a rationale: {} {}",
+                repair.symbol,
+                repair.valid_from
+            ));
+        }
+        parse_timestamp("review repair last_seen_at", &repair.last_seen_at)?;
+        let key = (repair.symbol.clone(), repair.valid_from.clone());
+        if repairs_by_key.insert(key.clone(), repair).is_some() {
+            return Err(anyhow!(
+                "duplicate review observation-time repair: {} {}",
+                key.0,
+                key.1
+            ));
+        }
+    }
+
+    let repair_keys = repairs_by_key.keys().cloned().collect::<Vec<_>>();
+    for (symbol, valid_from) in repair_keys {
+        let repair = repairs_by_key
+            .get(&(symbol.clone(), valid_from.clone()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "review observation-time repair disappeared before validation: {symbol} {valid_from}"
+                )
+            })?;
+        let already_applied: bool = tx.query_row(
+            "select exists(
+               select 1
+               from fee_versions version
+               join contracts contract on contract.id = version.contract_id
+               join review_fee_history_repairs audit
+                 on audit.contract_id = version.contract_id
+                and audit.valid_from = version.valid_from
+              where audit.repair_kind = 'observation_time'
+                and contract.symbol = ?1
+                and version.valid_from = ?2
+                and version.last_seen_at = ?3
+                and audit.new_last_seen_at = ?3
+                and audit.rationale = ?4
+             )",
+            params![symbol, valid_from, repair.last_seen_at, repair.rationale],
+            |record| record.get(0),
+        )?;
+        if already_applied {
+            repairs_by_key.remove(&(symbol, valid_from));
+        }
+    }
+
+    let mut repaired = 0usize;
+    for (version_id, contract_id, symbol, valid_from, first_seen_at, old_last_seen_at) in reversed {
+        let repair = repairs_by_key
+            .remove(&(symbol.clone(), valid_from.clone()))
+            .ok_or_else(|| {
+                anyhow!("missing review observation-time repair: {symbol} {valid_from}")
+            })?;
+        let first_seen = parse_timestamp("first_seen_at", &first_seen_at)?;
+        let new_last_seen = parse_timestamp("review repair last_seen_at", &repair.last_seen_at)?;
+        if new_last_seen < first_seen {
+            return Err(anyhow!(
+                "review observation-time repair remains reversed: {symbol} {valid_from}"
+            ));
+        }
+        tx.execute(
+            "update fee_versions set last_seen_at = ?1 where id = ?2",
+            params![repair.last_seen_at, version_id],
+        )?;
+        tx.execute(
+            "insert into review_fee_history_repairs(
+               repair_kind, contract_id, valid_from, old_rule_hash, new_rule_hash,
+               old_first_seen_at, old_last_seen_at, new_last_seen_at, rationale, repaired_at
+             ) values(
+               'observation_time', ?1, ?2, null, null, ?3, ?4, ?5, ?6, ?7
+             )",
+            params![
+                contract_id,
+                valid_from,
+                first_seen_at,
+                old_last_seen_at,
+                repair.last_seen_at,
+                repair.rationale,
+                repaired_at,
+            ],
+        )?;
+        repaired += 1;
+    }
+    if let Some(((symbol, valid_from), _)) = repairs_by_key.into_iter().next() {
+        return Err(anyhow!(
+            "review observation-time repair does not match a reversed record: {symbol} {valid_from}"
+        ));
+    }
+    tx.commit()?;
+    Ok(repaired)
+}
+
 /// Ensure the daemon history schema exists.
 ///
 /// # Errors
@@ -780,6 +1224,20 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           primary key(contract_id, valid_from, rule_hash, canonical_url, body_sha256),
             foreign key(contract_id) references contracts(id)
         );
+        create table if not exists review_fee_history_repairs(
+            id integer primary key,
+            repair_kind text not null check(repair_kind in ('fee_hash_rekey', 'observation_time')),
+            contract_id integer not null,
+            valid_from text not null,
+            old_rule_hash text,
+            new_rule_hash text,
+            old_first_seen_at text,
+            old_last_seen_at text,
+            new_last_seen_at text,
+            rationale text not null,
+            repaired_at text not null,
+            foreign key(contract_id) references contracts(id)
+        );
         create table if not exists contract_spec_evidence(
             contract_id integer not null,
             valid_from text not null,
@@ -805,12 +1263,11 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("drop index if exists idx_fee_versions_contract;")?;
 
     ensure_fee_version_source_kind_column(conn)?;
-    repair_fee_versions_before_listing(conn)?;
-    seed_missing_contract_spec_versions(conn)?;
 
     Ok(())
 }
 
+#[allow(dead_code)]
 fn seed_missing_contract_spec_versions(conn: &Connection) -> Result<()> {
     conn.execute(
         "insert into contract_spec_versions(
@@ -1911,16 +2368,47 @@ pub fn replace_with_official_parameter_history(
                 })?
                 .collect::<rusqlite::Result<BTreeSet<_>>>()?
         };
+        let existing_paired_keys = {
+            let mut statement = tx.prepare(
+                "select evidence.valid_from, evidence.rule_hash
+                 from fee_version_evidence evidence
+                 join fee_versions version
+                   on version.contract_id = evidence.contract_id
+                  and version.valid_from = evidence.valid_from
+                  and version.rule_hash = evidence.rule_hash
+                 where evidence.contract_id = ?1
+                   and evidence.evidence_level = 'paired_official'",
+            )?;
+            statement
+                .query_map([contract_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<BTreeSet<_>>>()?
+        };
+        let existing_evidence_keys = {
+            let mut statement = tx.prepare(
+                "select valid_from, rule_hash from fee_version_evidence where contract_id = ?1",
+            )?;
+            statement
+                .query_map([contract_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<BTreeSet<_>>>()?
+        };
         let existing = load_existing_versions(&tx, contract_id)?;
-        let paired_times = existing
+        let paired_rules = existing
             .iter()
             .filter(|version| {
-                version.source_kind == FeeSource::Official
-                    && !existing_parameter_keys
-                        .contains(&(version.valid_from.clone(), version.rule_hash.clone()))
+                existing_paired_keys
+                    .contains(&(version.valid_from.clone(), version.rule_hash.clone()))
             })
-            .map(|version| version.valid_from_at)
-            .collect::<BTreeSet<_>>();
+            .map(|version| {
+                (
+                    version.valid_from_at,
+                    (version.valid_from.clone(), version.rule_hash.clone()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
 
         let mut versions = existing
             .into_iter()
@@ -1930,7 +2418,8 @@ pub fn replace_with_official_parameter_history(
                 if is_parameter {
                     return false;
                 }
-                version.source_kind == FeeSource::Official
+                existing_paired_keys
+                    .contains(&(version.valid_from.clone(), version.rule_hash.clone()))
                     || version.valid_from_at < first_at
                     || version.valid_from_at >= coverage_end_at
             })
@@ -1938,7 +2427,21 @@ pub fn replace_with_official_parameter_history(
         let mut parameter_keys = BTreeSet::new();
         let mut evidence = Vec::new();
         for (source, prepared, _) in items.iter() {
-            if paired_times.contains(&prepared.valid_from_at) {
+            if let Some((existing_valid_from, existing_rule_hash)) =
+                paired_rules.get(&prepared.valid_from_at)
+            {
+                if existing_rule_hash != &prepared.rule_hash {
+                    return Err(anyhow!(
+                        "paired official fee tuple conflicts with retained version {} at {}",
+                        prepared.row.symbol,
+                        prepared.valid_from
+                    ));
+                }
+                evidence.push((
+                    (existing_valid_from.clone(), existing_rule_hash.clone()),
+                    source.evidence_level,
+                    source.evidence.clone(),
+                ));
                 continue;
             }
             let key = (prepared.valid_from.clone(), prepared.rule_hash.clone());
@@ -1977,6 +2480,11 @@ pub fn replace_with_official_parameter_history(
                 merge_equivalent_version(previous, version)?;
                 continue;
             }
+            let current_key = (version.valid_from.clone(), version.rule_hash.clone());
+            if existing_evidence_keys.contains(&current_key) {
+                rebuilt.push(version);
+                continue;
+            }
             if previous.rule_hash == version.rule_hash {
                 let previous_is_parameter = parameter_keys
                     .contains(&(previous.valid_from.clone(), previous.rule_hash.clone()));
@@ -2012,7 +2520,8 @@ pub fn replace_with_official_parameter_history(
                     "insert into fee_version_evidence(
                        contract_id, valid_from, rule_hash, evidence_level,
                        canonical_url, body_sha256, recorded_at
-                     ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                     ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                     on conflict do nothing",
                     params![
                         contract_id,
                         valid_from,
@@ -3869,6 +4378,7 @@ fn contract_listing_day_start(value: &str) -> Result<OffsetDateTime> {
     )?))
 }
 
+#[allow(dead_code)]
 fn repair_fee_versions_before_listing(conn: &Connection) -> Result<()> {
     let candidates = {
         let mut statement = conn.prepare(
@@ -3952,9 +4462,12 @@ fn repair_fee_versions_before_listing(conn: &Connection) -> Result<()> {
     apply_fee_listing_repairs(conn, &deletions, &repairs)
 }
 
+#[allow(dead_code)]
 type FeeVersionDeletion = (i64, i64, String, String);
+#[allow(dead_code)]
 type FeeVersionClamp = (i64, i64, String, String, String);
 
+#[allow(dead_code)]
 fn apply_fee_listing_repairs(
     conn: &Connection,
     deletions: &[FeeVersionDeletion],
