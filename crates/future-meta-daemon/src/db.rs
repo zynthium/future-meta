@@ -1148,6 +1148,34 @@ fn insert_official_contract_spec(
 ///
 /// Returns an error if a verified new contract has not yet been inserted or a
 /// database write fails.
+/// Persist newly listed contracts that passed the cross-source admission gate.
+///
+/// This is intentionally independent from fee-change admission: a rejected
+/// incumbent fee candidate must not prevent a correctly inherited new
+/// contract from being added to the next snapshot.
+///
+/// # Errors
+///
+/// Returns an error when row persistence or admission evidence recording
+/// fails.
+pub fn persist_new_contract_admissions(
+    conn: &mut Connection,
+    verification: &LatestCandidateVerification,
+    observed_at: &str,
+) -> Result<()> {
+    if verification.new_contracts.is_empty() {
+        return Ok(());
+    }
+    upsert_allowed_rows(conn, &verification.new_contracts, observed_at)?;
+    record_new_contract_metadata_admissions(conn, verification, observed_at)
+}
+
+/// Record how newly listed contract metadata independently corroborated.
+///
+/// # Errors
+///
+/// Returns an error if a verified new contract has not yet been inserted or
+/// the database write fails.
 pub fn record_new_contract_metadata_admissions(
     conn: &Connection,
     verification: &LatestCandidateVerification,

@@ -3986,6 +3986,57 @@ fn new_contract_must_inherit_existing_product_fee_rule() {
 }
 
 #[test]
+fn new_contract_admission_persists_when_another_candidate_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let existing = parse_csv(CSV_V1).unwrap().remove(0);
+    upsert_allowed_rows(
+        &mut conn,
+        std::slice::from_ref(&existing),
+        "2026-06-05T22:00:00+08:00",
+    )
+    .unwrap();
+
+    let mut new_contract = existing.clone();
+    new_contract.symbol = "SHFE.cu2708".to_owned();
+    new_contract.listing_date = Some("20260716".to_owned());
+    new_contract.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+
+    let mut rejected = existing.clone();
+    rejected.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+    rejected.open_fee.value = Some(0.2);
+    rejected.open_fee.raw_text = Some("0.2元".to_owned());
+    let candidates = [new_contract.clone(), rejected];
+    let verified = future_meta_daemon::db::cross_verify_latest_candidates(
+        &conn,
+        &candidates,
+        std::slice::from_ref(&new_contract),
+    )
+    .unwrap();
+
+    assert_eq!(verified.new_contracts, [new_contract]);
+    assert_eq!(verified.rejected.len(), 1);
+
+    future_meta_daemon::db::persist_new_contract_admissions(
+        &mut conn,
+        &verified,
+        "2026-06-06T22:00:00+08:00",
+    )
+    .unwrap();
+    let contract_count: i64 = conn
+        .query_row(
+            "select count(*) from contracts where symbol = 'SHFE.cu2708'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(contract_count, 1);
+}
+
+#[test]
 fn new_contract_can_use_explicitly_marked_product_level_jin10_fallback() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
