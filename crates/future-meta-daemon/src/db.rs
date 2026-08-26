@@ -229,6 +229,7 @@ pub struct AnnouncementHealth {
 /// # Errors
 ///
 /// Returns an error when current fee rules cannot be read from the database.
+#[allow(clippy::too_many_lines)]
 pub fn cross_verify_latest_candidates(
     conn: &Connection,
     candidates: &[AllowedRow],
@@ -252,6 +253,16 @@ pub fn cross_verify_latest_candidates(
     for candidate in candidates {
         let candidate_fees = fee_tuple(candidate);
         let Some(current) = current_fee_rule(conn, &candidate.symbol)? else {
+            if let Some(inherited) = inherited_product_fee_rule(conn, candidate)?
+                && !same_fee_rules(&candidate_fees, &inherited)
+            {
+                rejected.push(LatestCandidateRejection {
+                    symbol: candidate.symbol.clone(),
+                    reason: "new contract does not inherit the existing product fee rule"
+                        .to_owned(),
+                });
+                continue;
+            }
             let jin10 = source_day(candidate).and_then(|day| {
                 jin10_by_key
                     .get(&(candidate.symbol.clone(), day.to_owned()))
@@ -446,6 +457,64 @@ fn has_same_day_product_level_jin10_match(
         }
     }
     Ok(false)
+}
+
+/// Find the fee tuple from the most recently listed existing contract in the
+/// same product. A new contract may be admitted without an official change
+/// notice only when its two-source observation carries this inherited tuple.
+/// If the nearest prior listing has conflicting current rules, return `None`
+/// so the caller keeps the candidate in the evidence-gated path.
+fn inherited_product_fee_rule(
+    conn: &Connection,
+    candidate: &AllowedRow,
+) -> Result<Option<[FeeSpec; 3]>> {
+    let product = derive_underlying_symbol(&candidate.symbol)?;
+    let candidate_listing = candidate
+        .listing_date
+        .as_deref()
+        .map(contract_listing_day_start)
+        .transpose()?;
+    let mut statement = conn.prepare(
+        "select c.symbol, c.listing_date, v.open_fee_json,
+                v.close_yesterday_fee_json, v.close_today_fee_json
+           from contracts c
+           join fee_versions v on v.contract_id = c.id
+          where v.valid_to is null
+          order by c.listing_date desc, c.symbol desc",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut nearest: Option<(Option<OffsetDateTime>, [FeeSpec; 3])> = None;
+    while let Some(record) = rows.next()? {
+        let symbol: String = record.get(0)?;
+        if derive_underlying_symbol(&symbol)? != product {
+            continue;
+        }
+        let listing = record
+            .get::<_, Option<String>>(1)?
+            .as_deref()
+            .map(contract_listing_day_start)
+            .transpose()?;
+        if let (Some(candidate_listing), Some(listing)) = (candidate_listing, listing)
+            && listing >= candidate_listing
+        {
+            continue;
+        }
+        let fees = [
+            serde_json::from_str::<FeeSpec>(&record.get::<_, String>(2)?)?,
+            serde_json::from_str::<FeeSpec>(&record.get::<_, String>(3)?)?,
+            serde_json::from_str::<FeeSpec>(&record.get::<_, String>(4)?)?,
+        ];
+        if let Some((nearest_listing, nearest_fees)) = &nearest {
+            if listing < *nearest_listing {
+                continue;
+            }
+            if listing == *nearest_listing && !same_fee_rules(nearest_fees, &fees) {
+                return Ok(None);
+            }
+        }
+        nearest = Some((listing, fees));
+    }
+    Ok(nearest.map(|(_, fees)| fees))
 }
 
 /// Compare externally observed fee rows with current production rules without

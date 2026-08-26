@@ -3940,6 +3940,52 @@ fn corroborated_new_contract_is_not_treated_as_a_fee_change() {
 }
 
 #[test]
+fn new_contract_must_inherit_existing_product_fee_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("future-meta.sqlite");
+    let mut conn = connect(&db_path).unwrap();
+    ensure_schema(&conn).unwrap();
+
+    let mut existing = parse_csv(CSV_V1).unwrap().remove(0);
+    existing.symbol = "SHFE.cu2607".to_owned();
+    upsert_allowed_rows(
+        &mut conn,
+        std::slice::from_ref(&existing),
+        "2026-06-05T22:00:00+08:00",
+    )
+    .unwrap();
+
+    let mut candidate = existing.clone();
+    candidate.symbol = "SHFE.cu2708".to_owned();
+    candidate.listing_date = Some("20260716".to_owned());
+    candidate.source_updated_at = Some("2026-06-06 21:00:00".to_owned());
+    for fee in [
+        &mut candidate.open_fee,
+        &mut candidate.close_yesterday_fee,
+        &mut candidate.close_today_fee,
+    ] {
+        fee.value = Some(0.2);
+        fee.raw_text = Some("0.2元".to_owned());
+    }
+
+    let verified = future_meta_daemon::db::cross_verify_latest_candidates(
+        &conn,
+        std::slice::from_ref(&candidate),
+        std::slice::from_ref(&candidate),
+    )
+    .unwrap();
+
+    assert!(verified.new_contracts.is_empty());
+    assert!(verified.accepted.is_empty());
+    assert_eq!(verified.rejected.len(), 1);
+    assert!(
+        verified.rejected[0]
+            .reason
+            .contains("does not inherit the existing product fee rule")
+    );
+}
+
+#[test]
 fn new_contract_can_use_explicitly_marked_product_level_jin10_fallback() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("future-meta.sqlite");
