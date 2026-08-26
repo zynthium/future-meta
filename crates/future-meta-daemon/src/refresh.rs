@@ -439,7 +439,6 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         None => recent_jin10_rows(&conn, OffsetDateTime::parse(&observed_at, &Rfc3339)?)?,
     };
     let verified = db::cross_verify_latest_candidates(&conn, &completion.rows, &jin10_rows)?;
-    db::persist_new_contract_admissions(&mut conn, &verified, &observed_at)?;
     if !verified.rejected.is_empty() {
         let symbols = verified
             .rejected
@@ -460,6 +459,7 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<()> {
         db::update_source_error(&conn, TOTAL_URL, &observed_at, &error.to_string())?;
         return Err(error);
     }
+    db::persist_new_contract_admissions(&mut conn, &verified, &observed_at)?;
 
     if !verified.degraded_new_contracts.is_empty() {
         eprintln!(
