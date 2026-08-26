@@ -49,6 +49,25 @@ jobs:
           fi
           cargo run -p future-meta-daemon -- inspect --db "$DB_PATH"
 
+      - name: Verify daemon seed coverage
+        run: |
+          set -euo pipefail
+          if ! cargo run -q -p future-meta-daemon -- audit-coverage \
+            --db "$DB_PATH" \
+            --from 2020-01-01 \
+            --through "$(TZ=Asia/Shanghai date +%F)" \
+            --out /tmp/seed-coverage.json \
+            --strict; then
+            echo "Downloaded daemon seed failed strict coverage; restoring reviewed seed" >&2
+            gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
+            cargo run -q -p future-meta-daemon -- audit-coverage \
+              --db "$DB_PATH" \
+              --from 2020-01-01 \
+              --through "$(TZ=Asia/Shanghai date +%F)" \
+              --out /tmp/reviewed-seed-coverage.json \
+              --strict
+          fi
+
       - name: Refresh data
         timeout-minutes: 20
         run: |
