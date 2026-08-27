@@ -8,8 +8,8 @@ use future_meta::model::{
 };
 use rusqlite::{Connection, Row};
 use std::path::Path;
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::{Date, OffsetDateTime, UtcOffset};
 
 /// Export an archive from the database.
 ///
@@ -18,10 +18,10 @@ use time::format_description::well_known::Rfc3339;
 /// Returns an error if archive export fails.
 pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
     let conn = crate::db::connect_readonly(db)?;
-    ensure_no_untrusted_jin10_fee_versions(&conn)?;
+    ensure_only_official_fee_versions(&conn)?;
     crate::db::validate_fee_history_integrity(&conn)?;
     std::fs::create_dir_all(out.join("artifacts"))?;
-    let archive = load_archive(&conn)?;
+    let archive = load_archive(&conn, OffsetDateTime::now_utc())?;
     let bytes = encode_archive_bytes(&archive)?;
     let sha = sha256_hex(&bytes);
     let data_version = archive
@@ -52,36 +52,51 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_no_untrusted_jin10_fee_versions(conn: &Connection) -> Result<()> {
+fn ensure_only_official_fee_versions(conn: &Connection) -> Result<()> {
     let untrusted_versions: i64 = conn.query_row(
-        "select count(*) from fee_versions where source_kind = 'jin10'",
+        "select count(*) from fee_versions where source_kind <> 'official'",
         [],
         |row| row.get(0),
     )?;
     if untrusted_versions > 0 {
         return Err(anyhow!(
-            "refusing to export untrusted Jin10 fee versions: {untrusted_versions} present"
+            "refusing to export non-official fee versions: {untrusted_versions} present"
         ));
     }
     Ok(())
 }
 
-fn load_archive(conn: &Connection) -> Result<FeeArchiveV2> {
+fn load_archive(conn: &Connection, generated_at: OffsetDateTime) -> Result<FeeArchiveV2> {
+    let generated_on = generated_at.to_offset(UtcOffset::from_hms(8, 0, 0)?).date();
     let mut contracts_stmt = conn.prepare(
-        "select id, symbol, listing_date, expiry_date, lot_size, tick_size, active
+        "select contracts.id, contracts.symbol, contracts.listing_date, contracts.expiry_date,
+                contracts.lot_size, contracts.tick_size,
+                exists(
+                  select 1 from contract_lifecycle_evidence evidence
+                  where evidence.contract_id = contracts.id
+                    and evidence.listing_date = contracts.listing_date
+                    and evidence.expiry_date = contracts.expiry_date
+                )
          from contracts
          order by id",
     )?;
     let contracts = contracts_stmt
         .query_map([], |row| {
+            let listing_date: Option<String> = row.get(2)?;
+            let expiry_date: Option<String> = row.get(3)?;
             Ok(Contract {
                 id: read_u32(row, 0)?,
                 symbol: row.get(1)?,
-                listing_date: row.get(2)?,
-                expiry_date: row.get(3)?,
+                listing_date: listing_date.clone(),
+                expiry_date: expiry_date.clone(),
                 lot_size: row.get(4)?,
                 tick_size: row.get(5)?,
-                active: row.get::<_, i64>(6)? != 0,
+                active: contract_is_active_on(
+                    listing_date.as_deref(),
+                    expiry_date.as_deref(),
+                    row.get::<_, i64>(6)? != 0,
+                    generated_on,
+                ),
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -134,7 +149,7 @@ fn load_archive(conn: &Connection) -> Result<FeeArchiveV2> {
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    let generated_at = OffsetDateTime::now_utc().format(&Rfc3339)?;
+    let generated_at = generated_at.format(&Rfc3339)?;
     let history_start = fee_versions
         .iter()
         .map(|version| version.valid_from.clone())
@@ -174,6 +189,39 @@ fn read_u32(row: &Row<'_>, index: usize) -> rusqlite::Result<u32> {
     })
 }
 
+fn contract_is_active_on(
+    listing_date: Option<&str>,
+    expiry_date: Option<&str>,
+    lifecycle_is_reviewed: bool,
+    generated_on: Date,
+) -> bool {
+    if !lifecycle_is_reviewed {
+        return false;
+    }
+    let (Some(listing_date), Some(expiry_date)) = (listing_date, expiry_date) else {
+        return false;
+    };
+    let (Some(listing_date), Some(expiry_date)) = (
+        parse_contract_lifecycle_date(listing_date),
+        parse_contract_lifecycle_date(expiry_date),
+    ) else {
+        return false;
+    };
+
+    listing_date <= generated_on && generated_on <= expiry_date
+}
+
+fn parse_contract_lifecycle_date(value: &str) -> Option<Date> {
+    let value = value.trim();
+    let format = if value.len() == 8 {
+        "[year][month][day]"
+    } else {
+        "[year]-[month]-[day]"
+    };
+    let format = time::format_description::parse(format).ok()?;
+    Date::parse(value, &format).ok()
+}
+
 fn parse_status(text: &str, index: usize) -> rusqlite::Result<TradingStatus> {
     match text {
         "Trading" => Ok(TradingStatus::Trading),
@@ -187,5 +235,53 @@ fn parse_status(text: &str, index: usize) -> rusqlite::Result<TradingStatus> {
                 format!("unknown trading status: {text}"),
             )),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contract_is_active_on;
+    use time::{Date, Month};
+
+    #[test]
+    fn active_contract_requires_reviewed_lifecycle_and_inclusive_dates() {
+        let generated_on = Date::from_calendar_date(2026, Month::August, 27).unwrap();
+
+        assert!(contract_is_active_on(
+            Some("20260827"),
+            Some("20260827"),
+            true,
+            generated_on,
+        ));
+        assert!(!contract_is_active_on(
+            Some("20260828"),
+            Some("20260901"),
+            true,
+            generated_on,
+        ));
+        assert!(!contract_is_active_on(
+            Some("20260801"),
+            Some("20260826"),
+            true,
+            generated_on,
+        ));
+        assert!(!contract_is_active_on(
+            Some("20260801"),
+            Some("20260901"),
+            false,
+            generated_on,
+        ));
+        assert!(!contract_is_active_on(
+            None,
+            Some("20260901"),
+            true,
+            generated_on,
+        ));
+        assert!(!contract_is_active_on(
+            Some("invalid"),
+            Some("20260901"),
+            true,
+            generated_on,
+        ));
     }
 }

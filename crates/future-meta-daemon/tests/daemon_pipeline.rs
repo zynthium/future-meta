@@ -2353,6 +2353,25 @@ const CSV_V1: &str = "合约品种,合约代码,交易所编码,交易所名称,
 const CSV_V2: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.2元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-28 22:56:54,主力合约\n";
 const CSV_V1_SOURCE_UPDATED: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,2026-03-28 22:56:54,主力合约\n";
 const CSV_V1_SOURCE_EMPTY: &str = "合约品种,合约代码,交易所编码,交易所名称,市价单最大下单量,市价单最小下单量,限价单最大下单量,限价单最小下单量,上市日期,到期日期,是否正在交易,现价,涨/跌停板,买开保证金%,卖开保证金%,保证金/每手(元),开仓手续费,平昨手续费,平今手续费,每手数量,每跳价差,每跳毛利/元,手续费(开+平)/元,每跳净利/元,手续费更新时间,备注\n沪铜2607,cu2607,SHFE,上海期货交易所,30,1,500,1,20250716,20260715,交易中,106870,117550/96180,12,12,64122,0.1元,0.1元,0.1元,5,10,50,0.2,49.8,,主力合约\n";
+
+fn mark_fee_versions_official_with_evidence(connection: &rusqlite::Connection) {
+    connection
+        .execute("update fee_versions set source_kind = 'official'", [])
+        .unwrap();
+    connection
+        .execute(
+            "insert or ignore into fee_version_evidence(
+                contract_id, valid_from, rule_hash, evidence_level,
+                canonical_url, body_sha256, recorded_at
+             )
+             select contract_id, valid_from, rule_hash, 'official_parameter',
+                    'https://www.shfe.com.cn/fees/' || id,
+                    lower(hex(zeroblob(32))), '2026-06-04T12:00:00+08:00'
+             from fee_versions",
+            [],
+        )
+        .unwrap();
+}
 const LATEST_HTML_CU: &str = r#"
   <div>（手续费更新时间：2026-03-28 22:56:54，价格更新时间：2026-06-08 15:26:53。）</div>
   <table id="heyuetbl">
@@ -3082,6 +3101,7 @@ fn export_rejects_fee_version_before_contract_listing() {
         [],
     )
     .unwrap();
+    mark_fee_versions_official_with_evidence(&conn);
     drop(conn);
 
     let error = export_archive(&db_path, &out).unwrap_err();
@@ -5039,6 +5059,7 @@ fn export_rejects_orphan_fee_evidence() {
         "2026-06-04T12:00:00+08:00",
     )
     .unwrap();
+    mark_fee_versions_official_with_evidence(&connection);
     let contract_id: i64 = connection
         .query_row(
             "select id from contracts where symbol = 'SHFE.cu2607'",
@@ -5077,6 +5098,7 @@ fn export_rejects_reverse_fee_observation_times() {
         "2026-06-04T12:00:00+08:00",
     )
     .unwrap();
+    mark_fee_versions_official_with_evidence(&connection);
     connection
         .execute(
             "update fee_versions
@@ -5105,6 +5127,7 @@ fn exports_archive_loadable_by_client() {
         "2026-06-04T12:00:00+08:00",
     )
     .unwrap();
+    mark_fee_versions_official_with_evidence(&conn);
     let fee_effective_from: String = conn
         .query_row("select max(valid_from) from fee_versions", [], |row| {
             row.get(0)
@@ -5144,6 +5167,7 @@ fn export_refuses_untrusted_jin10_fee_versions() {
         "2026-06-04T12:00:00+08:00",
     )
     .unwrap();
+    mark_fee_versions_official_with_evidence(&conn);
     conn.execute("update fee_versions set source_kind = 'jin10'", [])
         .unwrap();
     drop(conn);
@@ -5152,7 +5176,137 @@ fn export_refuses_untrusted_jin10_fee_versions() {
 
     assert!(
         err.to_string()
-            .contains("refusing to export untrusted Jin10 fee versions")
+            .contains("refusing to export non-official fee versions")
+    );
+}
+
+#[test]
+fn export_refuses_every_non_official_fee_source() {
+    for source_kind in ["9qihuo", "jin10", "v11_baseline"] {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("future-meta.sqlite");
+        let out = directory.path().join("public");
+        let mut connection = connect(&db_path).unwrap();
+        ensure_schema(&connection).unwrap();
+        upsert_allowed_rows(
+            &mut connection,
+            &parse_csv(CSV_V1).unwrap(),
+            "2026-06-04T12:00:00+08:00",
+        )
+        .unwrap();
+        connection
+            .execute("update fee_versions set source_kind = ?1", [source_kind])
+            .unwrap();
+        drop(connection);
+
+        let error = export_archive(&db_path, &out).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("refusing to export non-official fee versions"),
+            "{source_kind}: {error:#}"
+        );
+    }
+}
+
+#[test]
+fn export_rejects_official_fee_versions_without_retained_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let db_path = directory.path().join("future-meta.sqlite");
+    let out = directory.path().join("public");
+    let mut connection = connect(&db_path).unwrap();
+    ensure_schema(&connection).unwrap();
+    upsert_allowed_rows(
+        &mut connection,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    connection
+        .execute("update fee_versions set source_kind = 'official'", [])
+        .unwrap();
+    drop(connection);
+
+    let error = export_archive(&db_path, &out).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("fee versions missing official evidence")
+    );
+}
+
+#[test]
+fn integrity_rejects_malformed_fee_timestamps() {
+    for (column, expected_field) in [
+        ("valid_from", "valid_from"),
+        ("valid_to", "valid_to"),
+        ("first_seen_at", "first_seen_at"),
+        ("last_seen_at", "last_seen_at"),
+    ] {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_schema(&connection).unwrap();
+        let mut row = parse_csv(CSV_V1).unwrap().remove(0);
+        row.listing_date = None;
+        upsert_allowed_rows(&mut connection, &[row], "2026-06-04T12:00:00+08:00").unwrap();
+        mark_fee_versions_official_with_evidence(&connection);
+        connection
+            .execute(
+                &format!("update fee_versions set {column} = 'not-rfc3339'"),
+                [],
+            )
+            .unwrap();
+        if column == "valid_from" {
+            connection
+                .execute(
+                    "update fee_version_evidence set valid_from = 'not-rfc3339'",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let error = validate_fee_history_integrity(&connection).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("invalid fee {expected_field} timestamp")),
+            "{column}: {error:#}"
+        );
+    }
+}
+
+#[test]
+fn integrity_rejects_open_fee_interval_before_a_later_version() {
+    let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+    ensure_schema(&connection).unwrap();
+    upsert_allowed_rows(
+        &mut connection,
+        &parse_csv(CSV_V1).unwrap(),
+        "2026-06-04T12:00:00+08:00",
+    )
+    .unwrap();
+    upsert_allowed_rows(
+        &mut connection,
+        &parse_csv(CSV_V2).unwrap(),
+        "2026-06-04T13:00:00+08:00",
+    )
+    .unwrap();
+    mark_fee_versions_official_with_evidence(&connection);
+    connection
+        .execute_batch(
+            "drop index idx_fee_versions_open_contract;
+             update fee_versions set valid_to = null where valid_to is not null;",
+        )
+        .unwrap();
+
+    let error = validate_fee_history_integrity(&connection).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("open fee intervals before later versions")
     );
 }
 

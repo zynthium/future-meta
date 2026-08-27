@@ -632,66 +632,124 @@ pub fn validate_fee_history_integrity(conn: &Connection) -> Result<()> {
         return Err(anyhow!("orphan fee-version evidence: {orphan_evidence}"));
     }
 
-    let reverse_observations: i64 = conn.query_row(
-        "select count(*) from fee_versions
-         where julianday(first_seen_at) > julianday(last_seen_at)",
+    let missing_evidence: i64 = conn.query_row(
+        "select count(*) from fee_versions version
+         where not exists (
+           select 1 from fee_version_evidence evidence
+           where evidence.contract_id = version.contract_id
+             and evidence.valid_from = version.valid_from
+             and evidence.rule_hash = version.rule_hash
+         )",
         [],
         |row| row.get(0),
     )?;
-    if reverse_observations > 0 {
+    if missing_evidence > 0 {
         return Err(anyhow!(
-            "reverse fee observation times: {reverse_observations}"
+            "fee versions missing official evidence: {missing_evidence}"
         ));
     }
 
-    let prelisting_versions: i64 = conn.query_row(
-        "select count(*)
-         from fee_versions version
-         join contracts contract on contract.id = version.contract_id
-         where contract.listing_date is not null
-           and julianday(version.valid_from) < julianday(
-             case length(contract.listing_date)
-               when 8 then substr(contract.listing_date, 1, 4) || '-' ||
-                           substr(contract.listing_date, 5, 2) || '-' ||
-                           substr(contract.listing_date, 7, 2) || 'T00:00:00+08:00'
-               when 10 then contract.listing_date || 'T00:00:00+08:00'
-               else contract.listing_date
-             end
-           )",
-        [],
-        |row| row.get(0),
-    )?;
-    if prelisting_versions > 0 {
+    let mut intervals = collect_fee_history_intervals(conn)?;
+
+    if intervals.reverse_observations > 0 {
         return Err(anyhow!(
-            "fee versions before contract listing: {prelisting_versions}"
+            "reverse fee observation times: {}",
+            intervals.reverse_observations
         ));
     }
-    let invalid_intervals: i64 = conn.query_row(
-        "select count(*) from fee_versions
-         where valid_to is not null and julianday(valid_to) <= julianday(valid_from)",
-        [],
-        |row| row.get(0),
-    )?;
-    if invalid_intervals > 0 {
-        return Err(anyhow!("invalid fee intervals: {invalid_intervals}"));
+
+    if intervals.prelisting_versions > 0 {
+        return Err(anyhow!(
+            "fee versions before contract listing: {}",
+            intervals.prelisting_versions
+        ));
+    }
+    if intervals.invalid_intervals > 0 {
+        return Err(anyhow!(
+            "invalid fee intervals: {}",
+            intervals.invalid_intervals
+        ));
     }
 
-    let overlaps: i64 = conn.query_row(
-        "select count(*)
-         from fee_versions earlier
-         join fee_versions later
-           on later.contract_id = earlier.contract_id
-          and julianday(later.valid_from) > julianday(earlier.valid_from)
-         where earlier.valid_to is not null
-           and julianday(earlier.valid_to) > julianday(later.valid_from)",
-        [],
-        |row| row.get(0),
-    )?;
+    let mut open_before_later = 0usize;
+    let mut overlaps = 0usize;
+    for contract_intervals in intervals.by_contract.values_mut() {
+        contract_intervals.sort_unstable_by_key(|(valid_from, _)| *valid_from);
+        for pair in contract_intervals.windows(2) {
+            let (_, earlier_to) = &pair[0];
+            let (later_from, _) = &pair[1];
+            match earlier_to {
+                None => open_before_later += 1,
+                Some(valid_to) if *valid_to > *later_from => overlaps += 1,
+                Some(_) => {}
+            }
+        }
+    }
+    if open_before_later > 0 {
+        return Err(anyhow!(
+            "open fee intervals before later versions: {open_before_later}"
+        ));
+    }
     if overlaps > 0 {
         return Err(anyhow!("overlapping fee intervals: {overlaps}"));
     }
 
     Ok(())
+}
+
+#[derive(Default)]
+struct FeeHistoryIntervals {
+    by_contract: BTreeMap<i64, Vec<(OffsetDateTime, Option<OffsetDateTime>)>>,
+    reverse_observations: usize,
+    prelisting_versions: usize,
+    invalid_intervals: usize,
+}
+
+fn collect_fee_history_intervals(conn: &Connection) -> Result<FeeHistoryIntervals> {
+    let mut intervals = FeeHistoryIntervals::default();
+    let mut statement = conn.prepare(
+        "select version.contract_id, version.valid_from, version.valid_to,
+                version.first_seen_at, version.last_seen_at, contract.listing_date
+         from fee_versions version
+         join contracts contract on contract.id = version.contract_id",
+    )?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let contract_id: i64 = row.get(0)?;
+        let valid_from: String = row.get(1)?;
+        let valid_from_at = parse_timestamp("fee valid_from", &valid_from)?;
+        let valid_to: Option<String> = row.get(2)?;
+        let valid_to_at = valid_to
+            .as_deref()
+            .map(|value| parse_timestamp("fee valid_to", value))
+            .transpose()?;
+        let first_seen_at: String = row.get(3)?;
+        let first_seen_at = parse_timestamp("fee first_seen_at", &first_seen_at)?;
+        let last_seen_at: String = row.get(4)?;
+        let last_seen_at = parse_timestamp("fee last_seen_at", &last_seen_at)?;
+        let listing_date: Option<String> = row.get(5)?;
+
+        if first_seen_at > last_seen_at {
+            intervals.reverse_observations += 1;
+        }
+        if valid_to_at.is_some_and(|valid_to| valid_to <= valid_from_at) {
+            intervals.invalid_intervals += 1;
+        }
+        if listing_date
+            .as_deref()
+            .map(contract_listing_day_start)
+            .transpose()?
+            .is_some_and(|listing_at| valid_from_at < listing_at)
+        {
+            intervals.prelisting_versions += 1;
+        }
+        intervals
+            .by_contract
+            .entry(contract_id)
+            .or_default()
+            .push((valid_from_at, valid_to_at));
+    }
+    Ok(intervals)
 }
 
 /// Explicit, human-reviewed correction for one reversed observation interval.

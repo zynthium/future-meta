@@ -86,18 +86,21 @@ jobs:
           cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed 2> /tmp/update-latest.stderr
           refresh_status=$?
           set -e
-          if [ "$refresh_status" -ne 0 ]; then
+          if [ "$refresh_status" -eq 0 ]; then
+            echo "fee_publish=true" >> "$GITHUB_OUTPUT"
+          else
             cat /tmp/update-latest.stderr >&2
             if ! grep -Eq "latest fee candidates before history write|require staged verified official evidence before history write|new concrete contracts require staged official fee evidence" /tmp/update-latest.stderr; then
               echo "latest refresh failed unexpectedly (exit=$refresh_status)" >&2
               exit "$refresh_status"
             fi
             echo "latest fee changes deferred: waiting for official evidence"
+            echo "fee_publish=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "publish=false" >> "$GITHUB_OUTPUT"
+          echo "seed_publish=true" >> "$GITHUB_OUTPUT"
 
       - name: Validate Jin10 secondary source
-        if: steps.refresh.outputs.publish == 'true'
+        if: steps.refresh.outputs.fee_publish == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -110,23 +113,53 @@ jobs:
           cat /tmp/jin10-validation.json
 
       - name: Export Pages artifact
-        if: steps.refresh.outputs.publish == 'true'
+        if: steps.refresh.outputs.fee_publish == 'true'
         run: cargo run -p future-meta-daemon -- export --db "$DB_PATH" --out public
 
+      - name: Prepare frozen Pages artifacts
+        if: steps.refresh.outputs.fee_publish != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p public/artifacts
+          curl --fail --location --show-error \
+            https://future-meta.pages.dev/manifest.json \
+            --output public/manifest.json
+          artifact="$(jq -er '.artifact' public/manifest.json)"
+          expected_sha="$(jq -er '.sha256' public/manifest.json)"
+          expected_size="$(jq -er '.size' public/manifest.json)"
+          if [ "$artifact" != "latest.fmeta.zst" ] \
+            || ! [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] \
+            || ! [[ "$expected_size" =~ ^[0-9]+$ ]]; then
+            echo "invalid frozen Pages manifest" >&2
+            exit 1
+          fi
+          curl --fail --location --show-error \
+            "https://future-meta.pages.dev/$artifact" \
+            --output "public/$artifact"
+          actual_sha="$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)"
+          actual_size="$(stat -c%s public/latest.fmeta.zst)"
+          if [ "$actual_sha" != "$expected_sha" ] || [ "$actual_size" != "$expected_size" ]; then
+            echo "frozen Pages artifact checksum mismatch" >&2
+            exit 1
+          fi
+          data_version="$(jq -er '.data_version' public/manifest.json)"
+          archive_version="$(printf '%s' "$data_version" | tr -d ':+-')"
+          cp public/latest.fmeta.zst "public/artifacts/future-meta-fees-v2-$archive_version.fmeta.zst"
+
       - name: Publish updated daemon seed
-        if: steps.refresh.outputs.publish == 'true'
+        if: steps.refresh.outputs.seed_publish == 'true'
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "$SEED_ARCHIVE")"
           gzip -c "$DB_PATH" > "$SEED_ARCHIVE"
 
       - name: Compute artifact hash
-        if: steps.refresh.outputs.publish == 'true'
+        if: steps.refresh.outputs.fee_publish == 'true'
         id: artifact
         run: echo "sha=$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloudflare Pages
-        if: steps.refresh.outputs.publish == 'true'
+        if: steps.refresh.outputs.seed_publish == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
