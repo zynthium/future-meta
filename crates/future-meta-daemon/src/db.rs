@@ -1994,6 +1994,47 @@ pub fn record_announcement_candidate(
     Ok(())
 }
 
+/// Resolve pending option-fee-only notices, which are outside this archive.
+///
+/// # Errors
+///
+/// Returns an error when candidate state cannot be updated.
+pub fn resolve_out_of_scope_option_fee_candidates(
+    conn: &Connection,
+    resolved_at: &str,
+) -> Result<usize> {
+    ensure_schema(conn)?;
+    let resolved = conn.execute(
+        "update announcement_candidates
+         set resolved_at = ?1
+         where resolved_at is null
+           and exists (
+             select 1 from announcement_documents document
+             where document.source = announcement_candidates.source
+               and document.article_id = announcement_candidates.article_id
+               and document.title like '%期权%'
+               and document.title not like '%期货手续费%'
+           )
+           and exists (
+             select 1 from announcement_document_snapshots snapshot
+             where snapshot.source = announcement_candidates.source
+               and snapshot.article_id = announcement_candidates.article_id
+               and snapshot.fetched_at = (
+                 select max(latest.fetched_at)
+                 from announcement_document_snapshots latest
+                 where latest.source = snapshot.source
+                   and latest.article_id = snapshot.article_id
+               )
+               and (snapshot.body_text like '%期权交易手续费%'
+                 or snapshot.body_text like '%期权手续费%')
+               and snapshot.body_text not like '%期货交易手续费%'
+               and snapshot.body_text not like '%期货手续费%'
+           )",
+        params![resolved_at],
+    )?;
+    Ok(resolved)
+}
+
 /// Record a successful source scan without clearing persisted evidence.
 ///
 /// # Errors

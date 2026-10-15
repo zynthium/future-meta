@@ -242,6 +242,11 @@ pub fn scan_announcements(
     observed_at: &str,
     reconcile_htfc: bool,
 ) -> Result<AnnouncementScan> {
+    let resolved = db::resolve_out_of_scope_option_fee_candidates(conn, observed_at)?;
+    if resolved > 0 {
+        eprintln!("resolved out-of-scope option fee candidates: {resolved}");
+    }
+
     let citics = scan_source(conn, transport, AnnouncementSource::Citics, observed_at);
     match citics {
         Ok(mut summary) => {
@@ -582,6 +587,10 @@ pub fn parse_htfc_article_html(
 /// Classify a selected broker body as a fee-change candidate.
 #[must_use]
 pub fn classify_fee_candidate(document: &AnnouncementDocument) -> Option<AnnouncementCandidate> {
+    if is_out_of_scope_option_fee_notice(document) {
+        return None;
+    }
+
     let keywords = FEE_KEYWORDS
         .iter()
         .filter(|keyword| document.body_text.contains(**keyword))
@@ -602,6 +611,17 @@ pub fn classify_fee_candidate(document: &AnnouncementDocument) -> Option<Announc
             official_urls: document.official_urls.clone(),
         }
     })
+}
+
+fn is_out_of_scope_option_fee_notice(document: &AnnouncementDocument) -> bool {
+    let title = &document.item.title;
+    let body = &document.body_text;
+    let mentions_option_fee = body.contains("期权交易手续费") || body.contains("期权手续费");
+    let mentions_futures_fee = ["期货交易手续费", "期货手续费"]
+        .iter()
+        .any(|phrase| title.contains(phrase) || body.contains(phrase));
+
+    title.contains("期权") && mentions_option_fee && !mentions_futures_fee
 }
 
 fn parse_article_body(
