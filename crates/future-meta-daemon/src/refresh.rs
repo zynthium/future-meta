@@ -597,7 +597,8 @@ fn fetch_missing_contract_csv_rows(
 /// Fetch recent Jin10 snapshots whose next-day effective dates can corroborate
 /// a current 9qihuo table change. The bounded window intentionally fails
 /// closed for stale 9qihuo timestamps instead of treating an old Jin10 value
-/// as confirmation of a new fee rule.
+/// as confirmation of a new fee rule. An empty source response contributes no
+/// evidence; candidate verification still rejects changes without a matching row.
 fn recent_jin10_rows(
     conn: &rusqlite::Connection,
     observed_at: OffsetDateTime,
@@ -612,18 +613,29 @@ fn recent_jin10_rows(
     let metadata = db::product_static_metadata_candidates(conn)?;
     let client = jin10_client()?;
     let mut rows = Vec::new();
+    let mut snapshots = 0usize;
+    let mut skipped_invalid_symbols = 0usize;
+    let mut skipped_missing_metadata = 0usize;
 
     for (range_start, range_end) in jin10_date_ranges(&from, &to)? {
         let url = range_url(&range_start, &range_end)?;
         let payload = fetch_text(&client, url.as_str())?;
         for snapshot in parse_snapshots_with_candidates(&payload, &metadata)? {
+            snapshots += 1;
+            skipped_invalid_symbols += snapshot.snapshot.skipped_invalid_symbols;
+            skipped_missing_metadata += snapshot.snapshot.skipped_missing_metadata;
             rows.extend(snapshot.snapshot.rows);
         }
     }
-    if rows.is_empty() {
+    if snapshots > 0 && rows.is_empty() {
         return Err(anyhow!(
-            "Jin10 returned no rows for latest-source verification"
+            "Jin10 snapshots contain no usable rows: from={from} to={to} snapshots={snapshots} skipped_invalid_symbols={skipped_invalid_symbols} skipped_missing_metadata={skipped_missing_metadata}"
         ));
+    }
+    if snapshots == 0 {
+        eprintln!(
+            "Jin10 has no snapshots: from={from} to={to}; no corroborating evidence is available; changed candidates require official review"
+        );
     }
     Ok(rows)
 }
