@@ -3,7 +3,7 @@
 use anyhow::{Result, anyhow};
 use future_meta::archive::{encode_archive_bytes, sha256_hex};
 use future_meta::model::{
-    Contract, ContractFee, ContractSpecVersion, FeeArchiveV2, FeeSpec, Manifest, SCHEMA_VERSION,
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV3, FeeSpec, Manifest, SCHEMA_VERSION,
     TradingStatus,
 };
 use rusqlite::{Connection, Row};
@@ -28,7 +28,7 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         .generated_at
         .replace([':', '+'], "")
         .replace('-', "");
-    let artifact_name = format!("artifacts/future-meta-fees-v2-{data_version}.fmeta.zst");
+    let artifact_name = format!("artifacts/future-meta-fees-v3-{data_version}.fmeta.zst");
 
     std::fs::write(out.join("latest.fmeta.zst"), &bytes)?;
     std::fs::write(out.join(&artifact_name), &bytes)?;
@@ -66,7 +66,8 @@ fn ensure_only_official_fee_versions(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn load_archive(conn: &Connection, generated_at: OffsetDateTime) -> Result<FeeArchiveV2> {
+#[allow(clippy::too_many_lines)]
+fn load_archive(conn: &Connection, generated_at: OffsetDateTime) -> Result<FeeArchiveV3> {
     let generated_on = generated_at.to_offset(UtcOffset::from_hms(8, 0, 0)?).date();
     let mut contracts_stmt = conn.prepare(
         "select contracts.id, contracts.symbol, contracts.listing_date, contracts.expiry_date,
@@ -118,14 +119,24 @@ fn load_archive(conn: &Connection, generated_at: OffsetDateTime) -> Result<FeeAr
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    let mut fee_stmt = conn.prepare(
+    let has_intraday: bool = conn.query_row(
+        "select exists(select 1 from pragma_table_info('fee_versions') where name='intraday_open_fee_json')",
+        [], |row| row.get(0),
+    )?;
+    let intraday_column = if has_intraday {
+        "intraday_open_fee_json"
+    } else {
+        "null"
+    };
+    let fee_sql = format!(
         "select contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
                 open_fee_json, close_yesterday_fee_json, close_today_fee_json,
                 trading_status, is_main_contract, source_updated_at,
-                valid_from, valid_to
+                valid_from, valid_to, {intraday_column}
          from fee_versions
-         order by contract_id, valid_from, id",
-    )?;
+         order by contract_id, valid_from, id"
+    );
+    let mut fee_stmt = conn.prepare(&fee_sql)?;
     let fee_versions = fee_stmt
         .query_map([], |row| {
             let trading_status_text: String = row.get(7)?;
@@ -140,6 +151,10 @@ fn load_archive(conn: &Connection, generated_at: OffsetDateTime) -> Result<FeeAr
                 open_fee: parse_fee_json(&open_fee_json)?,
                 close_yesterday_fee: parse_fee_json(&close_yesterday_fee_json)?,
                 close_today_fee: parse_fee_json(&close_today_fee_json)?,
+                intraday_open_fee: row
+                    .get::<_, Option<String>>(12)?
+                    .map(|value| parse_fee_json(&value))
+                    .transpose()?,
                 trading_status: parse_status(&trading_status_text, 7)?,
                 is_main_contract: row.get::<_, i64>(8)? != 0,
                 source_updated_at: row.get(9)?,
@@ -161,7 +176,7 @@ fn load_archive(conn: &Connection, generated_at: OffsetDateTime) -> Result<FeeAr
         .max()
         .unwrap_or_else(|| generated_at.clone());
 
-    Ok(FeeArchiveV2 {
+    Ok(FeeArchiveV3 {
         schema_version: SCHEMA_VERSION,
         generated_at: generated_at.clone(),
         history_start,

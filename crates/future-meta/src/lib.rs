@@ -13,7 +13,8 @@ pub mod symbol;
 pub use crate::download::{DownloadConfig, load_or_fetch};
 pub use crate::error::{AsOfError, FutureMetaError};
 pub use crate::model::{
-    Contract, ContractFee, ContractSpecVersion, FeeArchiveV1, FeeArchiveV2, FeeSpec, Manifest,
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV1, FeeArchiveV2, FeeArchiveV3, FeeSpec,
+    Manifest,
 };
 pub use crate::query::{
     ContractHandle, FutureMeta, PreparedFee, PreparedFeeBook, PreparedFeeCursors, TradingDayMeta,

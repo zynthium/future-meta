@@ -18,6 +18,7 @@ pub mod official_history;
 pub mod official_metadata;
 pub mod parse;
 pub mod product_spec;
+pub mod rebuild;
 pub mod refresh;
 pub mod shfe;
 pub mod source;
@@ -35,6 +36,22 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    VerifyCollected {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    RebuildCollected {
+        #[arg(long, default_value = "data")]
+        metadata_dir: PathBuf,
+        #[arg(long)]
+        settle_dir: PathBuf,
+        #[arg(long)]
+        settlement_sources: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     Discover {
         #[arg(long)]
         out: PathBuf,
@@ -302,6 +319,27 @@ enum Command {
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::VerifyCollected { db, out } => {
+            let report = rebuild::verify(&db)?;
+            std::fs::write(out, serde_json::to_vec_pretty(&report)?)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Command::RebuildCollected {
+            metadata_dir,
+            settle_dir,
+            settlement_sources,
+            out,
+        } => {
+            let result = rebuild::rebuild(&rebuild::RebuildOptions {
+                metadata_dir,
+                settle_dir,
+                settlement_sources,
+                out,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
         Command::Discover { out } => source::discover_to_file(&out),
         Command::ImportV11Baseline {
             db,

@@ -252,6 +252,7 @@ fn materialize_rows(
                     open_fee: observation.fees[0].clone(),
                     close_yesterday_fee: observation.fees[1].clone(),
                     close_today_fee: observation.fees[2].clone(),
+                    intraday_open_fee: None,
                     lot_size,
                     tick_size,
                     source_updated_at: Some(observation.valid_from.clone()),

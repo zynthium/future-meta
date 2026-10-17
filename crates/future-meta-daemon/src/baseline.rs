@@ -149,6 +149,30 @@ pub fn ensure_v11_baseline(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Accept a verified collector rebuild or a legacy reviewed V11 baseline.
+///
+/// # Errors
+/// Returns an error if neither provenance record is present or valid.
+pub fn ensure_reviewed_history(conn: &Connection) -> Result<()> {
+    let collected: bool = conn.query_row(
+        "select exists(select 1 from sqlite_master where type='table' and name='rebuild_summary')",
+        [],
+        |r| r.get(0),
+    )?;
+    if collected {
+        let source: String = conn.query_row(
+            "select json_extract(report_json,'$.source') from rebuild_summary",
+            [],
+            |r| r.get(0),
+        )?;
+        if source != "fresh_collector_outputs_no_seed" {
+            bail!("unknown collector rebuild lineage");
+        }
+        return Ok(());
+    }
+    ensure_v11_baseline(conn)
+}
+
 #[derive(Debug)]
 struct ParsedV11Rows {
     rows: Vec<V11Row>,
@@ -401,6 +425,7 @@ impl V11Row {
             open_fee: self.open_fee.clone(),
             close_yesterday_fee: self.close_yesterday_fee.clone(),
             close_today_fee: self.close_today_fee.clone(),
+            intraday_open_fee: None,
             lot_size: metadata.lot_size,
             tick_size: metadata.tick_size,
             source_updated_at: Some(self.valid_from.clone()),

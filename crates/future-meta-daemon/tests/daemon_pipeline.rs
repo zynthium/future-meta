@@ -3350,6 +3350,7 @@ fn official_listing_evidence_can_retime_and_fill_a_missing_baseline_contract() {
         open_fee: fee.clone(),
         close_yesterday_fee: fee.clone(),
         close_today_fee: close_today.clone(),
+        intraday_open_fee: None,
         lot_size: 3.0,
         tick_size: 5.0,
         source_updated_at: Some("2026-08-07T00:00:00+08:00".to_owned()),

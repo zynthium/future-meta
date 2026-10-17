@@ -1,7 +1,10 @@
 //! Archive encoding, decoding, and checksum helpers.
 
 use crate::error::FutureMetaError;
-use crate::model::{FeeArchiveV1, FeeArchiveV2, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION};
+use crate::model::{
+    FeeArchiveV1, FeeArchiveV2, FeeArchiveV3, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION,
+    SPEC_SCHEMA_VERSION,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -26,7 +29,7 @@ pub fn encode_archive_bytes(archive: &impl Serialize) -> Result<Vec<u8>, FutureM
 /// Returns [`FutureMetaError::CorruptArchive`] if zstd decompression or bincode
 /// deserialization fails. Returns [`FutureMetaError::UnsupportedSchemaVersion`]
 /// when the archive schema is not supported by this client.
-pub fn decode_archive_bytes(bytes: &[u8]) -> Result<FeeArchiveV2, FutureMetaError> {
+pub fn decode_archive_bytes(bytes: &[u8]) -> Result<FeeArchiveV3, FutureMetaError> {
     let decoded = zstd::stream::decode_all(bytes)
         .map_err(|err| FutureMetaError::CorruptArchive(err.to_string()))?;
     let (schema_version, _): (u32, usize) =
@@ -34,7 +37,8 @@ pub fn decode_archive_bytes(bytes: &[u8]) -> Result<FeeArchiveV2, FutureMetaErro
             .map_err(|err| FutureMetaError::CorruptArchive(err.to_string()))?;
     match schema_version {
         LEGACY_SCHEMA_VERSION => decode_exact::<FeeArchiveV1>(&decoded).map(Into::into),
-        SCHEMA_VERSION => decode_exact::<FeeArchiveV2>(&decoded),
+        SPEC_SCHEMA_VERSION => decode_exact::<FeeArchiveV2>(&decoded).map(Into::into),
+        SCHEMA_VERSION => decode_exact::<FeeArchiveV3>(&decoded),
         found => Err(FutureMetaError::UnsupportedSchemaVersion {
             found,
             supported: SCHEMA_VERSION,

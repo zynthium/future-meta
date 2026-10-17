@@ -6,10 +6,10 @@
 
 中国期货手续费历史数据维护与本地 as-of 查询库。
 
-`future-meta` 将 9qihuo 的手续费数据维护为可版本化的 SQLite 历史库，并导出为压缩二进制 artifact。客户端只需要下载 Cloudflare Pages 上的 `manifest.json` 和 `latest.fmeta.zst`，即可在本地完成高性能手续费查询。
+`future-meta` 从交易所官方采集数据重建手续费、保证金和规格历史，维护 SQLite 并导出压缩二进制 artifact。客户端只需要下载 Cloudflare Pages 上的 `manifest.json` 和 `latest.fmeta.zst`，即可在本地完成高性能手续费查询。
 
 > [!IMPORTANT]
-> 本项目不把 9qihuo 当作实时 API 直接转发。daemon 会定期抓取最新截面并自行维护历史；client 查询的是已发布 artifact 中的本地索引。
+> 当前 archive 为 schema 3，请使用 0.4.0 客户端。历史数据截至 2026-10-15；[覆盖报告](https://future-meta.pages.dev/coverage.json) 公布未知区间及推算到期日数量。第三方最新截面仅用于发现候选，client 查询已审阅官方数据的本地索引。
 
 ## 功能特性
 
@@ -18,14 +18,14 @@
 - 提供可按历史时间查询的合约乘数、最小变动价位，以及派生的每手每跳价值。
 - 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
-- daemon 使用 SQLite 保存历史版本，按手续费规则变化生成有效期区间。
+- daemon 使用 SQLite 保存历史版本，按手续费或投机保证金变化生成有效期区间，独立保留日内开仓费。
 - GitHub Actions 每天北京时间 18:45 采集候选；仅人工审阅的官方证据可创建新的具体合约费率记录并发布。
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    qh[9qihuo 数据源] --> daemon[future-meta-daemon]
+    exchange[交易所官方采集输出] --> daemon[future-meta-daemon]
     daemon --> sqlite[(SQLite 历史 seed)]
     sqlite --> export[导出 artifact]
     export --> pages[Cloudflare Pages]

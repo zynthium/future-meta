@@ -4,7 +4,7 @@ use crate::parse::AllowedRow;
 use future_meta::model::{FeeKind, FeeSpec};
 use serde::Serialize;
 
-/// Hash the three fee-rule legs for one row.
+/// Hash the published fee legs for one row.
 ///
 /// The source update timestamp is intentionally excluded because it describes
 /// observation time, not fee-rule identity.
@@ -20,11 +20,27 @@ pub fn row_rule_hash(row: &AllowedRow) -> String {
         open: canonical_fee(&row.open_fee),
         close_yesterday: canonical_fee(&row.close_yesterday_fee),
         close_today: canonical_fee(&row.close_today_fee),
+        intraday_open: row.intraday_open_fee.as_ref().map(canonical_fee),
     };
     let text =
         serde_json::to_string(&canonical).expect("canonical allowed row should serialize to JSON");
 
     digest_text(&text)
+}
+
+/// Identity of a complete parameter state, separate from fee-evidence identity.
+///
+/// # Panics
+///
+/// Panics if the row contains non-finite numeric values or cannot be serialized.
+#[must_use]
+pub fn row_state_hash(row: &AllowedRow) -> String {
+    let tuple = (
+        row_rule_hash(row),
+        row.buy_margin_rate.map(f64::to_bits),
+        row.sell_margin_rate.map(f64::to_bits),
+    );
+    digest_text(&serde_json::to_string(&tuple).expect("finite state should serialize"))
 }
 
 fn assert_finite_row(row: &AllowedRow) {
@@ -33,6 +49,9 @@ fn assert_finite_row(row: &AllowedRow) {
     assert_fee_spec_finite(&row.open_fee, "open_fee");
     assert_fee_spec_finite(&row.close_yesterday_fee, "close_yesterday_fee");
     assert_fee_spec_finite(&row.close_today_fee, "close_today_fee");
+    if let Some(fee) = &row.intraday_open_fee {
+        assert_fee_spec_finite(fee, "intraday_open_fee");
+    }
     assert_finite(row.lot_size, "lot_size");
     assert_finite(row.tick_size, "tick_size");
 }
@@ -70,6 +89,8 @@ struct CanonicalRow {
     open: CanonicalFee,
     close_yesterday: CanonicalFee,
     close_today: CanonicalFee,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intraday_open: Option<CanonicalFee>,
 }
 
 #[derive(Serialize)]

@@ -181,6 +181,7 @@ pub fn parse_snapshots_with_candidates(
                 };
 
             rows.push(AllowedRow {
+                intraday_open_fee: None,
                 symbol,
                 listing_date: None,
                 expiry_date: None,

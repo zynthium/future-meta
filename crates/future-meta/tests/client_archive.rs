@@ -1,8 +1,8 @@
 use future_meta::archive::{decode_archive_bytes, encode_archive_bytes, sha256_hex};
 use future_meta::error::FutureMetaError;
 use future_meta::model::{
-    Contract, ContractFee, ContractSpecVersion, FeeArchiveV1, FeeArchiveV2, FeeKind, FeeSpec,
-    LEGACY_SCHEMA_VERSION, SCHEMA_VERSION, TradingStatus,
+    Contract, ContractSpecVersion, FeeArchiveV1, FeeArchiveV3, FeeKind, FeeSpec,
+    LEGACY_SCHEMA_VERSION, LegacyContractFee as ContractFee, SCHEMA_VERSION, TradingStatus,
 };
 use future_meta::query::FutureMeta;
 use time::format_description::well_known::Rfc3339;
@@ -68,14 +68,21 @@ fn archive_roundtrips_through_zstd_bincode() {
     let decoded = decode_archive_bytes(&bytes).unwrap();
 
     assert_eq!(decoded.contracts, archive.contracts);
-    assert_eq!(decoded.fee_versions, archive.fee_versions);
+    assert_eq!(
+        decoded.fee_versions,
+        archive
+            .fee_versions
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<future_meta::ContractFee>>()
+    );
     assert_eq!(decoded.contract_spec_versions.len(), 1);
     assert_amount(decoded.contract_spec_versions[0].tick_size, 10.0);
 }
 
 #[test]
 fn version_two_archive_roundtrips_with_spec_history() {
-    let archive = FeeArchiveV2::from(sample_archive());
+    let archive = FeeArchiveV3::from(sample_archive());
 
     let bytes = encode_archive_bytes(&archive).unwrap();
     let decoded = decode_archive_bytes(&bytes).unwrap();
@@ -150,7 +157,7 @@ fn queries_contract_fee_asof() {
 #[test]
 fn queries_contract_specification_asof_across_tick_change() {
     let legacy = sample_archive();
-    let mut archive = FeeArchiveV2::from(legacy);
+    let mut archive = FeeArchiveV3::from(legacy);
     archive.history_start = "2026-01-01T00:00:00+08:00".to_owned();
     archive.contract_spec_versions = vec![
         ContractSpecVersion {
@@ -483,7 +490,7 @@ fn rejects_kq_aliases_for_contract_metadata_and_specs() {
 
 #[test]
 fn rejects_archives_that_persist_kq_aliases_as_contracts() {
-    let mut archive = FeeArchiveV2::from(sample_archive());
+    let mut archive = FeeArchiveV3::from(sample_archive());
     archive.contracts[0].symbol = "KQ.m@SHFE.cu".to_owned();
 
     let err = FutureMeta::from_archive(archive).unwrap_err();
@@ -526,7 +533,7 @@ fn parsed_time_underlying_queries_return_concrete_contracts() {
 
 #[test]
 fn underlying_query_keeps_concrete_fees_with_unknown_trading_status() {
-    let mut archive = FeeArchiveV2::from(sample_archive());
+    let mut archive = FeeArchiveV3::from(sample_archive());
     archive.fee_versions[0].trading_status = TradingStatus::Unknown;
     let meta = FutureMeta::from_archive(archive).unwrap();
 

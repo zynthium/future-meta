@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Current archive schema version.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
+
+/// Archive version with specifications but no separate intraday opening fee.
+pub const SPEC_SCHEMA_VERSION: u32 = 2;
 
 /// Legacy archive version that stores only one static specification per contract.
 pub const LEGACY_SCHEMA_VERSION: u32 = 1;
@@ -49,7 +52,7 @@ pub struct FeeArchiveV1 {
     /// Contract metadata table.
     pub contracts: Vec<Contract>,
     /// Fee records over time.
-    pub fee_versions: Vec<ContractFee>,
+    pub fee_versions: Vec<LegacyContractFee>,
 }
 
 /// Version 2 fee archive payload with time-versioned contract specifications.
@@ -68,10 +71,29 @@ pub struct FeeArchiveV2 {
     /// Contract lot/tick specifications over time.
     pub contract_spec_versions: Vec<ContractSpecVersion>,
     /// Fee records over time.
+    pub fee_versions: Vec<LegacyContractFee>,
+}
+
+/// Version 3 payload including intraday opening fees.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeeArchiveV3 {
+    /// Schema version used by this archive.
+    pub schema_version: u32,
+    /// Generation timestamp.
+    pub generated_at: String,
+    /// Earliest date covered by this archive.
+    pub history_start: String,
+    /// Latest date covered by this archive.
+    pub history_end: String,
+    /// Contract metadata table containing the latest known specification.
+    pub contracts: Vec<Contract>,
+    /// Contract lot/tick specifications over time.
+    pub contract_spec_versions: Vec<ContractSpecVersion>,
+    /// Fee records over time.
     pub fee_versions: Vec<ContractFee>,
 }
 
-impl From<FeeArchiveV1> for FeeArchiveV2 {
+impl From<FeeArchiveV1> for FeeArchiveV3 {
     fn from(archive: FeeArchiveV1) -> Self {
         let contract_spec_versions = archive
             .contracts
@@ -91,7 +113,7 @@ impl From<FeeArchiveV1> for FeeArchiveV2 {
             history_end: archive.history_end,
             contracts: archive.contracts,
             contract_spec_versions,
-            fee_versions: archive.fee_versions,
+            fee_versions: archive.fee_versions.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -151,6 +173,35 @@ impl ContractSpecVersion {
     }
 }
 
+/// Fee row in schema 1 and 2 archives, retained for binary compatibility.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LegacyContractFee {
+    /// Contract id from the contract table.
+    pub contract_id: u32,
+    /// Hash identifying the normalized fee rule.
+    pub rule_hash: String,
+    /// Long-side margin rate when known.
+    pub buy_margin_rate: Option<f64>,
+    /// Short-side margin rate when known.
+    pub sell_margin_rate: Option<f64>,
+    /// Open position fee.
+    pub open_fee: FeeSpec,
+    /// Close yesterday position fee.
+    pub close_yesterday_fee: FeeSpec,
+    /// Close today position fee.
+    pub close_today_fee: FeeSpec,
+    /// Trading status reported by the source.
+    pub trading_status: TradingStatus,
+    /// Whether this record refers to the main contract.
+    pub is_main_contract: bool,
+    /// Source update timestamp when provided.
+    pub source_updated_at: Option<String>,
+    /// Inclusive first date this rule is valid.
+    pub valid_from: String,
+    /// Exclusive end date this rule is valid; `None` means open-ended/current.
+    pub valid_to: Option<String>,
+}
+
 /// Fee rule for a contract over a validity interval.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContractFee {
@@ -168,6 +219,8 @@ pub struct ContractFee {
     pub close_yesterday_fee: FeeSpec,
     /// Close today position fee.
     pub close_today_fee: FeeSpec,
+    /// Intraday opening fee; `None` means the source did not publish it.
+    pub intraday_open_fee: Option<FeeSpec>,
     /// Trading status reported by the source.
     pub trading_status: TradingStatus,
     /// Whether this record refers to the main contract.
@@ -213,4 +266,38 @@ pub enum FeeKind {
     Zero,
     /// Unknown or unsupported fee text.
     Unknown,
+}
+
+impl From<LegacyContractFee> for ContractFee {
+    fn from(row: LegacyContractFee) -> Self {
+        Self {
+            contract_id: row.contract_id,
+            rule_hash: row.rule_hash,
+            buy_margin_rate: row.buy_margin_rate,
+            sell_margin_rate: row.sell_margin_rate,
+            open_fee: row.open_fee,
+            close_yesterday_fee: row.close_yesterday_fee,
+            close_today_fee: row.close_today_fee,
+            trading_status: row.trading_status,
+            is_main_contract: row.is_main_contract,
+            source_updated_at: row.source_updated_at,
+            valid_from: row.valid_from,
+            valid_to: row.valid_to,
+            intraday_open_fee: None,
+        }
+    }
+}
+
+impl From<FeeArchiveV2> for FeeArchiveV3 {
+    fn from(archive: FeeArchiveV2) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            generated_at: archive.generated_at,
+            history_start: archive.history_start,
+            history_end: archive.history_end,
+            contracts: archive.contracts,
+            contract_spec_versions: archive.contract_spec_versions,
+            fee_versions: archive.fee_versions.into_iter().map(Into::into).collect(),
+        }
+    }
 }

@@ -10,3 +10,4 @@
 .gstack/
 .serena/
 .tokensave/
+__pycache__/

@@ -10,8 +10,6 @@ env:
   DB_PATH: data/future-meta.sqlite
   SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
   SEED_ARCHIVE: public/ops/future-meta.sqlite.gz
-  REVIEWED_SEED_ARCHIVE: assets/future-meta-v18-reviewed.sqlite.gz
-  REVIEWED_BASELINE_SOURCE_SHA256: 5690905cd18dcd9d5e32c9ffca9f8eb998978432dd67f0129dc5f9c7e0c7c242
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -39,38 +37,14 @@ jobs:
           mkdir -p "$(dirname "$DB_PATH")"
           curl --fail --location --show-error "$SEED_URL" --output /tmp/future-meta.sqlite.gz
           gzip -dc /tmp/future-meta.sqlite.gz > "$DB_PATH"
-          if ! sqlite3 "$DB_PATH" \
-            "select name from sqlite_master where type = 'table' and name = 'baseline_state';" \
-            | grep -qx baseline_state; then
-            echo "Bootstrapping reviewed V18 daemon seed"
-            gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
-          fi
-          if [ "$(sqlite3 "$DB_PATH" \
-            "select source_sha256 from baseline_state where baseline_version = 'v11' limit 1;")" \
-            != "$REVIEWED_BASELINE_SOURCE_SHA256" ]; then
-            echo "Migrating daemon seed to reviewed V18 baseline"
-            gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
-          fi
           cargo run -p future-meta-daemon -- inspect --db "$DB_PATH"
 
-      - name: Verify daemon seed coverage
+      - name: Verify collected daemon seed
         run: |
           set -euo pipefail
-          if ! cargo run -q -p future-meta-daemon -- audit-coverage \
-            --db "$DB_PATH" \
-            --from 2020-01-01 \
-            --through "$(TZ=Asia/Shanghai date +%F)" \
-            --out /tmp/seed-coverage.json \
-            --strict; then
-            echo "Downloaded daemon seed failed strict coverage; restoring reviewed seed" >&2
-            gzip -dc "$REVIEWED_SEED_ARCHIVE" > "$DB_PATH"
-            cargo run -q -p future-meta-daemon -- audit-coverage \
-              --db "$DB_PATH" \
-              --from 2020-01-01 \
-              --through "$(TZ=Asia/Shanghai date +%F)" \
-              --out /tmp/reviewed-seed-coverage.json \
-              --strict
-          fi
+          mkdir -p public
+          cargo run -q -p future-meta-daemon -- verify-collected \
+            --db "$DB_PATH" --out public/coverage.json
 
       - name: Refresh data
         id: refresh
@@ -144,14 +118,15 @@ jobs:
           fi
           data_version="$(jq -er '.data_version' public/manifest.json)"
           archive_version="$(printf '%s' "$data_version" | tr -d ':+-')"
-          cp public/latest.fmeta.zst "public/artifacts/future-meta-fees-v2-$archive_version.fmeta.zst"
+          schema_version="$(jq -er '.schema_version' public/manifest.json)"
+          cp public/latest.fmeta.zst "public/artifacts/future-meta-fees-v$schema_version-$archive_version.fmeta.zst"
 
       - name: Publish updated daemon seed
         if: steps.refresh.outputs.seed_publish == 'true'
         run: |
           set -euo pipefail
           mkdir -p "$(dirname "$SEED_ARCHIVE")"
-          gzip -c "$DB_PATH" > "$SEED_ARCHIVE"
+          gzip -9 -c "$DB_PATH" > "$SEED_ARCHIVE"
 
       - name: Compute artifact hash
         if: steps.refresh.outputs.fee_publish == 'true'

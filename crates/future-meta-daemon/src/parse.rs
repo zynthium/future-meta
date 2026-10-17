@@ -28,6 +28,8 @@ pub struct AllowedRow {
     pub close_yesterday_fee: FeeSpec,
     /// Close-today position fee rule.
     pub close_today_fee: FeeSpec,
+    /// Published intraday opening fee, distinct from the ordinary opening fee.
+    pub intraday_open_fee: Option<FeeSpec>,
     /// Number of units per lot.
     pub lot_size: f64,
     /// Minimum price tick.
@@ -95,6 +97,7 @@ pub fn parse_csv(csv_text: &str) -> Result<Vec<AllowedRow>> {
             open_fee: parse_fee_spec(field(&record, open_fee_col)),
             close_yesterday_fee: parse_fee_spec(field(&record, close_yesterday_col)),
             close_today_fee: parse_fee_spec(field(&record, close_today_col)),
+            intraday_open_fee: None,
             lot_size: parse_required_positive_f64(
                 "每手数量",
                 field(&record, lot_size_col),

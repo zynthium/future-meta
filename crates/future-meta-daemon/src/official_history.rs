@@ -185,6 +185,7 @@ pub fn import_adjustments(
                     open_fee: fees[0].clone(),
                     close_yesterday_fee: fees[1].clone(),
                     close_today_fee: fees[2].clone(),
+                    intraday_open_fee: None,
                     lot_size: metadata.2,
                     tick_size: metadata.3,
                     source_updated_at: Some(adjustment.effective_at.clone()),

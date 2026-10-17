@@ -159,6 +159,7 @@ pub fn import_monthly_parameters(
                     open_fee: observation.fees[0].clone(),
                     close_yesterday_fee: observation.fees[1].clone(),
                     close_today_fee: observation.fees[2].clone(),
+                    intraday_open_fee: None,
                     lot_size: metadata.2,
                     tick_size: metadata.3,
                     source_updated_at: Some(observation.valid_from.clone()),

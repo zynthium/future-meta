@@ -317,13 +317,13 @@ pub fn validate_jin10(
 ///
 /// # Errors
 ///
-/// Returns an error when the database is not a V11 seed, either source cannot
+/// Returns an error when the database has no reviewed lineage, either source cannot
 /// be fetched or parsed, candidate verification fails, or the report cannot be
 /// written.
 pub fn diagnose_latest(db_path: &Path, out: &Path) -> Result<LatestCandidateDiagnosis> {
     let conn = connect_readonly(db_path)?;
     db::ensure_seeded(&conn)?;
-    crate::baseline::ensure_v11_baseline(&conn)?;
+    crate::baseline::ensure_reviewed_history(&conn)?;
 
     let observed_at = now_string()?;
     let client = http_client()?;
@@ -456,7 +456,7 @@ pub fn update_latest(db: &Path, _require_seed: bool) -> Result<LatestUpdateOutco
     }
     let conn = connect_readonly(db)?;
     db::ensure_seeded(&conn)?;
-    crate::baseline::ensure_v11_baseline(&conn)?;
+    crate::baseline::ensure_reviewed_history(&conn)?;
 
     let observed_at = now_string()?;
     let announcement_health = db::announcement_health(&conn, &observed_at)?;

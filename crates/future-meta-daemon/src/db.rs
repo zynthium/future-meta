@@ -804,7 +804,7 @@ pub fn rekey_fee_history_for_review(
                     c.symbol, c.listing_date, c.expiry_date, c.lot_size, c.tick_size,
                     v.buy_margin_rate, v.sell_margin_rate,
                     v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json,
-                    v.trading_status, v.source_updated_at, v.is_main_contract
+                    v.trading_status, v.source_updated_at, v.is_main_contract, v.intraday_open_fee_json
              from fee_versions v
              join contracts c on c.id = v.contract_id
              order by v.id",
@@ -822,6 +822,10 @@ pub fn rekey_fee_history_for_review(
                 open_fee: parse_fee_json(&record.get::<_, String>(11)?)?,
                 close_yesterday_fee: parse_fee_json(&record.get::<_, String>(12)?)?,
                 close_today_fee: parse_fee_json(&record.get::<_, String>(13)?)?,
+                intraday_open_fee: record
+                    .get::<_, Option<String>>(17)?
+                    .map(|s| parse_fee_json(&s))
+                    .transpose()?,
                 lot_size: record.get(7)?,
                 tick_size: record.get(8)?,
                 source_updated_at: record.get(15)?,
@@ -1321,6 +1325,19 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch("drop index if exists idx_fee_versions_contract;")?;
 
     ensure_fee_version_source_kind_column(conn)?;
+    if !conn.query_row("select exists(select 1 from pragma_table_info('contract_lifecycle_evidence') where name='provenance_kind')", [], |row| row.get::<_, bool>(0))? {
+        conn.execute("alter table contract_lifecycle_evidence add column provenance_kind text not null default 'official'", [])?;
+    }
+
+    if !conn
+        .prepare("pragma table_info(fee_versions)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|name| name == "intraday_open_fee_json")
+    {
+        conn.execute("alter table fee_versions add column intraday_open_fee_json text check(intraday_open_fee_json is null or json_valid(intraday_open_fee_json))", [])?;
+    }
 
     Ok(())
 }
@@ -2663,7 +2680,7 @@ pub fn apply_official_fee_tuple(
         .query_row(
             "select c.listing_date, c.expiry_date, c.lot_size, c.tick_size,
                     v.buy_margin_rate, v.sell_margin_rate, v.trading_status,
-                    v.is_main_contract, v.valid_from
+                    v.is_main_contract, v.valid_from, v.intraday_open_fee_json
              from contracts c
              join fee_versions v on v.contract_id = c.id
              where c.symbol = ?1 and v.valid_to is null
@@ -2681,6 +2698,7 @@ pub fn apply_official_fee_tuple(
                     row.get::<_, String>(6)?,
                     row.get::<_, i64>(7)?,
                     row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
                 ))
             },
         )
@@ -2709,6 +2727,7 @@ pub fn apply_official_fee_tuple(
         open_fee: fees[0].clone(),
         close_yesterday_fee: fees[1].clone(),
         close_today_fee: fees[2].clone(),
+        intraday_open_fee: base.9.as_deref().map(parse_fee_json).transpose()?,
         lot_size: base.2,
         tick_size: base.3,
         source_updated_at: Some(effective_at.to_owned()),
@@ -2748,7 +2767,7 @@ pub fn apply_official_fee_transition(
             "select v.id, c.id, c.listing_date, c.expiry_date, c.lot_size, c.tick_size,
                     v.buy_margin_rate, v.sell_margin_rate, v.open_fee_json,
                     v.close_yesterday_fee_json, v.close_today_fee_json,
-                    v.trading_status, v.is_main_contract, v.valid_from
+                    v.trading_status, v.is_main_contract, v.valid_from, v.intraday_open_fee_json
              from contracts c
              join fee_versions v on v.contract_id = c.id
              where c.symbol = ?1 and v.valid_to is null
@@ -2771,6 +2790,7 @@ pub fn apply_official_fee_transition(
                     row.get::<_, String>(11)?,
                     row.get::<_, i64>(12)?,
                     row.get::<_, String>(13)?,
+                    row.get::<_, Option<String>>(14)?,
                 ))
             },
         )
@@ -2806,6 +2826,7 @@ pub fn apply_official_fee_transition(
         "Unknown" => TradingStatus::Unknown,
         other => return Err(anyhow!("unknown persisted trading status: {other}")),
     };
+    let intraday_open_fee = base.14.as_deref().map(parse_fee_json).transpose()?;
     let row_with_fees = |fee_tuple: &[FeeSpec; 3]| AllowedRow {
         symbol: symbol.to_owned(),
         listing_date: base.2.clone(),
@@ -2816,6 +2837,7 @@ pub fn apply_official_fee_transition(
         open_fee: fee_tuple[0].clone(),
         close_yesterday_fee: fee_tuple[1].clone(),
         close_today_fee: fee_tuple[2].clone(),
+        intraday_open_fee: intraday_open_fee.clone(),
         lot_size: base.4,
         tick_size: base.5,
         source_updated_at: Some(effective_at.to_owned()),
@@ -2995,6 +3017,7 @@ pub fn apply_official_listed_contract_fee_tuple(
         open_fee: fees[0].clone(),
         close_yesterday_fee: fees[1].clone(),
         close_today_fee: fees[2].clone(),
+        intraday_open_fee: None,
         lot_size,
         tick_size,
         source_updated_at: Some(effective_at.to_owned()),
@@ -3029,24 +3052,10 @@ pub fn mark_latest_contracts_seen(
             params![observed_at, row.symbol],
         )?;
         tx.execute(
-            "update fee_versions
-             set buy_margin_rate = ?1,
-                 sell_margin_rate = ?2,
-                 trading_status = ?3,
-                 is_main_contract = ?4,
-                 last_seen_at = case
-                   when julianday(?5) > julianday(last_seen_at) then ?5
-                   else last_seen_at end
-             where contract_id = (select id from contracts where symbol = ?6)
-               and valid_to is null",
-            params![
-                row.buy_margin_rate,
-                row.sell_margin_rate,
-                trading_status_text(&row.trading_status),
-                i64::from(row.is_main_contract),
-                observed_at,
-                row.symbol,
-            ],
+            "update fee_versions set trading_status=?1, is_main_contract=?2,
+             last_seen_at=case when julianday(?3)>julianday(last_seen_at) then ?3 else last_seen_at end
+             where contract_id=(select id from contracts where symbol=?4) and valid_to is null",
+            params![trading_status_text(&row.trading_status), i64::from(row.is_main_contract), observed_at, row.symbol],
         )?;
     }
     tx.commit()?;
@@ -3742,6 +3751,7 @@ pub fn complete_latest_rows(conn: &Connection, rows: &[LatestRow]) -> Result<Lat
             open_fee: row.open_fee.clone(),
             close_yesterday_fee: row.close_yesterday_fee.clone(),
             close_today_fee: row.close_today_fee.clone(),
+            intraday_open_fee: None,
             lot_size,
             tick_size,
             source_updated_at: row.source_updated_at.clone(),
@@ -4031,7 +4041,7 @@ fn load_existing_versions(tx: &Transaction<'_>, contract_id: i64) -> Result<Vec<
                 v.rule_hash, v.buy_margin_rate, v.sell_margin_rate,
                 v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json,
                 v.trading_status, v.is_main_contract, v.source_kind, v.source_updated_at,
-                v.valid_from, v.first_seen_at, v.last_seen_at
+                v.valid_from, v.first_seen_at, v.last_seen_at, v.intraday_open_fee_json
          from fee_versions v
          join contracts c on c.id = v.contract_id
          where v.contract_id = ?1
@@ -4055,6 +4065,10 @@ fn load_existing_versions(tx: &Transaction<'_>, contract_id: i64) -> Result<Vec<
                 open_fee: parse_fee_json(&record.get::<_, String>(8)?)?,
                 close_yesterday_fee: parse_fee_json(&record.get::<_, String>(9)?)?,
                 close_today_fee: parse_fee_json(&record.get::<_, String>(10)?)?,
+                intraday_open_fee: record
+                    .get::<_, Option<String>>(18)?
+                    .map(|v| parse_fee_json(&v))
+                    .transpose()?,
                 source_updated_at: record.get(14)?,
                 is_main_contract: record.get::<_, i64>(12)? != 0,
             },
@@ -4114,6 +4128,7 @@ fn merge_versions(mut versions: Vec<VersionRecord>) -> Result<Vec<VersionRecord>
     for version in unique_times {
         if let Some(last) = collapsed.last_mut()
             && last.rule_hash == version.rule_hash
+            && same_fee_terms(&last.row, &version.row)
         {
             merge_equivalent_version(last, version)?;
             continue;
@@ -4288,6 +4303,7 @@ fn same_fee_terms(left: &AllowedRow, right: &AllowedRow) -> bool {
         && left.open_fee == right.open_fee
         && left.close_yesterday_fee == right.close_yesterday_fee
         && left.close_today_fee == right.close_today_fee
+        && left.intraday_open_fee == right.intraday_open_fee
         && left.lot_size.to_bits() == right.lot_size.to_bits()
         && left.tick_size.to_bits() == right.tick_size.to_bits()
 }
@@ -4828,9 +4844,9 @@ fn insert_fee_version(
            contract_id, rule_hash, buy_margin_rate, sell_margin_rate,
            open_fee_json, close_yesterday_fee_json, close_today_fee_json,
            trading_status, is_main_contract, source_kind, source_updated_at,
-           valid_from, valid_to, first_seen_at, last_seen_at
+           valid_from, valid_to, first_seen_at, last_seen_at, intraday_open_fee_json
          )
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             contract_id,
             version.rule_hash.as_str(),
@@ -4847,6 +4863,10 @@ fn insert_fee_version(
             valid_to,
             version.first_seen_at.as_str(),
             version.last_seen_at.as_str(),
+            row.intraday_open_fee
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
         ],
     )?;
 

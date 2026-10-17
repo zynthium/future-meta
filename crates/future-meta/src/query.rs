@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::FutureMetaError;
 use crate::model::{
-    Contract, ContractFee, ContractSpecVersion, FeeArchiveV2, FeeKind, FeeSpec, SCHEMA_VERSION,
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV3, FeeKind, FeeSpec, SCHEMA_VERSION,
     TradingStatus,
 };
 use crate::symbol::{SymbolKind, parse_symbol};
@@ -23,7 +23,7 @@ pub struct FutureMeta {
 
 #[derive(Debug)]
 struct FutureMetaStorage {
-    archive: FeeArchiveV2,
+    archive: FeeArchiveV3,
     contract_by_symbol: HashMap<String, ContractHandle>,
     contract_indexes: Vec<ContractIndex>,
     fee_indexes_by_contract: Vec<Vec<FeeVersionIndex>>,
@@ -71,6 +71,7 @@ pub struct PreparedFee {
     close_yesterday_price_rate: f64,
     close_today_fixed_per_lot: f64,
     close_today_price_rate: f64,
+    intraday_open: Option<(f64, f64)>,
 }
 
 impl PreparedFee {
@@ -86,6 +87,14 @@ impl PreparedFee {
     #[inline]
     pub fn open_amount(&self, price: f64, lots: f64) -> f64 {
         lots * (self.open_fixed_per_lot + self.open_price_rate * price)
+    }
+
+    /// Published intraday opening fee; `None` means unknown, not zero.
+    #[must_use]
+    #[inline]
+    pub fn intraday_open_amount(&self, price: f64, lots: f64) -> Option<f64> {
+        self.intraday_open
+            .map(|(fixed, rate)| lots * (fixed + rate * price))
     }
 
     /// Fee for closing yesterday positions.
@@ -367,7 +376,7 @@ struct SpecVersionIndex {
 }
 
 fn build_spec_indexes(
-    archive: &FeeArchiveV2,
+    archive: &FeeArchiveV3,
     contract_handle_by_id: &HashMap<u32, ContractHandle>,
 ) -> Result<Vec<Vec<SpecVersionIndex>>, FutureMetaError> {
     let mut indexes_by_contract = vec![Vec::new(); archive.contracts.len()];
@@ -420,7 +429,7 @@ impl FutureMeta {
     ///
     /// Returns an error if a contract symbol in the archive cannot provide a
     /// supported futures underlying symbol.
-    pub fn from_archive(archive: impl Into<FeeArchiveV2>) -> Result<Self, FutureMetaError> {
+    pub fn from_archive(archive: impl Into<FeeArchiveV3>) -> Result<Self, FutureMetaError> {
         let archive = archive.into();
         if archive.schema_version != SCHEMA_VERSION {
             return Err(FutureMetaError::UnsupportedSchemaVersion {
@@ -1297,6 +1306,11 @@ fn prepare_fee(
         close_yesterday_price_rate,
         close_today_fixed_per_lot,
         close_today_price_rate,
+        intraday_open: fee
+            .intraday_open_fee
+            .as_ref()
+            .map(|value| prepare_fee_spec(symbol, "intraday_open_fee", lot_size, value))
+            .transpose()?,
     })
 }
 

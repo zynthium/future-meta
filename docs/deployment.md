@@ -137,7 +137,7 @@ cargo run -p future-meta-daemon -- audit-coverage \
 ```
 
 审计检查范围内合约的官方上市/到期边界、三腿手续费、合约乘数、最小变动价位、
-版本连续性及 `official` 溯源。失败时仍会保留完整 JSON 缺口清单，但不得导出或部署。
+版本连续性及 `official` 溯源。失败时保留完整 JSON 缺口清单，不得宣称请求期间严格完整。采集重建库按下文观测覆盖发布，并公开未知区间。
 
 ## GitHub 定时更新
 
@@ -145,21 +145,19 @@ cargo run -p future-meta-daemon -- audit-coverage \
 
 GitHub Actions 不从零构建历史库。每次运行：
 
-Cloudflare seed 的 `baseline_state.source_sha256` 必须匹配仓库内的
-`assets/future-meta-v18-reviewed.sqlite.gz` 内记录的审阅基线指纹。V18 指纹为
-`5690905cd18dcd9d5e32c9ffca9f8eb998978432dd67f0129dc5f9c7e0c7c242`；旧 seed
-只在该指纹不匹配时迁移一次，匹配后继续沿用线上 seed，避免定时任务覆盖后续经官方证据批准的增量。V18 在 V17 及线上增量基础上修正了 6 个大商所合约的固定手续费偏移，并合并 5 条无实质变化的冗余版本。
+生产 seed 已迁移为交易所采集输出全新重建库。`rebuild_summary.source` 必须为
+`fresh_collector_outputs_no_seed`；工作流不再恢复或迁移到 V18 旧库。
 
-1. 从 Cloudflare 下载 `ops/future-meta.sqlite.gz`。
-2. 解压为 `data/future-meta.sqlite`。
-3. 每日先执行 `future-meta-daemon scan-announcements`：中信期货为主发现源；中信无法完成有效扫描时同轮切换华泰期货；每周五额外执行华泰完整补漏扫描。扫描仅保存券商正文、哈希、交易所原文链接和手续费候选，绝不直接改变 `fee_versions`。
-4. 执行 `future-meta-daemon update-latest --require-seed`。
-5. 将 9qihuo 候选与 Jin10 交叉核验；候选无论是否一致都需要精确交易所原文/附件和人工审阅，第三方不会创建、覆盖或回写 `fee_versions`。
-6. 固定写入 `publish=false`。不会导出 artifact、gzip seed 或部署 Pages。
+1. 下载并解压 `ops/future-meta.sqlite.gz`。
+2. 运行 `verify-collected`，验证采集来源标记、逐日观察关联、保证金、官方 URL、版本证据、SQLite 完整性和外键，并生成 `public/coverage.json`。
+3. 运行 `scan-announcements` 发现候选，周五额外扫描华泰。
+4. `update-latest --require-seed` 只读诊断。无差异时导出当前官方库；需审阅的候选冻结现有 artifact。抓取或解析错误仍使工作流失败。
+5. 只有通过检查的 seed 可重新压缩并部署。任何失败都不回退旧 SQLite。
 
-`update-latest` 是只读诊断：无差异返回 `Noop`；候选、新具体合约或安全门控拒绝以
-`Deferred` 原因非零退出。workflow 将该退出视为预期的“不发布”，绝不触发发布。生产
-artifact 与 daemon seed 因此保持上一个审阅通过版本。
+`coverage.json` 公布观测起止日、上市日至首条观测的未知区间、无日记录合约数和推算到期日数。
+逐条来源一致不表示每个合约自上市起完整覆盖；未知区间保持无值。2026-10-18 发布覆盖
+2020-01-02 至 2026-10-15，16 个合约存在观测前空档，147 个合约没有日参数记录，
+426 个到期日使用用户授权的日历推断。不能宣称这些日期均为交易所已确认。
 
 最新截面来自 9qihuo 总页 HTML 的 `table#heyuetbl`。页面上的 Excel 按钮是 `tableToExcel('heyuetbl', ...)` 生成，不存在稳定的 `heyue=all` CSV 下载端点，因此 daemon 直接解析 HTML 表格。此日更路径只诊断候选，不为历史回填或发布提供证据。
 
@@ -194,19 +192,19 @@ cargo run -p future-meta-daemon -- repair-review-history \
 `review_fee_history_repairs` 记录每项修复；不会删除 evidence，也不会接受未列入 JSON 的
 时间修正。它不是日常任务，也不替代官方证据复核。
 
-当前可声明的严格完整覆盖边界是 `2020-01-01`。2010–2019 数据可以留存，但在补齐
-官方费率、生命周期和规格证据前不得宣称该期间完整。发布前依次完成：
+当前采集重建库按原件观测范围发布，不沿用旧库的 2010–2019 历史或严格完整声明。
+发布前验证采集关联并公开覆盖报告：
 
 ```bash
-cargo run -p future-meta-daemon -- audit-coverage \
-  --db path/to/review-copy.sqlite \
-  --from 2020-01-01 --through YYYY-MM-DD \
-  --out /tmp/future-meta-coverage.json --strict
-
+cargo run -p future-meta-daemon -- verify-collected \
+  --db path/to/review-copy.sqlite --out public/coverage.json
 cargo run -p future-meta-daemon -- export \
   --db path/to/review-copy.sqlite --out public
 gzip -c path/to/review-copy.sqlite > public/ops/future-meta.sqlite.gz
 ```
+
+schema 3 需要 `future-meta` 0.4.0 客户端；0.4.0 兼容读取旧 schema 1/2。升级说明见
+[官方重建说明](official-rebuild.md)。
 
 `export` 以只读方式打开数据库，并拒绝孤儿 fee evidence、倒置观察时间、非法或重叠
 区间、以及早于合约上市日的费率版本。只有这些检查通过后，才可在取得发布授权后部署
