@@ -1,6 +1,7 @@
 pub mod announcement;
 pub mod baseline;
 pub mod cffex_metadata;
+pub mod compact;
 pub mod contract_base_info;
 pub mod coverage;
 pub mod czce;
@@ -36,6 +37,12 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    CompactSeed {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     VerifyCollected {
         #[arg(long)]
         db: PathBuf,
@@ -319,6 +326,11 @@ enum Command {
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::CompactSeed { db, out } => {
+            let report = compact::compact_seed(&db, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Command::VerifyCollected { db, out } => {
             let report = rebuild::verify(&db)?;
             std::fs::write(out, serde_json::to_vec_pretty(&report)?)?;

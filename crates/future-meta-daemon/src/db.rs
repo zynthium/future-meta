@@ -1285,7 +1285,7 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
           recorded_at text not null,
           primary key(contract_id, valid_from, rule_hash, canonical_url, body_sha256),
             foreign key(contract_id) references contracts(id)
-        );
+        ) without rowid;
         create table if not exists review_fee_history_repairs(
             id integer primary key,
             repair_kind text not null check(repair_kind in ('fee_hash_rekey', 'observation_time')),
@@ -1308,7 +1308,7 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             recorded_at text not null,
             primary key(contract_id, valid_from, canonical_url, body_sha256),
             foreign key(contract_id) references contracts(id)
-        );
+        ) without rowid;
         create table if not exists contract_lifecycle_evidence(
             contract_id integer not null,
             listing_date text not null,
@@ -1318,7 +1318,7 @@ pub fn ensure_schema(conn: &Connection) -> Result<()> {
             recorded_at text not null,
             primary key(contract_id, canonical_url, body_sha256),
             foreign key(contract_id) references contracts(id)
-        );
+        ) without rowid;
         ",
     )?;
 

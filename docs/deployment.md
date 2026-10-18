@@ -215,6 +215,24 @@ schema 3 需要 `future-meta` 0.4.0 客户端；0.4.0 兼容读取旧 schema 1/2
 区间、以及早于合约上市日的费率版本。只有这些检查通过后，才可在取得发布授权后部署
 `public/`。
 
+## 维护库的无损空间整理
+
+三张复合主键证据表使用 `WITHOUT ROWID`，保留字段、记录、主键和官方来源关联。
+对旧表布局显式生成迁移副本：
+
+```bash
+cargo run -p future-meta-daemon -- compact-seed \
+  --db path/to/downloaded-seed.sqlite --out path/to/compacted-seed.sqlite
+```
+
+输入只读，输出必须不存在。命令在临时副本中迁移 `fee_version_evidence`、
+`contract_spec_evidence`、`contract_lifecycle_evidence`，核对记录内容和数量，
+验证历史、外键及 SQLite 完整性后整理空间，再生成目标文件。逐日观察、完整来源、
+合约及所有参数版本均保留。日常恢复 seed 不自动迁移或反复整理空间。
+
+发布前还需与下载的生产库核对所有表及查询结果，并比较 gzip 后的体积。
+仅改变物理布局时，沿用线上客户端 manifest 与 artifact，更新 `ops/future-meta.sqlite.gz`。
+
 ## Required GitHub Secrets
 
 - `CLOUDFLARE_API_TOKEN`: token allowed to deploy Cloudflare Pages.
