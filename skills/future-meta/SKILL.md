@@ -1,13 +1,13 @@
 ---
 name: future-meta
-description: 面向 future-meta 客户端用户的接入与正确性指南。每当用户想在 Rust 量化研究、交易系统或回测框架中查询中国期货历史手续费、合约乘数、最小变动价位或每手每跳价值，下载和缓存 schema v2 artifact，处理长期运行期间的元数据刷新，选择 contract_fee_* / contract_spec_* / TradingDayMeta / PreparedFeeCursors API，处理 TqSdk symbol，或优化跨日 tick 级手续费热路径时，都应使用此 skill。
+description: 指导 Rust 客户端使用 future-meta 查询中国期货历史手续费、多空保证金、日内开仓费及合约规格，加载 schema 3 artifact，判断数据覆盖边界，并选择普通查询或跨日 tick 级预编译 API。
 ---
 
-# future-meta 客户端手续费与合约规格指南
+# future-meta 客户端手续费、保证金与合约规格指南
 
 这个 skill 用于帮助客户端用户把 `future-meta` 接入自己的 Rust 程序、
 回测引擎、交易系统或研究工具。回答时优先解决“该用哪个 API、代码怎么写、
-历史时点应使用哪一版手续费和合约规格、热路径怎么放置数据结构”。
+历史时点应使用哪一版手续费、保证金和合约规格、数据是否覆盖目标日期、热路径怎么放置数据结构”。
 
 ## 选择 API
 
@@ -16,6 +16,9 @@ description: 面向 future-meta 客户端用户的接入与正确性指南。每
 | 场景 | 推荐 |
 | --- | --- |
 | 偶尔查询某个合约手续费 | `load_or_fetch` + `contract_fee_asof` |
+| 查询历史多空保证金率 | `contract_fee_*` 返回的 `buy_margin_rate` / `sell_margin_rate` |
+| 查询日内开仓费或计算金额 | `ContractFee.intraday_open_fee` 字段 / `PreparedFee::intraday_open_amount` |
+| 判断历史是否覆盖目标日期 | 发布方 `coverage.json` + 查询结果，不能仅看下载或构建时间 |
 | 查询当前合约乘数和最小变动价位 | `contract` / `contract_for_handle` |
 | 回测历史合约规格 | `contract_spec_asof` / `contract_spec_at` / `contract_spec_on` |
 | 已有 `ContractHandle` 并查询历史规格 | `contract_spec_for_handle_at/on` |
@@ -36,7 +39,7 @@ description: 面向 future-meta 客户端用户的接入与正确性指南。每
 
 ```toml
 [dependencies]
-future-meta = { git = "https://github.com/zynthium/future-meta", features = ["download"] }
+future-meta = { git = "https://github.com/zynthium/future-meta", tag = "v0.4.0", features = ["download"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 time = "0.3"
 ```
@@ -65,7 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - 默认 manifest 是 `https://future-meta.pages.dev/manifest.json`。
 - `load_or_fetch` 会下载并缓存已发布 artifact；archive 加载后，查询都在本地内存完成。
-- 当前发布格式是 schema v2，包含手续费和合约规格历史；解码器仍兼容 schema v1。
+- 当前客户端版本为 0.4.0，发布格式为 schema 3，包含手续费、保证金和合约规格历史，新增独立日内开仓费。
+- 0.4.0 解码器兼容 schema 1/2；旧客户端不能读取 schema 3。上述依赖从 GitHub tag 加载源码，不表示已发布到 crates.io。
 - 可用 `FUTURE_META_CACHE_DIR` 指定缓存目录。
 - 客户端不应该把上游网站当作实时查询 API。
 
@@ -94,7 +98,7 @@ let meta = future_meta::FutureMeta::from_archive(archive)?;
 - 回测要可复现时，固定使用某个本地 artifact，不要在回测中途刷新。
 - 长期运行的研究或实盘程序，把刷新放在独立调度任务里，绝不要放进 tick 热路径。
 - 实盘交易建议在每个交易时段开盘前几分钟调用 `load_or_fetch`。
-- 手续费不在日内盘中变化；进入交易时段后通常不需要轮询刷新。
+- 当前手续费和保证金查询使用日度索引；刷新频率按发布节奏安排。这不证明交易所从未在盘中调整参数。
 - 刷新成功后，用新的 `FutureMeta` 重新解析 `ContractHandle`，并重新创建
   `TradingDayMeta`、`PreparedFeeBook` 或 `PreparedFeeCursors`。
 - 不要跨 `FutureMeta` 快照复用旧的 `ContractHandle`、`TradingDayMeta` 或 cursor。
@@ -133,7 +137,7 @@ let fee = meta.contract_fee_on("SHFE.cu2607", trading_date)?;
 - 手续费和规格只接受具体期货合约 symbol，例如 `SHFE.cu2607`、`CZCE.SR903`。
 - `KQ.m@...`、`KQ.i@...` 是别名而非具体合约，不能查询手续费或规格，会返回
   `UnsupportedSymbolKind`。需要品种视图时使用 `underlying_fees_*`，结果始终是具体合约。
-- 手续费按交易所本地日期生效，不在日内盘中变化。
+- 手续费和保证金版本按交易所本地日期进入日度索引，不还原原件未提供的盘中调整时刻。
 - `contract_fee_asof` 会把时间戳映射到交易所本地日期，再选择该日手续费。
 - raw rule API 返回 `ContractFee`，适合展示、核对、审计和低频逻辑。
 
@@ -175,11 +179,54 @@ assert_eq!(after.tick_value(), 10.0);
 
 schema 兼容边界：
 
-- schema v2 保存真实的 `contract_spec_versions`，应作为历史规格查询的标准来源。
-- schema v1 可以被当前客户端读取，但只能把当时的静态规格转换成单一历史区间，无法恢复
-  v1 文件本身没有记录的规格变化。
-- 老客户端读取 schema v2 会返回 `UnsupportedSchemaVersion`；遇到此错误应升级依赖，
-  不要绕过版本检查或自行反序列化。
+- schema 3 包含规格历史及独立的 `intraday_open_fee`；schema 2 包含规格历史，但没有独立日内开仓费。
+- schema 1/2 解码后升级为当前 `FeeArchiveV3`，旧文件的 `intraday_open_fee` 为 `None`，不会从普通开仓费推算。
+- schema 1 只能把静态规格转换成单一历史区间，不能恢复原文件未记录的规格变化。
+- 旧载荷类型保留为 `FeeArchiveV1` / `FeeArchiveV2`，其费行类型为 `LegacyContractFee`。
+  手工构造当前 `ContractFee` 的调用方需要补充 `intraday_open_fee` 字段。
+- 遇到 `UnsupportedSchemaVersion` 时升级客户端，不要绕过版本检查或自行反序列化。
+
+## 保证金和日内开仓费
+
+保证金和手续费共用 `ContractFee` 的版本区间。即使手续费不变，仅保证金变化也会产生新版本；
+`rule_hash` 标识手续费规则，不包含保证金，不要用它判断整个参数状态是否相同。
+
+```rust
+let rule = meta.contract_fee_asof("DCE.bb2001", "2020-01-02T10:00:00+08:00")?;
+println!(
+    "long_margin={:?}, short_margin={:?}, intraday_open={:?}",
+    rule.buy_margin_rate,
+    rule.sell_margin_rate,
+    rule.intraday_open_fee,
+);
+```
+
+字段和计算语义：
+
+- `buy_margin_rate` / `sell_margin_rate` 为多头/空头投机保证金率，按百分点表示，例如 `12.0` 为 12%，计算比例时除以 100。
+- `intraday_open_fee` 独立于普通开仓 `open_fee` 和平今 `close_today_fee`，不能互相替代。
+- 费用金额单位为元/手，成交金额比例单位为万分比；优先用 `PreparedFee` 计算金额，自动使用历史乘数。
+- 保证金率或独立日内开仓费为 `None` 表示未知，不是零；不要自动补成零或普通开仓费。
+
+## 数据来源与覆盖边界
+
+当前发布的历史基于交易所官方采集输出及保留原件全新重建，不混入旧 SQLite。
+9qihuo、Jin10 和券商公告用于候选发现或辅助核对，不能代替交易所证据。
+
+查询前区分发布时间、观测截止日和版本有效期：
+
+- `Manifest.generated_at` / `data_version` 是构建或缓存版本信息，不是源数据最新日期。
+- 当前导出器的 `history_end` / `fee_effective_from` 是最后一个已批准参数版本的起点；最后一次变化可能早于最新观测。
+- 从 `https://future-meta.pages.dev/coverage.json` 读取 `observed_from` / `observed_through`，判断采集观测范围。
+- `unobserved_prefixes` 列出合约首条观测前的空档，`contracts_without_observations` 统计无日记录合约；
+  合约存在静态元数据，不表示任意历史日期都有手续费或保证金值。查询不到时保留未知，不回填旧值或零。
+- `assumed_expiry_symbols` 是采用用户日历假设的到期日数量；推算日期不等于交易所确认日期。
+  客户端 archive 不含逐字段证据和假设标记；单合约日期溯源需要发布方保留的来源账本或 SQLite。
+- `valid_to = None` 表示版本没有已知后继边界，可能在观测截止日之后仍返回最后已知参数，不能据此认定之后的日期已经核验。
+
+需要当前覆盖数字时重新读取发布方的 manifest 和 coverage 报告，不把某次发布的计数写成永久保证。
+第三方空窗可能让变化候选延期、客户端档案保持冻结；Jin10 正常响应空数组只贡献零份佐证，
+不表示已交叉核验成功。成功下载也不等于源数据已更新到今天。
 
 ## 高频回测
 
@@ -277,13 +324,15 @@ for tick in day_ticks {
 
 ```rust
 let open = fee.open_amount(price, lots);
+let intraday_open: Option<f64> = fee.intraday_open_amount(price, lots);
 let close_today = fee.close_today_amount(price, lots);
 let close_yesterday = fee.close_yesterday_amount(price, lots);
 ```
 
 不要让用户在热路径里判断手续费类型。`CnyPerLot`、
 `TurnoverRatePerTenThousand` 和 `Zero` 会在准备阶段编译成数值系数。
-无法编译的规则会返回 `UnsupportedFeeRule`。
+无法编译的规则会返回 `UnsupportedFeeRule`。独立日内开仓费未知时，
+`intraday_open_amount` 返回 `None`，由调用方明确处理缺失。
 
 ## 错误处理
 
@@ -298,7 +347,8 @@ let close_yesterday = fee.close_yesterday_amount(price, lots);
 
 - 先给推荐 API，再给最小代码。
 - 用户问性能时，明确区分循环外准备和循环内热路径。
-- 用户问历史回测时，明确区分 `contract()` 的最新规格与 `contract_spec_*` 的 as-of 规格。
+- 用户问历史回测时，明确区分 `contract()` 的最新规格与 `contract_spec_*` 的 as-of 规格，并核对观测范围和未知区间。
+- 用户问保证金或日内开仓费时，明确说明字段单位与 `None` 语义，不根据手续费哈希判断保证金是否变化。
 - 用户手工计算比例手续费时，优先改为 `PreparedFee`，确保使用历史乘数。
 - 用户只想查询一次时，不要引入高频架构。
 - 用户问最优设计时，优先推荐跨日 `PreparedFeeCursors`。
