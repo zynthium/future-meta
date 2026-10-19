@@ -55,6 +55,8 @@ python3 scripts/collect_contract_specs.py   --offline   --evidence-dir data/offi
 脚本不接受 `--db`。默认只处理留存官方原件；显式 `--cbi-date YYYY-MM-DD` 才联网抓取指定日期的合约基础信息，不能与 `--offline` 同用。合约生命周期来自官方 ContractBaseInfo 或官方生命周期清单；产品规格来自带原件摘要的官方规格清单。
 
 - 所有缓存原件校验 SHA-256 和官方域名；同一合约按源报告日期选择最新记录，网络请求顺序不能覆盖较新的缓存。
+- 规格清单可用 `delivery_month_from` / `delivery_month_to` 指定包含端点的 `YYYY-MM` 交割月份范围，独立于 `valid_from` / `valid_to` 的生效时间。日期与月份范围必须同时匹配；重叠冲突也同时检查两种范围。范围会写入来源账本。该范围用于四位 YYMM 合约；郑商所三位代码应使用 `full_symbol` 清单明确适用合约。
+- 例如大商所发〔2019〕437号的新纤维板规格仅适用 FB2001 及以后合约：新规格填写 `delivery_month_from=2020-01`；FB1912 及更早合约的旧规格填写 `delivery_month_to=2019-12` 并覆盖至其到期，不能在新规格启用日一起切换。
 - `listing_date` / `expiry_date` 只写官方明确日期。`first_observed_date` / `last_observed_date` 为参数观测范围，不能冒充挂牌或到期日期。
 - 经用户明确授权，可执行 `python3 scripts/build_lifecycles.py --assume-2027-holidays`，按用户提供的2027假期区间推算尚未公布的到期日：1月1—3日、2月4—12日、4月3—5日、5月1—5日、6月9日、9月15日、10月1—7日休市，周末不交易。该开关默认关闭，不修改已明确的官方日期；适用规则仍引用交易所原件，假期假设另记为 `calendar_assumption`。
 - 这些日期标记为 `user_assumed_holiday_calendar`，规格范围为 `assumed_lifecycle`；来源账本保留完整假设。报告中的 `assumed_expiry_symbols` 给出数量，`official_only=false` 明确表示含假设日期，不能把 `complete=true` 解释成全部日期均由交易所确认。官方日历公布后，应更新官方日历采集范围、停用该开关并重新生成，以实际官方安排替换推算结果。

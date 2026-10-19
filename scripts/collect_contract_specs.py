@@ -92,6 +92,36 @@ def positive(value, field):
     return result
 
 
+def delivery_month(value):
+    """Read an inclusive YYYY-MM contract scope, independently of effective dates."""
+    value = str(value or "").strip()
+    if not value:
+        return None
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
+        raise ValueError(f"invalid contract delivery month: {value}")
+    return value
+
+
+def month_scopes_overlap(left, right):
+    return not (
+        left["delivery_month_to"] and right["delivery_month_from"]
+        and left["delivery_month_to"] < right["delivery_month_from"]
+        or right["delivery_month_to"] and left["delivery_month_from"]
+        and right["delivery_month_to"] < left["delivery_month_from"]
+    )
+
+
+def applies_to_contract(spec, symbol):
+    lower, upper = spec["delivery_month_from"], spec["delivery_month_to"]
+    if lower is None and upper is None:
+        return True
+    match = re.fullmatch(r"[A-Za-z]+(\d{2})(\d{2})", symbol)
+    if not match:
+        raise ValueError(f"delivery-month scope requires an unambiguous YYMM contract: {symbol}; use full_symbol instead")
+    month = f"{2000 + int(match[1]):04d}-{match[2]}"
+    return (lower is None or month >= lower) and (upper is None or month <= upper)
+
+
 def symbol_parts(exchange, symbol):
     exchange = exchange.strip().upper()
     symbol = symbol.strip()
@@ -354,6 +384,12 @@ def load_specs(evidence, manifests, gaps):
                     source[prefix + "_evidence_id"] = extra_id
             if row.get("coverage_basis"):
                 source["coverage_basis"] = row["coverage_basis"]
+            month_from = delivery_month(row.get("delivery_month_from"))
+            month_to = delivery_month(row.get("delivery_month_to"))
+            if month_from and month_to and month_from > month_to:
+                raise ValueError(f"{manifest}:{line}: reversed contract delivery-month scope")
+            if month_from or month_to:
+                source.update(delivery_month_from=month_from, delivery_month_to=month_to)
             start_phase = row.get("valid_from_phase", "").strip() or ("instant" if "T" in row["valid_from"] else "date")
             end_phase = row.get("valid_to_phase", "").strip() or ("instant" if "T" in row.get("valid_to", "") else "date")
             if start_phase not in ("date", "instant", "settlement") or end_phase not in ("date", "instant", "settlement"):
@@ -386,6 +422,7 @@ def load_specs(evidence, manifests, gaps):
                     raise ValueError(f"{manifest}:{line}: inconsistent full_symbol/product")
             specs[(exchange, target or product)].append({
                 "target": target,
+                "delivery_month_from": month_from, "delivery_month_to": month_to,
                 "start": start, "end": end, "source_start": source_start, "source_end": source_end,
                 "valid_from_trade_date": from_trade_date, "valid_to_trade_date": to_trade_date,
                 "lot_size": positive(row["lot_size"], "lot_size"),
@@ -401,6 +438,8 @@ def load_specs(evidence, manifests, gaps):
         intervals.sort(key=lambda s: s["start"])
         for index, left in enumerate(intervals):
             for right in intervals[index + 1:]:
+                if not month_scopes_overlap(left, right):
+                    continue
                 if (left["end"] == right["start"]
                         and left["valid_to_phase"] != right["valid_from_phase"]
                         and (left["lot_size"], left["tick_size"]) != (right["lot_size"], right["tick_size"])):
@@ -515,7 +554,8 @@ def build_contracts_meta(args):
         scope = "official_lifecycle" if listing and expiry else "observed_range"
         if fields.get("expiry_date", {}).get("calendar_assumption"):
             scope = "assumed_lifecycle"
-        candidates = specs.get((exchange, variety), []) + specs.get((exchange, full), [])
+        candidates = [s for s in specs.get((exchange, variety), []) + specs.get((exchange, full), [])
+                      if applies_to_contract(s, symbol)]
         contract_versions = []
         if lower is None or upper is None or upper <= lower:
             gaps.append({"kind": "missing_contract_range", "symbol": full})
