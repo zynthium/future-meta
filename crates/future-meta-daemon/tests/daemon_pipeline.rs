@@ -3629,6 +3629,128 @@ fn latest_candidate_treats_legacy_zero_rate_as_equivalent_to_zero_fee() {
     assert!(verified.rejected.is_empty());
 }
 
+fn differentiated_open_fee_rows(
+    symbol: &str,
+    intraday_rate: f64,
+) -> Vec<future_meta_daemon::parse::AllowedRow> {
+    use future_meta::model::{FeeKind, FeeSpec};
+    let rate = |value| FeeSpec {
+        kind: FeeKind::TurnoverRatePerTenThousand,
+        value: Some(value),
+        raw_text: None,
+    };
+    let mut rows = parse_csv(CSV_V1).unwrap();
+    rows.truncate(1);
+    symbol.clone_into(&mut rows[0].symbol);
+    rows[0].open_fee = rate(1.0);
+    rows[0].close_yesterday_fee = rate(1.0);
+    rows[0].close_today_fee = rate(intraday_rate);
+    rows[0].intraday_open_fee = Some(rate(intraday_rate));
+    rows
+}
+
+#[test]
+fn latest_candidate_recognizes_third_party_intraday_open_fee_presentation_as_unchanged() {
+    for (symbol, intraday_rate) in [("DCE.lh2611", 2.0), ("DCE.j2611", 1.4)] {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("future-meta.sqlite");
+        let mut conn = connect(&db_path).unwrap();
+        ensure_schema(&conn).unwrap();
+        let seeded = differentiated_open_fee_rows(symbol, intraday_rate);
+        upsert_allowed_rows(&mut conn, &seeded, "2026-10-19T20:00:00+08:00").unwrap();
+        drop(conn);
+
+        let mut candidate = seeded[0].clone();
+        candidate.open_fee = candidate.intraday_open_fee.take().unwrap();
+        candidate.open_fee.raw_text = Some(format!("{intraday_rate}/万分之"));
+        candidate.source_updated_at = Some("2026-10-19 21:16:26.138".to_owned());
+        let before = std::fs::read(&db_path).unwrap();
+        let conn = connect_readonly(&db_path).unwrap();
+        let verified =
+            future_meta_daemon::db::cross_verify_latest_candidates(&conn, &[candidate], &[])
+                .unwrap();
+
+        assert_eq!(verified.unchanged, 1, "{symbol}");
+        assert_eq!(classify_latest_update(&verified), LatestUpdateOutcome::Noop);
+        assert!(verified.accepted.is_empty());
+        assert!(verified.rejected.is_empty());
+        assert_eq!(std::fs::read(&db_path).unwrap(), before);
+    }
+}
+
+#[test]
+fn latest_candidate_keeps_real_or_unknown_intraday_fee_differences_for_review() {
+    use future_meta::model::FeeKind;
+    for case in [
+        "close_yesterday_changed",
+        "close_today_changed",
+        "open_unit_changed",
+        "missing_current_intraday",
+        "unknown_current_intraday",
+        "missing_current_value",
+        "explicit_intraday_conflict",
+        "explicit_intraday_conflict_standard_open",
+        "explicit_intraday_standard_open_unchanged",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("future-meta.sqlite");
+        let mut conn = connect(&db_path).unwrap();
+        ensure_schema(&conn).unwrap();
+        let mut seeded = differentiated_open_fee_rows("DCE.lh2611", 2.0);
+        let mut candidate = seeded[0].clone();
+        candidate.open_fee = candidate.intraday_open_fee.take().unwrap();
+        candidate.source_updated_at = Some("2026-10-19 21:16:26.138".to_owned());
+        match case {
+            "close_yesterday_changed" => candidate.close_yesterday_fee.value = Some(3.0),
+            "close_today_changed" => candidate.close_today_fee.value = Some(3.0),
+            "open_unit_changed" => candidate.open_fee.kind = FeeKind::CnyPerLot,
+            "missing_current_intraday" => seeded[0].intraday_open_fee = None,
+            "unknown_current_intraday" => {
+                let fee = seeded[0].intraday_open_fee.as_mut().unwrap();
+                fee.kind = FeeKind::Unknown;
+                fee.value = None;
+                candidate.open_fee = fee.clone();
+            }
+            "missing_current_value" => {
+                let fee = seeded[0].intraday_open_fee.as_mut().unwrap();
+                fee.value = None;
+                candidate.open_fee = fee.clone();
+            }
+            "explicit_intraday_conflict" | "explicit_intraday_conflict_standard_open" => {
+                let mut fee = candidate.open_fee.clone();
+                fee.value = Some(3.0);
+                candidate.intraday_open_fee = Some(fee);
+                if case == "explicit_intraday_conflict_standard_open" {
+                    candidate.open_fee = seeded[0].open_fee.clone();
+                }
+            }
+            "explicit_intraday_standard_open_unchanged" => {
+                candidate.open_fee = seeded[0].open_fee.clone();
+                candidate.intraday_open_fee = seeded[0].intraday_open_fee.clone();
+            }
+            _ => unreachable!(),
+        }
+        upsert_allowed_rows(&mut conn, &seeded, "2026-10-19T20:00:00+08:00").unwrap();
+        drop(conn);
+        let before = std::fs::read(&db_path).unwrap();
+        let conn = connect_readonly(&db_path).unwrap();
+        let verified =
+            future_meta_daemon::db::cross_verify_latest_candidates(&conn, &[candidate], &[])
+                .unwrap();
+        let unchanged = usize::from(case == "explicit_intraday_standard_open_unchanged");
+        assert_eq!(verified.unchanged, unchanged, "{case}");
+        assert_eq!(
+            matches!(classify_latest_update(&verified), LatestUpdateOutcome::Noop),
+            unchanged == 1,
+            "{case}"
+        );
+        assert_eq!(verified.rejected.len(), 1 - unchanged, "{case}");
+        assert!(verified.accepted.is_empty(), "{case}");
+        assert!(verified.new_contracts.is_empty(), "{case}");
+        assert_eq!(std::fs::read(&db_path).unwrap(), before, "{case}");
+    }
+}
+
 #[test]
 fn latest_candidate_rejects_confirmed_fee_type_transition_without_official_evidence() {
     let dir = tempfile::tempdir().unwrap();

@@ -284,7 +284,15 @@ pub fn cross_verify_latest_candidates(
             }
             continue;
         };
-        if same_fee_rules(&current.fees, &candidate_fees) {
+        if (same_fee_rules(&current.fees, &candidate_fees)
+            && candidate.intraday_open_fee.as_ref().is_none_or(|fee| {
+                current
+                    .intraday_open_fee
+                    .as_ref()
+                    .is_some_and(|current| same_fee(current, fee))
+            }))
+            || is_known_third_party_intraday_open_presentation(&current, candidate)
+        {
             unchanged += 1;
             continue;
         }
@@ -3393,13 +3401,14 @@ fn is_isolated_tenth_placeholder(
 struct CurrentFeeRule {
     valid_from_at: OffsetDateTime,
     fees: [FeeSpec; 3],
+    intraday_open_fee: Option<FeeSpec>,
     source_updated_at: Option<String>,
 }
 
 fn current_fee_rule(conn: &Connection, symbol: &str) -> Result<Option<CurrentFeeRule>> {
     let raw = conn
         .query_row(
-        "select v.valid_from, v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json, v.source_updated_at
+        "select v.valid_from, v.open_fee_json, v.close_yesterday_fee_json, v.close_today_fee_json, v.source_updated_at, v.intraday_open_fee_json
            from fee_versions v
            join contracts c on c.id = v.contract_id
           where c.symbol = ?1
@@ -3413,11 +3422,19 @@ fn current_fee_rule(conn: &Connection, symbol: &str) -> Result<Option<CurrentFee
                 record.get::<_, String>(2)?,
                 record.get::<_, String>(3)?,
                 record.get::<_, Option<String>>(4)?,
+                record.get::<_, Option<String>>(5)?,
             ))
         },
     )
     .optional()?;
-    let Some((valid_from, open_fee, close_yesterday_fee, close_today_fee, source_updated_at)) = raw
+    let Some((
+        valid_from,
+        open_fee,
+        close_yesterday_fee,
+        close_today_fee,
+        source_updated_at,
+        intraday_open_fee,
+    )) = raw
     else {
         return Ok(None);
     };
@@ -3428,6 +3445,10 @@ fn current_fee_rule(conn: &Connection, symbol: &str) -> Result<Option<CurrentFee
             parse_fee_json(&close_yesterday_fee)?,
             parse_fee_json(&close_today_fee)?,
         ],
+        intraday_open_fee: intraday_open_fee
+            .as_deref()
+            .map(parse_fee_json)
+            .transpose()?,
         source_updated_at,
     }))
 }
@@ -3440,7 +3461,7 @@ fn fee_rule_as_of(
     let raw = conn
         .query_row(
             "select v.valid_from, v.open_fee_json, v.close_yesterday_fee_json,
-                    v.close_today_fee_json, v.source_updated_at
+                    v.close_today_fee_json, v.source_updated_at, v.intraday_open_fee_json
                from fee_versions v
                join contracts c on c.id = v.contract_id
               where c.symbol = ?1
@@ -3456,11 +3477,19 @@ fn fee_rule_as_of(
                     record.get::<_, String>(2)?,
                     record.get::<_, String>(3)?,
                     record.get::<_, Option<String>>(4)?,
+                    record.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((valid_from, open_fee, close_yesterday_fee, close_today_fee, source_updated_at)) = raw
+    let Some((
+        valid_from,
+        open_fee,
+        close_yesterday_fee,
+        close_today_fee,
+        source_updated_at,
+        intraday_open_fee,
+    )) = raw
     else {
         return Ok(None);
     };
@@ -3471,6 +3500,10 @@ fn fee_rule_as_of(
             parse_fee_json(&close_yesterday_fee)?,
             parse_fee_json(&close_today_fee)?,
         ],
+        intraday_open_fee: intraday_open_fee
+            .as_deref()
+            .map(parse_fee_json)
+            .transpose()?,
         source_updated_at,
     }))
 }
@@ -3544,6 +3577,29 @@ fn is_semantically_zero_fee(fee: &FeeSpec) -> bool {
             fee.kind,
             FeeKind::CnyPerLot | FeeKind::TurnoverRatePerTenThousand | FeeKind::Zero
         )
+}
+
+/// Check if a 3-column candidate matches the production fee rule when accounting
+/// for secondary sources (such as 9qihuo) that present the differentiated
+/// intraday open fee (`shortOpenFee`) in the single `open_fee` column.
+fn is_known_third_party_intraday_open_presentation(
+    current: &CurrentFeeRule,
+    candidate: &AllowedRow,
+) -> bool {
+    if candidate.intraday_open_fee.is_some() {
+        return false;
+    }
+    let Some(intra_open) = &current.intraday_open_fee else {
+        return false;
+    };
+    if intra_open.kind == FeeKind::Unknown || !intra_open.value.is_some_and(f64::is_finite) {
+        return false;
+    }
+    let candidate_fees = fee_tuple(candidate);
+    !same_fee(&current.fees[0], intra_open)
+        && same_fee(intra_open, &candidate_fees[0])
+        && same_fee(&current.fees[1], &candidate_fees[1])
+        && same_fee(&current.fees[2], &candidate_fees[2])
 }
 
 /// Return the reason an automatically ingested latest-table fee change needs
