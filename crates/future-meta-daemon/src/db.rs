@@ -894,17 +894,10 @@ pub fn rekey_fee_history_for_review(
             continue;
         }
         tx.execute(
-            "insert into fee_version_evidence(
+            "insert or ignore into fee_version_evidence(
                contract_id, valid_from, rule_hash, evidence_level,
                canonical_url, body_sha256, recorded_at
-             ) values(?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             on conflict(contract_id, valid_from, rule_hash, canonical_url, body_sha256)
-             do update set evidence_level = case
-               when fee_version_evidence.evidence_level = 'paired_official'
-                 or excluded.evidence_level = 'paired_official'
-               then 'paired_official'
-               else 'official_parameter'
-             end",
+             ) values(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 contract_id,
                 valid_from,
@@ -915,6 +908,22 @@ pub fn rekey_fee_history_for_review(
                 recorded_at,
             ],
         )?;
+        // SQLite UPSERT cannot target views; this transaction also supports
+        // the compact seed's writable evidence interface.
+        if evidence_level == "paired_official" {
+            tx.execute(
+                "update fee_version_evidence set evidence_level='paired_official'
+                 where contract_id=?1 and valid_from=?2 and rule_hash=?3
+                   and canonical_url=?4 and body_sha256=?5",
+                params![
+                    contract_id,
+                    valid_from,
+                    rekey.new_rule_hash,
+                    canonical_url,
+                    body_sha256
+                ],
+            )?;
+        }
         tx.execute(
             "delete from fee_version_evidence
              where contract_id = ?1 and valid_from = ?2 and rule_hash = ?3
@@ -2633,11 +2642,10 @@ pub fn replace_with_official_parameter_history(
             }
             for reference in references {
                 tx.execute(
-                    "insert into fee_version_evidence(
+                    "insert or ignore into fee_version_evidence(
                        contract_id, valid_from, rule_hash, evidence_level,
                        canonical_url, body_sha256, recorded_at
-                     ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                     on conflict do nothing",
+                     ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
                         contract_id,
                         valid_from,

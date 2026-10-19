@@ -2,6 +2,7 @@ pub mod announcement;
 pub mod baseline;
 pub mod cffex_metadata;
 pub mod compact;
+mod compact_storage;
 pub mod contract_base_info;
 pub mod coverage;
 pub mod czce;

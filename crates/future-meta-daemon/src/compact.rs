@@ -1,6 +1,6 @@
 //! Lossless physical compaction of the daemon seed.
 
-use crate::db;
+use crate::{compact_storage, db};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::path::Path;
@@ -54,6 +54,12 @@ fn build(input: &Path, work: &Path, packed: &Path) -> Result<Value> {
     let tx = conn.transaction()?;
     let mut counts = serde_json::Map::new();
     for table in EVIDENCE_TABLES {
+        if !compact_storage::is_table(&tx, table)? {
+            let count: i64 =
+                tx.query_row(&format!("select count(*) from {table}"), [], |r| r.get(0))?;
+            counts.insert(table.to_owned(), Value::from(count));
+            continue;
+        }
         let without_rowid: bool = tx.query_row(
             "select wr from pragma_table_list where schema='main' and name=?1",
             [table],
@@ -93,6 +99,7 @@ fn build(input: &Path, work: &Path, packed: &Path) -> Result<Value> {
             tx.query_row(&format!("select count(*) from {table}"), [], |r| r.get(0))?;
         counts.insert(table.to_owned(), Value::from(count));
     }
+    compact_storage::normalize(&tx)?;
     tx.commit()?;
     db::validate_fee_history_integrity(&conn)?;
     ensure!(

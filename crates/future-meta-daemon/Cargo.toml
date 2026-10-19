@@ -20,7 +20,7 @@ reqwest = { workspace = true, features = ["blocking", "cookies"] }
 rusqlite.workspace = true
 scraper.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
 time.workspace = true
 
