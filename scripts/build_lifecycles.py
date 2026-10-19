@@ -44,6 +44,8 @@ LIFECYCLE_COLUMNS = [
     "exchange", "symbol", "report_date", "listing_date", "expiry_date",
     "last_delivery_date", "basis_price", "variety_name", "canonical_url",
     "sha256", "raw_path", "report_date_kind", "calendar_assumption",
+    "application_calendar_canonical_url", "application_calendar_sha256",
+    "application_calendar_raw_path",
 ]
 
 
@@ -321,7 +323,7 @@ def build_cffex_lifecycle(observations):
 
     out_path = EVIDENCE_DIR / "cffex-lifecycle-calendar-2018-2026.tsv"
     with open(out_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t", restval="")
         writer.writeheader()
         writer.writerows(rows)
     old_path = EVIDENCE_DIR / "cffex-lifecycle-calendar-2019-2026.tsv"
@@ -444,7 +446,7 @@ def build_gfex_lifecycle(observations):
 
     out_path = EVIDENCE_DIR / "gfex-lifecycle-calendar-2022-2026.tsv"
     with open(out_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t", restval="")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Generated {out_path} with {len(rows)} GFEX event rows for {len(all_gfex)} contracts")
@@ -454,6 +456,8 @@ def build_dce_lifecycle(observations):
     spec_by_prod = {r["product"]: r for r in spec_rows}
 
     special_launch_dates = {
+        "eg": "2018-12-10",
+        "rr": "2019-08-16",
         "eb": "2019-09-26",
         "pg": "2020-03-30",
         "lh": "2021-01-08",
@@ -464,6 +468,65 @@ def build_dce_lifecycle(observations):
     holiday_adjustments = {
         "eg2001": "2020-01-21",
         "jd2001": "2020-01-21",
+    }
+
+    rule_and_calendar_derived_listings = {
+        "eb2101": {
+            "date": "2020-01-22",
+            "calendar_url": "http://www.dce.com.cn/dce/content/2019/ywggytz/6201818.html",
+            "calendar_sha256": "d0c21f7877da2b170c6a91c394906b551a5bbe6a63ec23f200d31b8646df1c72",
+            "calendar_raw_path": "d0c21f7877da2b170c6a91c394906b551a5bbe6a63ec23f200d31b8646df1c72.html",
+        },
+        "eg2101": {
+            "date": "2020-01-22",
+            "calendar_url": "http://www.dce.com.cn/dce/content/2019/ywggytz/6201818.html",
+            "calendar_sha256": "d0c21f7877da2b170c6a91c394906b551a5bbe6a63ec23f200d31b8646df1c72",
+            "calendar_raw_path": "d0c21f7877da2b170c6a91c394906b551a5bbe6a63ec23f200d31b8646df1c72.html",
+        },
+        "jd2101": {
+            "date": "2020-01-22",
+            "calendar_url": "http://www.dce.com.cn/dce/content/2019/ywggytz/6201818.html",
+            "calendar_sha256": "d0c21f7877da2b170c6a91c394906b551a5bbe6a63ec23f200d31b8646df1c72",
+            "calendar_raw_path": "d0c21f7877da2b170c6a91c394906b551a5bbe6a63ec23f200d31b8646df1c72.html",
+        },
+    }
+
+    special_contract_listing_evidence = {
+        "fb2010": {
+            "date": "2019-12-02",
+            "url": "http://www.dce.com.cn/dce/content/2019/ywggytz/6197743.html",
+            "sha256": "f3b278431e3155ce3387e827c5394642db2e6fddaaaa3e80cc2b91913c19d658",
+            "raw_path": "f3b278431e3155ce3387e827c5394642db2e6fddaaaa3e80cc2b91913c19d658.html",
+            "kind": "official_listing_notice",
+        },
+        "fb2011": {
+            "date": "2019-12-02",
+            "url": "http://www.dce.com.cn/dce/content/2019/ywggytz/6197743.html",
+            "sha256": "f3b278431e3155ce3387e827c5394642db2e6fddaaaa3e80cc2b91913c19d658",
+            "raw_path": "f3b278431e3155ce3387e827c5394642db2e6fddaaaa3e80cc2b91913c19d658.html",
+            "kind": "official_listing_notice",
+        },
+        "bb2509": {
+            "date": "2025-01-20",
+            "url": "http://www.dce.com.cn/dce/content/2025/ywggytz/8628246.html",
+            "sha256": "47e884b77078752f8379ef9acdf88d810a98385be995a61d4259e700a1ecdc21",
+            "raw_path": "47e884b77078752f8379ef9acdf88d810a98385be995a61d4259e700a1ecdc21.html",
+            "kind": "official_listing_notice",
+        },
+        "bb2511": {
+            "date": "2025-01-20",
+            "url": "http://www.dce.com.cn/dce/content/2025/ywggytz/8628246.html",
+            "sha256": "47e884b77078752f8379ef9acdf88d810a98385be995a61d4259e700a1ecdc21",
+            "raw_path": "47e884b77078752f8379ef9acdf88d810a98385be995a61d4259e700a1ecdc21.html",
+            "kind": "official_listing_notice",
+        },
+        "bb2601": {
+            "date": "2025-01-20",
+            "url": "http://www.dce.com.cn/dce/content/2025/ywggytz/8628246.html",
+            "sha256": "47e884b77078752f8379ef9acdf88d810a98385be995a61d4259e700a1ecdc21",
+            "raw_path": "47e884b77078752f8379ef9acdf88d810a98385be995a61d4259e700a1ecdc21.html",
+            "kind": "official_listing_notice",
+        },
     }
 
     rows = []
@@ -516,13 +579,36 @@ def build_dce_lifecycle(observations):
                 prior_exp = get_nth_trading_day(year - 1, month, 10)
             listing = get_next_trading_day(prior_exp)
 
+        if sym in special_contract_listing_evidence:
+            listing = special_contract_listing_evidence[sym]["date"]
+        elif sym in rule_and_calendar_derived_listings:
+            listing = rule_and_calendar_derived_listings[sym]["date"]
+
         if ob["first"] < listing:
             listing = ob["first"]
         if listing > expiry:
             listing = expiry
 
         # Event 1: Listing event
-        if is_launch_batch:
+        cal_extra_url = ""
+        cal_extra_sha = ""
+        cal_extra_raw = ""
+        if sym in special_contract_listing_evidence:
+            ev = special_contract_listing_evidence[sym]
+            l_url = ev["url"]
+            l_sha = ev["sha256"]
+            l_raw = ev["raw_path"]
+            l_kind = ev["kind"]
+        elif sym in rule_and_calendar_derived_listings:
+            ev = rule_and_calendar_derived_listings[sym]
+            l_url = spec["canonical_url"]
+            l_sha = spec["sha256"]
+            l_raw = spec.get("raw_path", "")
+            l_kind = "official_rule_and_calendar_derivation"
+            cal_extra_url = ev["calendar_url"]
+            cal_extra_sha = ev["calendar_sha256"]
+            cal_extra_raw = ev["calendar_raw_path"]
+        elif is_launch_batch:
             l_url = spec.get("boundary_canonical_url") or spec["canonical_url"]
             l_sha = spec.get("boundary_sha256") or spec["sha256"]
             l_raw = spec.get("boundary_raw_path") or spec.get("raw_path", "")
@@ -546,6 +632,10 @@ def build_dce_lifecycle(observations):
             "sha256": l_sha,
             "raw_path": l_raw,
             "report_date_kind": l_kind,
+            "calendar_assumption": "",
+            "application_calendar_canonical_url": cal_extra_url,
+            "application_calendar_sha256": cal_extra_sha,
+            "application_calendar_raw_path": cal_extra_raw,
         })
 
         # Event 2: Expiry event
@@ -567,7 +657,7 @@ def build_dce_lifecycle(observations):
 
     out_path = EVIDENCE_DIR / "dce-lifecycle-statutory-2020-2026.tsv"
     with open(out_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t", restval="")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Generated {out_path} with {len(rows)} DCE event rows")
@@ -578,12 +668,90 @@ def build_czce_lifecycle(observations):
     evidence_files = {p.stem: p.name for p in EVIDENCE_DIR.iterdir() if p.is_file()}
 
     special_launch_dates = {
+        "AP": "2017-12-22",
+        "CY": "2017-08-18",
+        "CJ": "2019-04-30",
+        "UR": "2019-08-09",
+        "SA": "2019-12-06",
         "PF": "2020-10-12",
         "PK": "2021-02-01",
         "PX": "2023-09-15",
         "SH": "2023-09-15",
         "PR": "2024-08-30",
         "PL": "2025-07-22",
+    }
+
+    special_contract_listing_evidence = {
+        "LR011": {
+            "date": "2020-07-15",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2020/07/1593526781274908.htm",
+            "sha256": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006",
+            "raw_path": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006.html",
+            "kind": "official_listing_notice",
+        },
+        "LR101": {
+            "date": "2020-07-15",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2020/07/1593526781274908.htm",
+            "sha256": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006",
+            "raw_path": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006.html",
+            "kind": "official_listing_notice",
+        },
+        "LR103": {
+            "date": "2020-07-15",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2020/07/1593526781274908.htm",
+            "sha256": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006",
+            "raw_path": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006.html",
+            "kind": "official_listing_notice",
+        },
+        "LR105": {
+            "date": "2020-07-15",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2020/07/1593526781274908.htm",
+            "sha256": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006",
+            "raw_path": "0fc497e08942d94376d7dd187edc537051af6637d58443b085a7bc53fb830006.html",
+            "kind": "official_listing_notice",
+        },
+        "RS701": {
+            "date": "2026-09-16",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2026/9/5c7915355ee1481fb465afbc67e1b0e1.htm",
+            "sha256": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c",
+            "raw_path": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c.html",
+            "kind": "official_listing_notice",
+        },
+        "RS703": {
+            "date": "2026-09-16",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2026/9/5c7915355ee1481fb465afbc67e1b0e1.htm",
+            "sha256": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c",
+            "raw_path": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c.html",
+            "kind": "official_listing_notice",
+        },
+        "RS706": {
+            "date": "2026-09-16",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2026/9/5c7915355ee1481fb465afbc67e1b0e1.htm",
+            "sha256": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c",
+            "raw_path": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c.html",
+            "kind": "official_listing_notice",
+        },
+        "RS707": {
+            "date": "2026-09-16",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2026/9/5c7915355ee1481fb465afbc67e1b0e1.htm",
+            "sha256": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c",
+            "raw_path": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c.html",
+            "kind": "official_listing_notice",
+        },
+        "RS709": {
+            "date": "2026-09-16",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2026/9/5c7915355ee1481fb465afbc67e1b0e1.htm",
+            "sha256": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c",
+            "raw_path": "e1cbd2a2d3a755cac3d85ac6155d59a47c45278368a1ce99ad17c83bee27d28c.html",
+            "kind": "official_listing_notice",
+        },
+        "PK505": {
+            "date": "2024-06-03",
+            "url": "http://www.czce.com.cn/cn/gyjys/jysdt/ggytz/webinfo/2024/05/1715233012347150.htm",
+            "sha256": "7be9f4ccde6b79f825e124b244a51d20f8e082b1bc59a01f68e5f9cf1c6fbd0d",
+            "raw_path": "7be9f4ccde6b79f825e124b244a51d20f8e082b1bc59a01f68e5f9cf1c6fbd0d.html",
+            "kind": "official_listing_notice",
+        },
     }
 
     rows = []
@@ -596,10 +764,10 @@ def build_czce_lifecycle(observations):
             continue
         prod, y_digit, mm = m.group(1), int(m.group(2)), int(m.group(3))
         month = mm
-        decade = 2020 if ob["first"] >= "2020" else 2010
-        year = decade + y_digit
-        if y_digit == 0 and ob["first"] >= "2029":
-            year = 2030
+        obs_year = int(ob["first"][:4])
+        candidates = [obs_year, obs_year + 1, obs_year - 1]
+        matching = [c for c in candidates if c % 10 == y_digit]
+        year = matching[0] if matching else ((obs_year // 10) * 10 + y_digit)
 
         spec = spec_by_prod.get(prod)
         if not spec:
@@ -626,13 +794,22 @@ def build_czce_lifecycle(observations):
         else:
             listing = rolling_list
 
+        if sym in special_contract_listing_evidence:
+            listing = special_contract_listing_evidence[sym]["date"]
+
         if ob["first"] < listing:
             listing = ob["first"]
         if listing > expiry:
             listing = expiry
 
         # Event 1: Listing event
-        if is_launch_batch:
+        if sym in special_contract_listing_evidence:
+            ev = special_contract_listing_evidence[sym]
+            l_url = ev["url"]
+            l_sha = ev["sha256"]
+            l_raw = ev["raw_path"]
+            l_kind = ev["kind"]
+        elif is_launch_batch:
             l_url = spec.get("boundary_canonical_url") or spec["canonical_url"]
             l_sha = spec.get("boundary_sha256") or spec["sha256"]
             l_raw = evidence_files.get(l_sha, spec.get("raw_path", ""))
@@ -677,7 +854,7 @@ def build_czce_lifecycle(observations):
 
     out_path = EVIDENCE_DIR / "czce-lifecycle-statutory-2020-2026.tsv"
     with open(out_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=LIFECYCLE_COLUMNS, delimiter="\t", restval="")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Generated {out_path} with {len(rows)} CZCE event rows")

@@ -260,7 +260,7 @@ def read_table(path):
 def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir):
     records = {}
 
-    def merge(exchange, symbol, observed, fields, evidence_id, source, report_date_kind="official_report_date", calendar_assumption=""):
+    def merge(exchange, symbol, observed, fields, evidence_id, source, report_date_kind="official_report_date", calendar_assumption="", calendar_evidence_id=None):
         source_exchange = exchange
         parts = symbol_parts(exchange, symbol)
         if not parts:
@@ -279,7 +279,20 @@ def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir
                          "source_exchange": source_exchange, "report_date_kind": report_date_kind}
             if calendar_assumption:
                 candidate["calendar_assumption"] = json.loads(calendar_assumption)
+            if calendar_evidence_id:
+                candidate["calendar_evidence_id"] = calendar_evidence_id
+                candidate["composite_evidence_ids"] = [evidence_id, calendar_evidence_id]
             previous = target["fields"].get(name)
+            if name == "listing_date":
+                if previous is None or value < previous["value"]:
+                    target["fields"][name] = candidate
+                elif previous is not None and value == previous["value"] and candidate["evidence_id"] != previous["evidence_id"]:
+                    composite = previous.setdefault("composite_evidence_ids", [previous["evidence_id"]])
+                    if candidate["evidence_id"] not in composite:
+                        composite.append(candidate["evidence_id"])
+                    if calendar_evidence_id:
+                        previous["calendar_evidence_id"] = calendar_evidence_id
+                continue
             rank = (observed, source_exchange == exchange)
             previous_rank = (previous["report_date"], previous["source_exchange"] == exchange) if previous else None
             if previous_rank == rank and previous["value"] != value:
@@ -345,10 +358,16 @@ def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir
             exchange = row["exchange"].strip().upper()
             observed = iso_date(row["report_date"], True)
             identity, _ = evidence.register(exchange, row["canonical_url"], row["sha256"], row.get("raw_path", ""), Path(manifest).parent)
+            cal_url = row.get("application_calendar_canonical_url", "").strip()
+            cal_sha = row.get("application_calendar_sha256", "").strip()
+            cal_raw = row.get("application_calendar_raw_path", "").strip()
+            cal_identity = None
+            if cal_url and cal_sha:
+                cal_identity, _ = evidence.register(exchange, cal_url, cal_sha, cal_raw, Path(manifest).parent)
             fields = {key: iso_date(row.get(key)) for key in ("listing_date", "expiry_date", "last_delivery_date")}
             fields.update({key: row.get(key, "").strip() for key in ("basis_price", "variety_name")})
             kind = row.get("report_date_kind") or "official_lifecycle_manifest"
-            merge(exchange, row["symbol"], observed, fields, identity, kind, kind, row.get("calendar_assumption", ""))
+            merge(exchange, row["symbol"], observed, fields, identity, kind, kind, row.get("calendar_assumption", ""), calendar_evidence_id=cal_identity)
     return records
 
 

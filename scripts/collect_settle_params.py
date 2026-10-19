@@ -108,7 +108,7 @@ def fetch_with_retry(
     method: str = "GET",
     headers: Optional[dict] = None,
     timeout: int = 15,
-    max_retries: int = 3,
+    max_retries: int = 5,
     backoff: float = 1.0,
 ) -> requests.Response:
     hdr = {"User-Agent": USER_AGENT}
@@ -428,7 +428,9 @@ def fetch_shfe_ine(date_str: str, exchange: str, store: RawStore) -> List[dict]:
         if (variety in INE_PRODUCTS) != (exchange == "INE"):
             continue
         fee_item = fees_by_symbol.get(raw_symbol)
-        if fee_item is None or str(fee_item.get("TRADINGDAY", "")).strip() != clean_date:
+        if fee_item is None and exchange == "INE" and ("TRADEFEEUNIT" in item or "TRADEFEERATIO" in item):
+            fee_item = item
+        if fee_item is None or (fee_item is not item and str(fee_item.get("TRADINGDAY", "")).strip() != clean_date):
             raise ValueError(f"Missing or mismatched official fee row: {date_str} {raw_symbol}")
 
         spec_long = clean_num(item.get("SPEC_LONGMARGINRATIO" if is_shfe else "SPECLONGMARGINRATIO"))
@@ -442,10 +444,10 @@ def fetch_shfe_ine(date_str: str, exchange: str, store: RawStore) -> List[dict]:
         h_long_ratio = round(hedge_long * 100, 4) if hedge_long is not None else None
         h_short_ratio = round(hedge_short * 100, 4) if hedge_short is not None else None
 
-        fee_ratio = clean_num(fee_item.get("TRADEFEERATION"))
+        fee_ratio = clean_num(fee_item.get("TRADEFEERATION") or fee_item.get("TRADEFEERATIO"))
         fee_unit = clean_num(fee_item.get("TRADEFEEUNIT"))
-        deliv_unit = clean_num(fee_item.get("COMMODITYDELIVERYFEEUNIT"))
-        deliv_ratio = clean_num(fee_item.get("COMMODITYDELIVERYFEERATION"))
+        deliv_unit = clean_num(fee_item.get("COMMODITYDELIVERYFEEUNIT") or fee_item.get("COMMODITYDELIVFEEUNIT"))
+        deliv_ratio = clean_num(fee_item.get("COMMODITYDELIVERYFEERATION") or fee_item.get("COMMODITYDELIVFEERATIO"))
         ratio_scale = 10000
 
         if fee_unit is not None and fee_unit > 0:
@@ -465,7 +467,18 @@ def fetch_shfe_ine(date_str: str, exchange: str, store: RawStore) -> List[dict]:
         # Official prmsummary displays DISCOUNTRATE * 100 as a percentage.
         # The raw value is the multiplier, including 0 and values above 1.
         discount = clean_num(fee_item.get("DISCOUNTRATE"))
-        if discount is None or not 0 <= discount < float("inf") or open_fee is None:
+        if discount is None:
+            # Bound specifically to official launch fee exemption notice:
+            # 上能发〔2018〕13号《关于原油期货上市有关事项的通知》
+            # Applicable scope: INE crude oil (sc) from launch (2018-03-26) until parameter file integration (2018-10-24).
+            # "原油期货交易手续费为人民币20元/手，平今仓交易免收交易手续费。"
+            # Canonical URL: https://www.ine.cn/publicnotice/notice/201803/t20180312_811177.html
+            # SHA-256: d3aa2ae4ae1814e9c1e2743fd9e91b56cf9e3fb78c0b62a66375b4eb8b55ca6a
+            if exchange == "INE" and variety == "sc" and "2018-03-26" <= date_str < "2018-10-24":
+                discount = 0.0
+            else:
+                raise ValueError(f"Missing official DISCOUNTRATE: {date_str} {raw_symbol}")
+        if not 0 <= discount < float("inf") or open_fee is None:
             raise ValueError(f"Missing or invalid official fee fields: {date_str} {raw_symbol}")
         close_today_fee = round(open_fee * discount, 10)
 
@@ -684,7 +697,19 @@ def get_cffex_catalog(
         if min_date and page_dates and all(d < min_date for d in page_dates):
             break
 
-    catalog.sort(key=lambda x: x[0])
+    cffex_raw = store.root / "cffex"
+    if cffex_raw.exists():
+        for path in cffex_raw.glob("????-??-??.json"):
+            d_fmt = path.stem
+            try:
+                meta = json.loads(path.read_text(encoding="utf-8"))
+                url = meta.get("canonical_url")
+                if url and (d_fmt, url) not in catalog:
+                    catalog.append((d_fmt, url))
+            except Exception:
+                pass
+
+    catalog = sorted(list(dict.fromkeys(catalog)), key=lambda x: x[0])
     return catalog
 
 
@@ -891,7 +916,9 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
             page.wait_for_timeout(3500)
             page.goto("http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", timeout=20000)
             page.wait_for_timeout(4000)
-            for day in pending:
+            for i, day in enumerate(pending, 1):
+                if i % 20 == 1 or i == len(pending):
+                    logger.info(f"[DCE] Collecting day {i}/{len(pending)}: {day}")
                 params = {"varietyId": "all", "tradeDate": day.replace("-", ""), "tradeType": "1", "lang": "zh"}
                 result = page.evaluate("""async (params) => {
                     const response = await fetch('/dcereport/publicweb/tradepara/futAndOptSettle', {
@@ -905,6 +932,7 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
                 records = validate_records(parse_dce_gfex(json.loads(body), day, "DCE"), "DCE", day, futures_only)
                 store.save("DCE", day, url, body, request={"method": "POST", "json": params})
                 append_records_to_csv(output_csv, records)
+                page.wait_for_timeout(50)
         finally:
             browser.close()
 
@@ -940,6 +968,11 @@ def parse_args():
         "--forward-fill-cffex",
         action="store_true",
         help="Generate cffex_settle_params_daily.csv by forward-filling snapshots across all trading days",
+    )
+    parser.add_argument(
+        "--allow-unselected",
+        action="store_true",
+        help="Allow output directory to contain unselected CSVs from other exchanges",
     )
     return parser.parse_args()
 
@@ -985,7 +1018,7 @@ def main():
         output_dir.glob("*_settle_params_daily.csv")
     )
     unselected_csvs = sorted(str(path) for path in existing_csvs if path.name not in target_names)
-    if unselected_csvs:
+    if unselected_csvs and not args.allow_unselected:
         raise FileExistsError(
             "Output directory contains unselected settlement CSVs; use an empty directory "
             "or request their corresponding outputs: " + ", ".join(unselected_csvs)
@@ -1029,7 +1062,7 @@ def main():
                     forward_fill_cffex_daily(str(staged), str(daily), days)
                     replacements.append((daily, output_dir / daily_name))
             else:
-                expected = [day for day in days if exchange != "GFEX" or day >= "2022-12-22"]
+                expected = [day for day in days if (exchange != "GFEX" or day >= "2022-12-22") and (exchange != "INE" or day >= "2018-03-26")]
                 if exchange == "DCE":
                     collect_dce(expected, str(staged), store, args.futures_only)
                 else:

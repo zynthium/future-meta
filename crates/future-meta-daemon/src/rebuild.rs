@@ -194,10 +194,47 @@ fn build(options: &RebuildOptions, temporary: &Path) -> Result<Value> {
             "insert into rebuild_contract_provenance values(?1,?2)",
             params![id, serde_json::to_string(info)?],
         )?;
-        let entry = &evidence[info["official_fields"]["listing_date"]["evidence_id"]
-            .as_str()
-            .unwrap()];
-        tx.execute("insert into contract_lifecycle_evidence(contract_id,listing_date,expiry_date,canonical_url,body_sha256,recorded_at,provenance_kind) values(?1,?2,?3,?4,?5,?6,?7)", params![id,listing.replace('-',""),expiry.replace('-',""),entry["urls"][0].as_str().unwrap(),info["official_fields"]["listing_date"]["evidence_id"].as_str().unwrap(),now, if assumed { "user_assumed_holiday_calendar" } else { "official" }])?;
+        let listing_field = &info["official_fields"]["listing_date"];
+        let mut lifecycle_entries = Vec::new();
+        if let Some(list_id) = listing_field["evidence_id"].as_str()
+            && let Some(entry) = evidence.get(list_id)
+        {
+            lifecycle_entries.push((entry["urls"][0].as_str().unwrap(), list_id));
+        }
+        if let Some(cal_id) = listing_field
+            .get("calendar_evidence_id")
+            .and_then(Value::as_str)
+        {
+            ensure!(
+                evidence.contains_key(cal_id),
+                "unknown calendar lifecycle evidence"
+            );
+            if let Some(entry) = evidence.get(cal_id) {
+                lifecycle_entries.push((entry["urls"][0].as_str().unwrap(), cal_id));
+            }
+        }
+        if let Some(composite_ids) = listing_field
+            .get("composite_evidence_ids")
+            .and_then(Value::as_array)
+        {
+            for cid in composite_ids {
+                if let Some(cid_str) = cid.as_str() {
+                    ensure!(
+                        evidence.contains_key(cid_str),
+                        "unknown composite lifecycle evidence"
+                    );
+                    if let Some(entry) = evidence.get(cid_str) {
+                        lifecycle_entries.push((entry["urls"][0].as_str().unwrap(), cid_str));
+                    }
+                }
+            }
+        }
+        for (url, sha) in lifecycle_entries {
+            tx.execute(
+                "insert or ignore into contract_lifecycle_evidence(contract_id,listing_date,expiry_date,canonical_url,body_sha256,recorded_at,provenance_kind) values(?1,?2,?3,?4,?5,?6,?7)",
+                params![id, listing.replace('-', ""), expiry.replace('-', ""), url, sha, now, if assumed { "user_assumed_holiday_calendar" } else { "official" }],
+            )?;
+        }
         ensure!(
             contracts
                 .insert(
@@ -314,7 +351,11 @@ fn build(options: &RebuildOptions, temporary: &Path) -> Result<Value> {
             );
             let fee_doc = find_document(
                 &documents,
-                if exchange == "INE" { "SHFE" } else { exchange },
+                if exchange == "INE" && day >= "2018-10-24" {
+                    "SHFE"
+                } else {
+                    exchange
+                },
                 day,
                 exchange == "CFFEX",
             )?;
@@ -366,6 +407,20 @@ fn build(options: &RebuildOptions, temporary: &Path) -> Result<Value> {
                 let version_id = tx.last_insert_rowid();
                 for document in [fee_doc, margin_doc] {
                     tx.execute("insert or ignore into fee_version_evidence select ?1,?2,?3,'official_parameter',canonical_url,body_sha256,?4 from retained_parameter_documents where id=?5",params![info.id,from,hash,now,document])?;
+                }
+                if exchange == "INE" && day < "2018-10-24" {
+                    tx.execute(
+                        "insert or ignore into fee_version_evidence(contract_id, valid_from, rule_hash, evidence_level, canonical_url, body_sha256, recorded_at)
+                         values (?1, ?2, ?3, 'paired_official', ?4, ?5, ?6)",
+                        params![
+                            info.id,
+                            from,
+                            hash,
+                            "https://www.ine.cn/publicnotice/notice/201803/t20180312_811177.html",
+                            "d3aa2ae4ae1814e9c1e2743fd9e91b56cf9e3fb78c0b62a66375b4eb8b55ca6a",
+                            now,
+                        ],
+                    )?;
                 }
                 states.insert(
                     info.id,
