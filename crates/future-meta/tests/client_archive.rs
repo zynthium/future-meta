@@ -81,7 +81,7 @@ fn archive_roundtrips_through_zstd_bincode() {
 }
 
 #[test]
-fn version_two_archive_roundtrips_with_spec_history() {
+fn current_archive_roundtrips_with_spec_history() {
     let archive = FeeArchiveV3::from(sample_archive());
 
     let bytes = encode_archive_bytes(&archive).unwrap();

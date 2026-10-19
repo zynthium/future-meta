@@ -2,13 +2,16 @@
 
 use crate::error::FutureMetaError;
 use crate::model::{
-    FeeArchiveV1, FeeArchiveV2, FeeArchiveV3, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION,
-    SPEC_SCHEMA_VERSION,
+    FeeArchiveV1, FeeArchiveV2, FeeArchiveV3, INTRADAY_SCHEMA_VERSION, LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION, SPEC_SCHEMA_VERSION,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 /// Encodes an archive payload into compressed artifact bytes.
+///
+/// Current materialized payloads are packed into schema 4. Legacy payloads with
+/// schema markers 1/2/3 retain their original encoding.
 ///
 /// # Errors
 ///
@@ -17,6 +20,17 @@ use sha2::{Digest, Sha256};
 pub fn encode_archive_bytes(archive: &impl Serialize) -> Result<Vec<u8>, FutureMetaError> {
     let encoded = bincode::serde::encode_to_vec(archive, bincode::config::standard())
         .map_err(|err| FutureMetaError::CorruptArchive(err.to_string()))?;
+    let (schema, _): (u32, usize) =
+        bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+            .map_err(|err| FutureMetaError::CorruptArchive(err.to_string()))?;
+    let encoded = if schema == SCHEMA_VERSION {
+        let logical = decode_exact::<FeeArchiveV3>(&encoded)?;
+        let compact = crate::compact_archive::CompactArchive::pack(&logical)?;
+        bincode::serde::encode_to_vec(&compact, bincode::config::standard())
+            .map_err(|err| FutureMetaError::CorruptArchive(err.to_string()))?
+    } else {
+        encoded
+    };
 
     zstd::stream::encode_all(encoded.as_slice(), 19)
         .map_err(|err| FutureMetaError::CorruptArchive(err.to_string()))
@@ -38,7 +52,14 @@ pub fn decode_archive_bytes(bytes: &[u8]) -> Result<FeeArchiveV3, FutureMetaErro
     match schema_version {
         LEGACY_SCHEMA_VERSION => decode_exact::<FeeArchiveV1>(&decoded).map(Into::into),
         SPEC_SCHEMA_VERSION => decode_exact::<FeeArchiveV2>(&decoded).map(Into::into),
-        SCHEMA_VERSION => decode_exact::<FeeArchiveV3>(&decoded),
+        INTRADAY_SCHEMA_VERSION => {
+            let mut archive = decode_exact::<FeeArchiveV3>(&decoded)?;
+            archive.schema_version = SCHEMA_VERSION;
+            Ok(archive)
+        }
+        SCHEMA_VERSION => {
+            decode_exact::<crate::compact_archive::CompactArchive>(&decoded)?.unpack()
+        }
         found => Err(FutureMetaError::UnsupportedSchemaVersion {
             found,
             supported: SCHEMA_VERSION,

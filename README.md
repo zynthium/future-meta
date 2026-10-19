@@ -9,7 +9,7 @@
 `future-meta` 从交易所官方采集数据重建手续费、保证金和规格历史，维护 SQLite 并导出压缩二进制 artifact。客户端只需要下载 Cloudflare Pages 上的 `manifest.json` 和 `latest.fmeta.zst`，即可在本地完成高性能手续费查询。
 
 > [!IMPORTANT]
-> 当前 archive 为 schema 3，请使用 0.4.0 客户端。历史数据截至 2026-10-15；[覆盖报告](https://future-meta.pages.dev/coverage.json) 公布未知区间及推算到期日数量。第三方最新截面仅用于发现候选，client 查询已审阅官方数据的本地索引。
+> 0.5.0 导出 schema 4，以共享字典和按合约变更序列缩小客户端下载文件；兼容读取 schema 1/2/3，查询 API 不变。发布 schema 4 前需先升级客户端。线上格式与历史覆盖以 [manifest](https://future-meta.pages.dev/manifest.json) 和 [覆盖报告](https://future-meta.pages.dev/coverage.json) 为准；本地修改不表示已经发布。
 
 ## 功能特性
 
@@ -184,7 +184,7 @@ for tick in ticks {
 - 历史手续费事实：只接受交易所原始公告、收费表和结算/业务参数文件。先暂存到独立的官方证据库，不能直接导出或发布；详见 [官方历史证据流程](docs/official-evidence.md)。
 - 每日候选采集：GitHub Actions 拉取 Cloudflare 官方采集 seed，解析 9qihuo 总表并用 Jin10 辅助核对；只有交易所原件经审阅后才能写入历史。
 - 新上市 symbol 需要官方手续费、生命周期和规格证据，缺失时保留未知，不从旧 SQLite 或品种费率锚点回填。
-- archive schema 3 保存合约规格历史、多空保证金和独立日内开仓费；0.4.0 客户端仍可读取 schema 1/2。
+- archive schema 4 使用共享字典、按合约批量变更和日期引用增量编码，完整保留规格历史、多空保证金和独立日内开仓费。0.5.0 客户端兼容 schema 1/2/3，加载后仍使用原查询模型；详见 [格式迁移说明](docs/archive-format.md)。
 - Jin10 仅作为 9qihuo 候选的交叉确认，不会独立写入 `fee_versions`，也不会替代 9qihuo 更新。费率类型切换、平昨/平今字段置换、零费率切换、超过两倍的单腿跳变、超过 12 条的同批变化，以及疑似 `0.1 元`占位或统一小数固定费偏移，均失败关闭；它们不是“错误”结论，而是必须暂存并按交易所官方证据导入的队列。实时更新绝不以品种众数静默覆写既有费率。
 
 `9qihuo` 单品种 CSV、Jin10 和其他第三方衍生数据不再用于补充历史手续费。`seed-history`/`refresh` 会明确拒绝该用途；现有历史记录也不会因此被追溯认定为官方证据。

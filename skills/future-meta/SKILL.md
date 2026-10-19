@@ -1,6 +1,6 @@
 ---
 name: future-meta
-description: 指导 Rust 客户端使用 future-meta 查询中国期货历史手续费、多空保证金、日内开仓费及合约规格，加载 schema 3 artifact，判断数据覆盖边界，并选择普通查询或跨日 tick 级预编译 API。
+description: 指导 Rust 客户端使用 future-meta 查询中国期货历史手续费、多空保证金、日内开仓费及合约规格，加载 schema 1/2/3/4 artifact，判断数据覆盖边界，并选择普通查询或跨日 tick 级预编译 API。
 ---
 
 # future-meta 客户端手续费、保证金与合约规格指南
@@ -35,11 +35,11 @@ description: 指导 Rust 客户端使用 future-meta 查询中国期货历史手
 
 ## 安装和加载
 
-在线自动下载推荐启用 `download` feature：
+在线自动下载推荐启用 `download` feature。以下依赖使用 0.5.0 tag；读取 schema 4 需要先升级客户端：
 
 ```toml
 [dependencies]
-future-meta = { git = "https://github.com/zynthium/future-meta", tag = "v0.4.0", features = ["download"] }
+future-meta = { git = "https://github.com/zynthium/future-meta", tag = "v0.5.0", features = ["download"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 time = "0.3"
 ```
@@ -68,8 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - 默认 manifest 是 `https://future-meta.pages.dev/manifest.json`。
 - `load_or_fetch` 会下载并缓存已发布 artifact；archive 加载后，查询都在本地内存完成。
-- 当前客户端版本为 0.4.0，发布格式为 schema 3，包含手续费、保证金和合约规格历史，新增独立日内开仓费。
-- 0.4.0 解码器兼容 schema 1/2；旧客户端不能读取 schema 3。上述依赖从 GitHub tag 加载源码，不表示已发布到 crates.io。
+- 客户端版本为 0.5.0，导出格式为 schema 4；共享字典与按合约变更序列只改变传输编码，不删除手续费、保证金或合约规格历史。
+- 0.5.0 解码器兼容 schema 1/2/3/4；0.4.0 不能读取 schema 4。线上格式以 manifest 为准，不因本地代码更新就假定已经发布；GitHub tag 依赖也不表示已发布到 crates.io。
 - 可用 `FUTURE_META_CACHE_DIR` 指定缓存目录。
 - 客户端不应该把上游网站当作实时查询 API。
 
@@ -179,8 +179,9 @@ assert_eq!(after.tick_value(), 10.0);
 
 schema 兼容边界：
 
+- schema 4 使用字典和合约变更序列，解码后仍返回 `FeeArchiveV3` 并保持查询 API；新格式上线前先升级客户端。
 - schema 3 包含规格历史及独立的 `intraday_open_fee`；schema 2 包含规格历史，但没有独立日内开仓费。
-- schema 1/2 解码后升级为当前 `FeeArchiveV3`，旧文件的 `intraday_open_fee` 为 `None`，不会从普通开仓费推算。
+- schema 1/2/3 解码后升级为当前 `FeeArchiveV3`；schema 1/2 旧文件的 `intraday_open_fee` 为 `None`，不会从普通开仓费推算。
 - schema 1 只能把静态规格转换成单一历史区间，不能恢复原文件未记录的规格变化。
 - 旧载荷类型保留为 `FeeArchiveV1` / `FeeArchiveV2`，其费行类型为 `LegacyContractFee`。
   手工构造当前 `ContractFee` 的调用方需要补充 `intraday_open_fee` 字段。

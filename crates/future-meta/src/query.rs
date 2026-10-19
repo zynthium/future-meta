@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::FutureMetaError;
 use crate::model::{
-    Contract, ContractFee, ContractSpecVersion, FeeArchiveV3, FeeKind, FeeSpec, SCHEMA_VERSION,
-    TradingStatus,
+    Contract, ContractFee, ContractSpecVersion, FeeArchiveV3, FeeKind, FeeSpec,
+    INTRADAY_SCHEMA_VERSION, SCHEMA_VERSION, TradingStatus,
 };
 use crate::symbol::{SymbolKind, parse_symbol};
 use time::format_description::well_known::Rfc3339;
@@ -430,7 +430,10 @@ impl FutureMeta {
     /// Returns an error if a contract symbol in the archive cannot provide a
     /// supported futures underlying symbol.
     pub fn from_archive(archive: impl Into<FeeArchiveV3>) -> Result<Self, FutureMetaError> {
-        let archive = archive.into();
+        let mut archive = archive.into();
+        if archive.schema_version == INTRADAY_SCHEMA_VERSION {
+            archive.schema_version = SCHEMA_VERSION;
+        }
         if archive.schema_version != SCHEMA_VERSION {
             return Err(FutureMetaError::UnsupportedSchemaVersion {
                 found: archive.schema_version,

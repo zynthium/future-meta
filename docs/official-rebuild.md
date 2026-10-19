@@ -36,13 +36,15 @@ cargo run --release -p future-meta-daemon -- rebuild-collected \
 
 输出通过 SQLite 完整性、外键约束、版本区间及原件关联检查后才写入目标路径。构建成功不自动替换原库，也不部署。
 
-## 客户端 archive schema 3
+## 客户端 archive schema 4（0.5.0 待发布）
+
+schema 4 采用共享字典、合约变更序列和日期引用增量编码，解码后仍使用 `FeeArchiveV3`，不改变查询 API。新客户端兼容 schema 1/2/3，旧客户端不能读取 schema 4；详见 [格式迁移说明](archive-format.md)。
 
 schema 3 在 `ContractFee` 中增加 `intraday_open_fee: Option<FeeSpec>`；多空保证金继续使用原字段。`PreparedFee::intraday_open_amount` 返回 `Option<f64>`，未知费率不返回假零值。
 
-新客户端仍能读取 schema 1/2，旧档案的日内开仓费为 `None`。旧载荷类型保留为 `FeeArchiveV1` / `FeeArchiveV2`，当前载荷为 `FeeArchiveV3`；旧费行类型为 `LegacyContractFee`。源码中手工构造当前 `ContractFee` 的调用方需补充新字段。
+新客户端仍能读取 schema 1/2/3；schema 1/2 旧档案的日内开仓费为 `None`。旧载荷类型保留为 `FeeArchiveV1` / `FeeArchiveV2`，当前物化数据模型为 `FeeArchiveV3`；旧费行类型为 `LegacyContractFee`。源码中手工构造当前 `ContractFee` 的调用方需补充新字段。
 
-旧客户端不能读取 schema 3。发布新 artifact 前需升级使用方；本次本地重建不会自动发布。
+发布 schema 4 artifact 前需将使用方升级至 0.5.0；0.4.0 不能读取 schema 4。本次本地重建不会自动发布。
 
 ```sh
 cargo run -p future-meta-daemon -- export --db data/rebuilt-20261018.sqlite --out data/rebuild-20261018/public

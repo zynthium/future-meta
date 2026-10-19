@@ -28,7 +28,8 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         .generated_at
         .replace([':', '+'], "")
         .replace('-', "");
-    let artifact_name = format!("artifacts/future-meta-fees-v3-{data_version}.fmeta.zst");
+    let artifact_name =
+        format!("artifacts/future-meta-fees-v{SCHEMA_VERSION}-{data_version}.fmeta.zst");
 
     std::fs::write(out.join("latest.fmeta.zst"), &bytes)?;
     std::fs::write(out.join(&artifact_name), &bytes)?;

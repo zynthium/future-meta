@@ -9,10 +9,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(2)
         .unwrap_or_else(|| "2026-06-08T08:26:12Z".to_owned());
 
-    let cache_dir = std::env::temp_dir().join("future-meta-online-smoke");
+    let manifest_url = std::env::args()
+        .nth(3)
+        .unwrap_or_else(|| DownloadConfig::default().manifest_url);
+    let cache_dir = std::env::args().nth(4).map_or_else(
+        || std::env::temp_dir().join("future-meta-online-smoke"),
+        std::path::PathBuf::from,
+    );
     let meta = load_or_fetch(DownloadConfig {
         cache_dir,
-        ..DownloadConfig::default()
+        manifest_url,
     })
     .await?;
 

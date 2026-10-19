@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Current archive schema version.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
+
+/// Original materialized format including a separate intraday opening fee.
+pub const INTRADAY_SCHEMA_VERSION: u32 = 3;
 
 /// Archive version with specifications but no separate intraday opening fee.
 pub const SPEC_SCHEMA_VERSION: u32 = 2;
@@ -74,7 +77,10 @@ pub struct FeeArchiveV2 {
     pub fee_versions: Vec<LegacyContractFee>,
 }
 
-/// Version 3 payload including intraday opening fees.
+/// Materialized query payload including intraday opening fees.
+///
+/// The type and fields are retained from schema 3. Schema 4 uses private compact
+/// wire records and expands them back into this model when decoded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FeeArchiveV3 {
     /// Schema version used by this archive.

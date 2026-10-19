@@ -1,6 +1,7 @@
 #![doc = "Shared data types and high-performance client APIs for future-meta."]
 
 pub mod archive;
+mod compact_archive;
 #[cfg(feature = "download")]
 pub mod download;
 pub mod error;

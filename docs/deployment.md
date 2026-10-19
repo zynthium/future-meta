@@ -208,8 +208,7 @@ cargo run -p future-meta-daemon -- export \
 gzip -c path/to/review-copy.sqlite > public/ops/future-meta.sqlite.gz
 ```
 
-schema 3 需要 `future-meta` 0.4.0 客户端；0.4.0 兼容读取旧 schema 1/2。升级说明见
-[官方重建说明](official-rebuild.md)。
+0.5.0 导出 schema 4；使用方应先升级到 0.5.0，再加载 schema 4 artifact。新客户端兼容 schema 1/2/3；0.4.0 不能读取 schema 4。输出 manifest 与版本 artifact 名均由 `SCHEMA_VERSION` 生成，下载缓存仍按 SHA-256 自动更新。格式与迁移步骤见 [archive 格式说明](archive-format.md)。本地代码和导出不代表已部署。
 
 `export` 以只读方式打开数据库，并拒绝孤儿 fee evidence、倒置观察时间、非法或重叠
 区间、以及早于合约上市日的费率版本。只有这些检查通过后，才可在取得发布授权后部署

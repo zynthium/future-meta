@@ -50,6 +50,14 @@ pub async fn load_or_fetch(config: DownloadConfig) -> Result<FutureMeta, FutureM
 
     let manifest_text = fetch_text(&client, &config.manifest_url).await?;
     let manifest: Manifest = serde_json::from_str(&manifest_text)?;
+    if !(crate::model::LEGACY_SCHEMA_VERSION..=crate::model::SCHEMA_VERSION)
+        .contains(&manifest.schema_version)
+    {
+        return Err(FutureMetaError::UnsupportedSchemaVersion {
+            found: manifest.schema_version,
+            supported: crate::model::SCHEMA_VERSION,
+        });
+    }
     let artifact_path = artifact_cache_path(&config.cache_dir, &manifest.artifact)?;
 
     let bytes = load_cached_or_fetch_artifact(&client, &artifact_path, &manifest).await?;
