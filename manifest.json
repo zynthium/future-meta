@@ -1,0 +1,14 @@
+{
+  "schema_version": 4,
+  "data_version": "2026-10-31T11:08:54.804637291Z",
+  "generated_at": "2026-10-31T11:08:54.804637291Z",
+  "history_start": "2018-01-02T00:00:00+08:00",
+  "history_end": "2026-10-30T00:00:00+08:00",
+  "fee_effective_from": "2026-10-30T00:00:00+08:00",
+  "artifact": "latest.fmeta.zst",
+  "sha256": "b4fb0dcd04697258dd0862b1f7b4cdadb8aaa89198a6f559c71516a607649413",
+  "size": 138211,
+  "mirrors": [
+    "https://github.com/zynthium/future-meta/releases/download/data-20261031T110854Z-b4fb0dcd0469/latest.fmeta.zst"
+  ]
+}
