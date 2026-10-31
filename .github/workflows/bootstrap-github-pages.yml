@@ -51,9 +51,10 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/pages-bootstrap public
           gh release download "$BUNDLE_RELEASE" --repo "$GITHUB_REPOSITORY" \
-            --pattern github-pages-site.tar.gz --pattern github-pages-site.sha256 \
+            --pattern 'github-pages-site.part-*' --pattern github-pages-site.sha256 \
             --dir /tmp/pages-bootstrap
           cd /tmp/pages-bootstrap
+          cat github-pages-site.part-* > github-pages-site.tar.gz
           sha256sum --check github-pages-site.sha256
           tar -xzf github-pages-site.tar.gz --directory "$GITHUB_WORKSPACE/public"
       - uses: actions/configure-pages@v5
