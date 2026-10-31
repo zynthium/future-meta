@@ -2,8 +2,10 @@ name: update-fee-data
 
 on:
   schedule:
-    # 18:45 Asia/Shanghai, after daily settlement publication.
-    - cron: "45 10 * * *"
+    # Asia/Shanghai weekdays only. Offline calendar admission below decides
+    # whether tonight has a session or today is the first post-holiday morning.
+    - cron: "45 10 * * 1-5" # 18:45
+    - cron: "5 0 * * 1-5"   # 08:05
   workflow_dispatch:
 
 # A queued older run must restore the latest published seed after its predecessor.
@@ -18,9 +20,29 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  update:
+  admission:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    outputs:
+      should_update: ${{ steps.slot.outputs.should_update }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Test offline session admission
+        run: python -m unittest discover -s tests -p 'test_official_schedule.py'
+      - name: Decide without contacting exchanges
+        id: slot
+        run: python scripts/update_schedule.py --github-output "$GITHUB_OUTPUT"
+  update:
+    needs: admission
+    if: needs.admission.outputs.should_update == 'true'
+    runs-on: ubuntu-latest
+    # Admission closes at 08:20 / 20:00; a late job cannot run past opening.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -56,6 +78,7 @@ jobs:
           set -euo pipefail
           mkdir -p data/official-update/diagnostics
           xvfb-run -a python -u scripts/update_official.py \
+            --scheduled \
             --db "$DB_PATH" --inputs data/official-inputs.json \
             --work-dir data/official-update --public-dir public \
             --github-output "$GITHUB_OUTPUT" \

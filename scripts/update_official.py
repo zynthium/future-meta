@@ -12,6 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from package_official_inputs import package, restore
+from update_schedule import decide as scheduled_decision
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,10 +57,10 @@ def pending_announcements(db, out):
 
 
 def refresh_calendar(evidence, raw, start, through):
-    # Calendar is independently fetched and validated before interpreting empty
-    # intervals. HTTP errors are never evidence of a holiday.
+    # Reuse SHA-verified official calendar originals from the bootstrap. Only
+    # missing months need a request; HTTP errors are never evidence of a holiday.
     from collect_settle_params import RawStore, trading_days
-    store = RawStore(raw, None, False)
+    store = RawStore(raw, evidence, False)
     days = trading_days(start.isoformat(), through.isoformat(), store)
     rows = {}
     manifests = sorted(evidence.glob("cffex-calendar-*.tsv"))
@@ -120,11 +121,26 @@ def preserve_known_lifecycles(evidence, snapshots):
                 writer.writerows(rows)
 
 
+def finish(status, diagnostics, github_output):
+    (diagnostics / "update-status.json").write_text(json.dumps(status, indent=2))
+    if github_output:
+        with github_output.open("a") as output:
+            output.write(f"publish={str(status['publish']).lower()}\n")
+    print(json.dumps(status), flush=True)
+    return status
+
+
 def update(args):
     work, public = args.work_dir.resolve(), args.public_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
     diagnostics = work / "diagnostics"
     diagnostics.mkdir(exist_ok=True)
+    # Recheck after runner setup/queue delays, before touching maintenance data
+    # or importing collectors. The workflow's first gate alone is insufficient.
+    if getattr(args, 'scheduled', False):
+        gate = scheduled_decision()
+        if not gate['should_update']:
+            return finish({'publish': False, 'reason': gate['reason']}, diagnostics, args.github_output)
     prior = seed_through(args.db)
     pending_announcements(args.db, diagnostics / "seed-pending-announcements.json")
     through = args.through or completed_china_date()
@@ -151,7 +167,7 @@ def update(args):
             run(sys.executable, ROOT / "scripts/collect_settle_params.py",
                 "--start-date", status["from"], "--end-date", through,
                 "--output-dir", settle, "--raw-dir", raw, "--evidence-dir", evidence,
-                "--provenance-dir", sources, "--futures-only", "--forward-fill-cffex")
+                "--provenance-dir", sources, "--futures-only", "--forward-fill-cffex", "--workers", "1")
             common = [sys.executable, ROOT / "scripts/collect_contract_specs.py", "--evidence-dir", evidence,
                       "--settle-dir", settle, "--out", meta / "contracts_meta.csv",
                       "--versions-out", meta / "contract_spec_versions.csv"]
@@ -197,12 +213,7 @@ def update(args):
             if (ops / "future-meta.sqlite.gz").stat().st_size > 25 * 1024 * 1024:
                 raise ValueError("Seed exceeds Cloudflare Pages 25 MiB file limit")
             status["publish"] = True
-    (diagnostics / "update-status.json").write_text(json.dumps(status, indent=2))
-    if args.github_output:
-        with args.github_output.open("a") as output:
-            output.write(f"publish={str(status['publish']).lower()}\n")
-    print(json.dumps(status), flush=True)
-    return status
+    return finish(status, diagnostics, args.github_output)
 
 
 def main():
@@ -213,6 +224,7 @@ def main():
     parser.add_argument("--public-dir", type=Path, default=Path("public"))
     parser.add_argument("--through", type=date.fromisoformat)
     parser.add_argument("--github-output", type=Path)
+    parser.add_argument("--scheduled", action="store_true", help="Enforce offline session/time admission before any collection")
     update(parser.parse_args())
 
 

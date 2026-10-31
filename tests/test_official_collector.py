@@ -10,9 +10,26 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import collect_settle_params as collector
 import collect_contract_specs as specs
+import update_official as update
 
 
 class OfficialPostTransportTests(unittest.TestCase):
+    def test_retained_official_month_calendar_avoids_any_http_request(self):
+        body = b'<docs><doc><pubdate>2026-11-02</pubdate><title>normal</title></doc></docs>'
+        sha = hashlib.sha256(body).hexdigest()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence = root/'evidence'
+            evidence.mkdir()
+            (evidence/(sha+'.xml')).write_bytes(body)
+            url = 'http://www.cffex.com.cn/sj/jyrl/202611/index_6782.xml'
+            (evidence/'cffex-calendar-test.tsv').write_text(
+                f'month\tcanonical_url\tsha256\traw_path\n2026-11\t{url}\t{sha}\t{sha}.xml\n')
+            with patch.object(collector.requests, 'request', side_effect=AssertionError('unexpected exchange access')) as request:
+                self.assertEqual(update.refresh_calendar(evidence, root/'raw', update.date(2026, 11, 2),
+                                                         update.date(2026, 11, 2)), ['2026-11-02'])
+            request.assert_not_called()
+
     def test_cbi_browser_after_http_exhaustion_retains_original_bytes(self):
         body = b'{"report_date":"20261030","original":"\\u94dc"}\n'
         playwright = Mock()

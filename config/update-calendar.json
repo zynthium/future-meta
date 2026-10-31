@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "years": {
+    "2026": {
+      "closed_weekdays": [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-02-16",
+        "2026-02-17",
+        "2026-02-18",
+        "2026-02-19",
+        "2026-02-20",
+        "2026-02-23",
+        "2026-04-06",
+        "2026-05-01",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-06-19",
+        "2026-09-25",
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-05",
+        "2026-10-06",
+        "2026-10-07"
+      ],
+      "sources": [
+        {
+          "month": "2026-01",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202601/index_6782.xml",
+          "sha256": "9a008581ee696ef78d374d595e7fa97209342d489e7440d025a27d93354c6d89"
+        },
+        {
+          "month": "2026-02",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202602/index_6782.xml",
+          "sha256": "4e4e7353fd19c41ecea7f73c5463c5ec0608951026e38fbb90c2b287bcdd10f2"
+        },
+        {
+          "month": "2026-03",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202603/index_6782.xml",
+          "sha256": "6e577b559ea804959d6136e0dd0fcb37e14079be3fe65032b75104e327663029"
+        },
+        {
+          "month": "2026-04",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202604/index_6782.xml",
+          "sha256": "56941a7c19584438fdaabb174ad0f63155958d97fe083936a3b567b6e930bf4d"
+        },
+        {
+          "month": "2026-05",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202605/index_6782.xml",
+          "sha256": "65cf4379ab76a1c1e357a7d1ea47359bb93d8aa4b3f0bea8f0fc90e596e1425b"
+        },
+        {
+          "month": "2026-06",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202606/index_6782.xml",
+          "sha256": "b004efef68dfc9f6f8016508d0a514d750b20da40b3f768021b418e63ce3579b"
+        },
+        {
+          "month": "2026-07",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202607/index_6782.xml",
+          "sha256": "8a90cc3f7826cb1662db16de56da3ef4199a13242a81125e63437d1514d24c50"
+        },
+        {
+          "month": "2026-08",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202608/index_6782.xml",
+          "sha256": "65d0a0d330d6310ef514a7dbd52980e30b8cdafdd428586c6d43800df57f1983"
+        },
+        {
+          "month": "2026-09",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202609/index_6782.xml",
+          "sha256": "8a28e6f6bb910a2f166a27d110a0bfea80b169c3ed8dc20d1ae4bd5854d3acc5"
+        },
+        {
+          "month": "2026-10",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202610/index_6782.xml",
+          "sha256": "faec1936f334621d41e49be8ddffd1b58a2f7430d6ea4897f44a610cdd3cd5da"
+        },
+        {
+          "month": "2026-11",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202611/index_6782.xml",
+          "sha256": "7230696faf0f17b2516ff1e2738c05cb607db554194f42e733f5e74af9aa517b"
+        },
+        {
+          "month": "2026-12",
+          "canonical_url": "http://www.cffex.com.cn/sj/jyrl/202612/index_6782.xml",
+          "sha256": "f51e2bf73f5af780b38d7f2e8cad9984b319efe3f6f81838a491cd1fb5ffaae8"
+        }
+      ]
+    }
+  }
+}

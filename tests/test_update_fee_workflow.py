@@ -20,6 +20,12 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertIn('verify-collected --db "$DB_PATH"', self.workflow)
         self.assertIn('xvfb-run -a python', self.workflow)
         self.assertIn('playwright install --with-deps chrome', self.workflow)
+        self.assertIn('cron: "45 10 * * 1-5"', self.workflow)
+        self.assertIn('cron: "5 0 * * 1-5"', self.workflow)
+        self.assertIn('needs: admission', self.workflow)
+        self.assertIn("if: needs.admission.outputs.should_update == 'true'", self.workflow)
+        self.assertIn('scripts/update_schedule.py --github-output', self.workflow)
+        self.assertIn('--scheduled', self.workflow)
 
     def test_failures_preserve_diagnostics(self):
         self.assertIn('set -euo pipefail', self.workflow)

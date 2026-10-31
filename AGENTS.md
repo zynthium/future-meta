@@ -42,7 +42,8 @@
 - `scripts/update_official.py`：日历判断、增量采集、重建、合并、验证和打包 orchestration。
 - `scripts/package_official_inputs.py`：可移植官方元数据 bootstrap 的打包与摘要校验恢复。
 - `docs/deployment.md`：Cloudflare Pages 和 GitHub Actions 部署细节。
-- `.github/workflows/update-fee-data.yml`：每天北京时间 18:45 的定时更新 workflow。
+- `.github/workflows/update-fee-data.yml`：工作日夜盘前及节后早盘前，经离线日历门禁的定时更新 workflow。
+- `scripts/update_schedule.py`、`config/update-calendar.json`：不联网的时段准入与已核验官方休市日历。
 
 ## 环境与依赖
 
@@ -155,18 +156,21 @@ wrangler pages deploy public --project-name=future-meta --branch=main --commit-d
 GitHub Actions 工作流：
 
 - 文件：`.github/workflows/update-fee-data.yml`
-- 定时：`45 10 * * *`，对应北京时间 18:45。
+- 候选定时：`45 10 * * 1-5`（北京时间 18:45）、`5 0 * * 1-5`（08:05，仅节后首个早晨准入）。周末不触发。
 - 运行时：Node 24 actions，使用 `actions/checkout@v6`、`cloudflare/wrangler-action@v4` 和 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`。
 - 必需 secrets：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`。
 
 工作流顺序：
 
-1. 运行 Rust 和官方日更脚本检查。
-2. 恢复 Pages 中截止日一致的 SQLite seed 与官方输入 bootstrap，并验证摘要及采集关联。
-3. 独立读取官方交易日历，只采集截止日后缺失的六所参数与新日期合约基础信息。
-4. 严格生成生命周期和规格，构建短区间库，合并到新维护副本。
-5. 验证、导出、整理维护库空间，生成同截止日的新 seed 和 bootstrap；无新交易日时不部署。
-6. 部署新的 `public/`，保留失败与成功运行的诊断。公告扫描错误独立报告，不清空待复核队列。
+1. admission job 离线检查官方休市日历及时段；非更新窗口跳过整个更新 job。
+2. 运行 Rust 和官方日更脚本检查。
+3. 恢复 Pages 中截止日一致的 SQLite seed 与官方输入 bootstrap，并验证摘要及采集关联。
+4. 以 `--scheduled` 复核实际时段；复用已校验官方月历，仅缺失月份联网，串行采集缺失六所参数与新日期合约基础信息。
+5. 严格生成生命周期和规格，构建短区间库，合并到新维护副本。
+6. 验证、导出、整理维护库空间，生成同截止日的新 seed 和 bootstrap；无新交易日时不部署。
+7. 部署新的 `public/`，保留失败与成功运行的诊断。公告扫描错误独立报告，不清空待复核队列。
+
+官方访问准入为 18:30–20:00、08:00–08:20，更新 job 最长 30 分钟。门禁日历缺少年份时报错停止，不继承生命周期的假期假设。
 
 bootstrap 使用不超过 20 MiB 的分片；维护库 gzip 超过 Pages 25 MiB 限制时失败。
 新流程的源码配置不代表 bootstrap 已上线或工作流已经验收，发布状态必须读回确认。
