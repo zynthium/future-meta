@@ -18,7 +18,6 @@ import json
 import math
 import re
 import sys
-import urllib.request
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from html.parser import HTMLParser
@@ -331,14 +330,16 @@ def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir
             identity, body = evidence.register(exchange, row["canonical_url"], row["sha256"], row.get("raw_path", ""), Path(index).parent)
             cbi(exchange, observed, json.loads(body), identity)
 
+    # Offline metadata generation stays independent of HTTP dependencies.
+    if network_dates:
+        from collect_settle_params import fetch_with_retry
     # Network responses use exactly the same dated merge as cached responses.
     for observed in sorted(set(network_dates)):
         observed = iso_date(observed, True)
         for exchange, host in [("SHFE", "www.shfe.com.cn"), ("INE", "www.ine.cn")]:
             url = f"https://{host}/data/busiparamdata/future/ContractBaseInfo{observed.replace('-', '')}.dat"
-            request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                body = response.read()
+            response = fetch_with_retry(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            body = response.content
             digest = hashlib.sha256(body).hexdigest()
             data = json.loads(body)
             cbi(exchange, observed, data, digest)

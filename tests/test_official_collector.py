@@ -9,9 +9,31 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import collect_settle_params as collector
+import collect_contract_specs as specs
 
 
 class OfficialPostTransportTests(unittest.TestCase):
+    def test_contract_base_info_uses_same_retried_transport_and_retains_bytes(self):
+        day = '2026-10-30'
+        bodies = [json.dumps({'report_date': day, 'ContractBaseInfo': [
+            {'TRADINGDAY': day, 'INSTRUMENTID': symbol, 'OPENDATE': '2025-11-18',
+             'EXPIREDATE': '2026-11-16', 'ENDDELIVDATE': '2026-11-18'}]}).encode()
+                  for symbol in ('cu2611', 'sc2611')]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence = specs.Evidence(root)
+            with patch.object(collector, 'fetch_with_retry', side_effect=[Mock(content=b) for b in bodies]) as fetch:
+                rows = specs.load_lifecycles(evidence, [], [], [day], root/'cache')
+            self.assertEqual(set(rows), {'SHFE.cu2611', 'INE.sc2611'})
+            self.assertEqual(fetch.call_count, 2)
+            for call in fetch.call_args_list:
+                self.assertIn('ContractBaseInfo20261030.dat', call.args[0])
+                self.assertEqual(call.kwargs['timeout'], 30)
+            for body in bodies:
+                sha = hashlib.sha256(body).hexdigest()
+                self.assertEqual((root/'cache'/f'{sha}.dat').read_bytes(), body)
+                self.assertIn(sha, evidence.entries)
+
     def test_origin_timeout_retries_same_post_and_retains_successful_original(self):
         url = 'http://www.gfex.com.cn/u/interfacesWebTiFutAndOptSettle/loadList'
         form = {'trade_date': '20261030', 'variety': ''}
