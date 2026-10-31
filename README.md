@@ -6,10 +6,10 @@
 
 中国期货手续费历史数据维护与本地 as-of 查询库。
 
-`future-meta` 从交易所官方采集数据重建手续费、保证金和规格历史，维护 SQLite 并导出压缩二进制 artifact。客户端只需要下载 GitHub Pages 上的 `manifest.json` 和 `latest.fmeta.zst`，即可在本地完成高性能手续费查询。
+`future-meta` 从交易所官方采集数据重建手续费、保证金和规格历史，维护 SQLite 并导出压缩二进制 artifact。客户端读取 GitHub Pages 的 `manifest.json`，再下载其指向的 Release 附件，在本地完成高性能手续费查询。
 
 > [!IMPORTANT]
-> 0.6.0 将客户端与维护输入统一迁到 GitHub Pages，使用 schema 4 archive 和单包官方输入。旧托管地址与分片协议停止使用。线上格式与历史覆盖以 [manifest](https://zynthium.github.io/future-meta/manifest.json) 和 [覆盖报告](https://zynthium.github.io/future-meta/coverage.json) 为准。
+> SDK 与数据独立发布：v0.6.0 可通过固定 Pages manifest 获取新的 schema 4 数据 Release，无需随日更升级 SDK。维护 seed 和官方输入只供更新流程读取。线上覆盖以 [manifest](https://zynthium.github.io/future-meta/manifest.json) 和 [覆盖报告](https://zynthium.github.io/future-meta/coverage.json) 为准。
 
 ## 功能特性
 
@@ -28,8 +28,10 @@ flowchart LR
     exchange[交易所官方采集输出] --> daemon[future-meta-daemon]
     daemon --> sqlite[(SQLite 历史 seed)]
     sqlite --> export[导出 artifact]
-    export --> pages[GitHub Pages]
+    export --> releases[GitHub Release: 客户端 archive]
+    export --> pages[GitHub Pages: manifest 和维护输入]
     pages --> client[future-meta client]
+    releases --> client
     client --> app[交易/研究程序]
 ```
 
@@ -38,11 +40,11 @@ flowchart LR
 | Crate | 作用 |
 | --- | --- |
 | `future-meta` | 公开模型、archive 编解码、下载缓存、TqSdk symbol 解析和 as-of 查询 API |
-| `future-meta-daemon` | 官方采集输出重建与增量合并、证据审阅导入、SQLite 历史维护、GitHub Pages artifact 导出 |
+| `future-meta-daemon` | 官方采集输出重建与增量合并、证据审阅导入、SQLite 历史维护、客户端 artifact 导出 |
 
 ## 快速开始
 
-运行在线 smoke test，从 GitHub Pages 下载已发布 artifact 并查询 `SHFE.cu2607`：
+运行在线 smoke test，通过 Pages manifest 下载 Release 附件并查询 `SHFE.cu2607`：
 
 ```bash
 cargo run -p future-meta --features download --example online_smoke SHFE.cu2607 2026-06-08T10:48:06Z
@@ -330,14 +332,20 @@ gzip -c /tmp/future-meta-compacted.sqlite > public/ops/future-meta.sqlite.gz
 
 ## 部署
 
-当前发布目标是 GitHub Pages：
+客户端数据使用独立 `data-*` Release 附件；Pages 保留稳定入口和维护输入：
 
 - Production URL: `https://zynthium.github.io/future-meta`
 - Manifest: `https://zynthium.github.io/future-meta/manifest.json`
 - Daemon seed: `https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz`
 
-GitHub Actions workflow 位于 `.github/workflows/update-fee-data.yml`，通过官方 Pages actions 发布 `public/`。
-仓库 Pages 的发布源设为 GitHub Actions；发布 job 使用内置 `GITHUB_TOKEN`，授予 `pages: write`、`id-token: write`，无需配置外部云 secrets。
+GitHub Actions workflow 位于 `.github/workflows/update-fee-data.yml`。`public/` 是本地导出暂存目录；发布脚本先上传并核验 Release 附件，再将 manifest、coverage 和 `ops/` 整理到 `data/pages-site/`，通过官方 Pages actions 发布。
+发布 job 使用内置 `GITHUB_TOKEN` 的 `contents: write`、`pages: write`、`id-token: write`，无需外部云 secrets。数据 Release 设置 `--latest=false`，SDK 的 Latest 保持独立。
+
+只重新发布已核验数据、不访问交易所：
+
+```bash
+gh workflow run update-fee-data.yml --ref main -f republish_current=true
+```
 
 更多部署细节见 [docs/deployment.md](docs/deployment.md)。
 

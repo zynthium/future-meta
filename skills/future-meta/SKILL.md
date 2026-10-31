@@ -67,7 +67,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 要点：
 
 - 默认 manifest 是 `https://zynthium.github.io/future-meta/manifest.json`。
-- `load_or_fetch` 会下载并缓存已发布 artifact；archive 加载后，查询都在本地内存完成。
+- `load_or_fetch` 先读 Pages manifest，再下载并缓存其指向的固定版本数据 Release 附件；不读取维护 `ops/`，不依赖 SDK Release 的 Latest。
+- SDK v0.6.0 可加载后续兼容的每日数据，刷新时重新调用 `load_or_fetch` 并替换快照、重建 handle/cursor，无需随数据更新 SDK。
 - 客户端版本为 0.6.0，导出格式为 schema 4；共享字典与按合约变更序列只改变传输编码，不删除手续费、保证金或合约规格历史。
 - 默认托管地址已切到 GitHub Pages，旧地址停止服务。线上格式以 manifest 为准；Git 依赖不表示已发布到 crates.io。
 - 可用 `FUTURE_META_CACHE_DIR` 指定缓存目录。

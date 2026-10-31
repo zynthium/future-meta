@@ -96,6 +96,7 @@ python3 scripts/collect_contract_specs.py   --offline   --evidence-dir data/offi
 没有新交易日时不发布。六所参数与新日期 CBI 原件全部成功后，严格构建元数据和短区间
 重建库，调用 `update-collected` 合并历史，验证、导出、整理空间，并准备下一轮 bootstrap。
 输入 SQLite 不写入；使用新的 `--work-dir` 保存原件、候选元数据和诊断。
+`public/` 是导出暂存，archive 的下载 URL 尚未填写。`publish_data.py prepare` 会真实发布独立数据 Release，公开读回校验后准备 `data/pages-site/`；该目录仅包含 manifest、coverage 和维护 `ops/`。部署成功且线上内容匹配后，`cleanup` 只保留当前与被替换的数据版本，不删除 SDK Release。
 定时 workflow 先运行纯离线 `update_schedule.py`，再以 `update_official.py --scheduled` 复核实际时间；
 周末、休市日、普通早晨和节前无夜盘均不访问交易所。已保留月历复用 SHA 校验原件，定时补采串行执行。
 门禁时间、年度官方日历维护及节后补跑的数据范围见 [访问评估](../docs/update-access-and-hosting.md)。

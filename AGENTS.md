@@ -6,12 +6,12 @@
 
 工作区只有两个 crate：
 
-- `crates/future-meta`：客户端库。定义公开模型、压缩二进制 archive 编解码、TqSdk 风格 `symbol` 解析、as-of 查询索引，以及可选 `download` feature 的 GitHub Pages artifact 下载缓存。
+- `crates/future-meta`：客户端库。定义公开模型、压缩二进制 archive 编解码、TqSdk 风格 `symbol` 解析、as-of 查询索引，以及可选 `download` feature 的 Release artifact 下载缓存。
 - `crates/future-meta-daemon`：维护进程。负责从官方采集输出重建或增量合并 SQLite 历史库、审阅导入官方证据、导出 `manifest.json` 和 `latest.fmeta.zst`。
 
-部署架构是 GitHub Actions 官方参数增量更新，GitHub Pages 免费层静态分发。源码配置与线上验收状态应分别核实：
+部署架构是 GitHub Actions 官方增量更新、Release 分发客户端 archive、Pages 托管 manifest 和维护输入。源码配置与线上验收状态应分别核实：
 
-- 客户端下载 `https://zynthium.github.io/future-meta/manifest.json` 和 `latest.fmeta.zst`。
+- 客户端读取 `https://zynthium.github.io/future-meta/manifest.json`，再下载其中固定版本 Release 附件。
 - daemon seed 是 `https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz`，配套官方元数据 bootstrap 索引为 `ops/official-inputs.json`，只给后续维护使用，客户端不下载。
 
 ## 数据模型硬约束
@@ -41,6 +41,7 @@
 - `scripts/build_lifecycles.py`、`scripts/collect_contract_specs.py`：官方生命周期与规格生成。
 - `scripts/update_official.py`：日历判断、增量采集、重建、合并、验证和打包 orchestration。
 - `scripts/package_official_inputs.py`：可移植官方元数据 bootstrap 的打包与摘要校验恢复。
+- `scripts/publish_data.py`：先上传并校验数据 Release，再准备 Pages 目录；线上读回匹配后清理旧数据版本。
 - `docs/deployment.md`：GitHub Pages 和 GitHub Actions 部署细节。
 - `.github/workflows/update-fee-data.yml`：工作日夜盘前及节后早盘前，经离线日历门禁的定时更新 workflow。
 - `scripts/update_schedule.py`、`config/update-calendar.json`：不联网的时段准入与已核验官方休市日历。
@@ -138,14 +139,15 @@ cargo run -p future-meta-daemon -- export --db path/to/new.sqlite --out public
 
 ## 构建与部署
 
-`public/` 是 GitHub Pages 的部署目录，包含：
+`public/` 是本地导出暂存目录，包含 archive 和未填写下载 URL 的 manifest；不能直接部署。`publish_data.py prepare` 会真实发布数据 Release，仅在获发布授权后执行。
+
+实际 GitHub Pages 部署目录为 `data/pages-site/`，仅包含：
 
 - `manifest.json`
-- `latest.fmeta.zst`
-- `artifacts/*.fmeta.zst`
 - `coverage.json`
 - `ops/future-meta.sqlite.gz`
 - `ops/official-inputs.json` 及其引用的 `official-inputs.tar.gz`
+- `ops/publication.json`：当前/上一版数据 Release 记录，用于准确重跑和清理。
 
 通过 GitHub Actions 的 `configure-pages`、`upload-pages-artifact`、`deploy-pages` 官方 actions 部署，无需外部云 token。
 
@@ -154,7 +156,7 @@ GitHub Actions 工作流：
 - 文件：`.github/workflows/update-fee-data.yml`
 - 候选定时：`45 10 * * 1-5`（北京时间 18:45）、`5 0 * * 1-5`（08:05，仅节后首个早晨准入）。周末不触发。
 - 运行时：Node 24 actions，使用 `actions/checkout@v6`、`actions/upload-pages-artifact@v4`、`actions/deploy-pages@v4`。
-- 发布权限：内置 `GITHUB_TOKEN` 的 `pages: write` 和 `id-token: write`，环境名 `github-pages`。
+- 发布权限：内置 `GITHUB_TOKEN` 的 `contents: write`、`pages: write`、`id-token: write`；环境名 `github-pages`，checkout 不持久化凭据。
 
 工作流顺序：
 
@@ -164,14 +166,17 @@ GitHub Actions 工作流：
 4. 以 `--scheduled` 复核实际时段；复用已校验官方月历，仅缺失月份联网，串行采集缺失六所参数与新日期合约基础信息。
 5. 严格生成生命周期和规格，构建短区间库，合并到新维护副本。
 6. 验证、导出、整理维护库空间，生成同截止日的新 seed 和 bootstrap；无新交易日时不部署。
-7. 部署新的 `public/`，保留失败与成功运行的诊断。公告扫描错误独立报告，不清空待复核队列。
+7. 上传并校验客户端数据 Release，设置 `--latest=false`，再部署 `data/pages-site/` 的 manifest 和维护输入。
+8. 验证线上 manifest/发布记录一致后，仅保留当前与被替换的一版数据 Release。SDK Release 不参与此清理。
+
+手动 `republish_current=true` 只恢复线上输入并重新导出，跳过采集器；普通定时和手动运行仍受离线准入及 `--scheduled` 门禁约束。
 
 官方访问准入为 18:30–20:00、08:00–08:20，更新 job 最长 30 分钟。门禁日历缺少年份时报错停止，不继承生命周期的假期假设。
 
 bootstrap 仅接受 schema 2 单包传输索引；归档与 SQLite seed 截止日必须一致。Pages 站点总量限制为 1 GB，当前约 52.5 MiB。
 发布状态必须通过 Actions 完成状态和生产域名读回确认。
 
-当前架构为 GitHub Pages 静态分发；旧云托管地址和分片协议不提供兼容入口。
+当前架构为 Release 客户端数据附件与 Pages 静态索引/维护输入；旧云托管地址和分片协议不提供兼容入口。SDK 与每日数据独立，发布侧变更不要求更新客户端。
 
 ## 代码风格
 

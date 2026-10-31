@@ -24,16 +24,16 @@
 
 日参数按已完成交易日归档。节后早晨补跑不能证明当天尚未发布的结算参数、或下一个交易时段的费率已核验；这些需要对应官方发布证据。
 
-## GitHub 托管
+## Release 与 Pages 分工
 
-发布与维护输入统一使用 GitHub Pages，基址为 `https://zynthium.github.io/future-meta/`。客户端只读取 manifest 和 archive；更新 workflow 恢复同一站点的 SQLite seed 与官方输入单包。站点通过 GitHub Actions 发布，不把数据提交进 Git 历史。
+客户端 archive 作为独立 `data-<UTC时间>-<SHA前缀>` Release 的附件，使用固定版本 URL。Pages 基址 `https://zynthium.github.io/future-meta/` 保留 `manifest.json`、`coverage.json`，以及 `ops/` 下的 seed、官方输入索引/归档和发布记录；不保留 archive 副本或历史 artifact 目录。
 
-发布 job 使用官方 `configure-pages`、`upload-pages-artifact`、`deploy-pages` actions，以及内置 `GITHUB_TOKEN` 的 `pages: write`、`id-token: write` 权限。仓库 environment 为 `github-pages`，没有外部云凭据。
+SDK v0.6.0 继续读取同一个 Pages manifest，并跟随其中的 `mirrors` 下载 Release 附件、校验 SHA 和缓存。SDK 版本与每日数据版本独立；数据 Release 设置 `--latest=false`，SDK Release 保持 Latest。
 
-官方输入仅使用 schema 2 传输索引，指向 `official-inputs.tar.gz`，校验大小、整体 SHA、逐份原件 SHA 和截止日。旧托管地址、分片索引及回退下载均不保留。
+发布顺序为：验证本地输入，上传并从公开 URL 校验 Release 附件，然后通过一次 Pages 部署切换 manifest 与匹配的维护输入。部署后核验生产 manifest 和 `ops/publication.json`，只清理专用标记的数据 Release，保留当前及被替换的一版。该记录用于准确重跑，不按 Release 创建时间猜上一版，也不删除 SDK Release。
 
-当前完整发布约 52.5 MiB，满足 GitHub Pages 的 1 GB 站点上限；月带宽软限制为 100 GB，见 [Pages 配额](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)。部署方式见 [GitHub Pages 自定义 workflow](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)。
+发布 job 使用内置 `GITHUB_TOKEN` 的 `contents: write`、`pages: write`、`id-token: write`，checkout 不保存凭据。原始暂存目录为 `public/`；`scripts/publish_data.py prepare` 会真实创建 Release，并生成仅含 Pages 资产的 `data/pages-site/`。
 
-GitHub Releases 继续表示 SDK 版本，不用于日更数据的 latest 指针。Actions artifacts 仅用于诊断留存，不作为永久客户端下载端点。
+手动 `republish_current=true` 仅重新导出已有 Pages seed 并发布，不启动采集器；正常运行保持上文的交易所访问门禁。`ops/` 是公开但仅供维护使用的静态文件，不是私有存储。
 
-0.6.0 的客户端下载默认地址和 exporter mirror 均已切换；旧地址停止服务，使用方直接升级当前代码。当前部署验收记录见 [部署说明](deployment.md#验证与上线状态)。
+官方输入继续使用 schema 2 单包及完整 SHA 校验。维护资产约 52 MiB，客户端附件约 135 KiB，满足 [Pages 配额](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)。Pages 使用 [官方自定义 workflow](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)，不提交生成数据；Actions artifacts 只保存诊断。

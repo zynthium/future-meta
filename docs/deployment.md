@@ -1,6 +1,6 @@
 # future-meta Deployment
 
-部署架构使用 GitHub Actions 采集官方日参数，GitHub Pages 做静态分发和维护输入托管。2026-10-31 已完成迁移及新生产地址读回验收，维护数据已核验至 2026-10-30。
+部署架构使用 GitHub Actions 采集官方日参数，客户端 archive 放在版本化数据 Release，Pages 托管稳定 manifest、覆盖报告和维护输入。SDK 与每日数据独立，v0.6.0 下载器可直接跟随新附件 URL。
 
 ## 验证与上线状态
 
@@ -10,7 +10,7 @@
 
 覆盖边界继续保留：12 个合约没有日观测，461 个合约保留既有 2027 假期假设标签，待复核公告 `citics:826232` 未被清空。
 
-原云项目及仓库内两项旧云 secrets 已删除，旧托管地址、跳转和分片协议不再提供；一次性迁移 workflow 与临时 Release 已清理。生产只保留 GitHub Pages 和正式更新 workflow。
+原云项目及仓库内两项旧云 secrets 已删除，旧托管地址、跳转和分片协议不再提供；一次性迁移 workflow 与临时 Release 已清理。生产只保留 GitHub Release、Pages 和正式更新 workflow。
 
 ## 当前 GitHub Pages 部署
 
@@ -22,17 +22,18 @@
 
 ## 发布内容
 
-`public/` 会被部署到 GitHub Pages：
+`public/` 是导出暂存目录：archive 只在本地准备，下载 URL 由发布脚本核验后填写。实际部署目录 `data/pages-site/` 仅包含：
 
 - `manifest.json`
-- `latest.fmeta.zst`
-- `artifacts/*.fmeta.zst`
 - `ops/future-meta.sqlite.gz`
 - `coverage.json`
 - `ops/official-inputs.json`
 - `ops/official-inputs.tar.gz`
+- `ops/publication.json`：当前与上一版数据 Release 的发布记录。
 
-`ops/future-meta.sqlite.gz` 是 daemon 的 SQLite 历史 seed，只供 GitHub Actions 后续更新使用；client 不下载它。
+`latest.fmeta.zst` 上传到 `data-<UTC时间>-<SHA前缀>` Release 附件；Pages manifest 的 `mirrors` 指向固定版本 URL，不使用 SDK 的 `/releases/latest/download/`。数据 Release 始终设置 `--latest=false`，SDK 的 Latest 独立保留。
+
+`ops/future-meta.sqlite.gz` 和官方输入只供后续更新使用；客户端不下载。`ops/` 仍是公开静态资源，并不提供私有存储。
 
 ## 历史官方证据暂存
 
@@ -255,7 +256,7 @@ cargo run -p future-meta-daemon -- export \
 gzip -c path/to/review-copy.sqlite > public/ops/future-meta.sqlite.gz
 ```
 
-0.5.0 导出 schema 4；使用方应先升级到 0.5.0，再加载 schema 4 artifact。新客户端兼容 schema 1/2/3；0.4.0 不能读取 schema 4。输出 manifest 与版本 artifact 名均由 `SCHEMA_VERSION` 生成，下载缓存仍按 SHA-256 自动更新。格式与迁移步骤见 [archive 格式说明](archive-format.md)。本地代码和导出不代表已部署。
+客户端 archive 仍为 schema 4，SDK v0.6.0 不变。每次刷新读取固定 Pages manifest，按其中的版本化 Release URL 与 SHA 获取数据；兼容格式的每日数据更新不要求升级 SDK。格式说明见 [archive 格式说明](archive-format.md)。本地导出不会自动发布。
 
 `export` 以只读方式打开数据库，并拒绝孤儿 fee evidence、倒置观察时间、非法或重叠
 区间、以及早于合约上市日的费率版本。只有这些检查通过后，才可在取得发布授权后部署
@@ -286,9 +287,19 @@ cargo run -p future-meta-daemon -- compact-seed \
 ## GitHub Pages 发布权限
 
 仓库 Settings → Pages 的发布源设为 GitHub Actions。部署使用 `actions/configure-pages@v5`、`actions/upload-pages-artifact@v4` 和 `actions/deploy-pages@v4`。
-发布 job 绑定 `github-pages` environment，使用内置 `GITHUB_TOKEN` 的 `pages: write`、`id-token: write` 权限，无外部云 secrets。
+发布 job 绑定 `github-pages` environment，使用内置 `GITHUB_TOKEN` 的 `contents: write`（数据 Release）、`pages: write`、`id-token: write`；checkout 不持久化凭据，无外部云 secrets。
 
-官方更新正常生成新数据时，同一次部署发布客户端文件和维护 seed/bootstrap；没有新数据时不部署。生成的 `public/` 不提交到 Git 历史。
+先创建带专用标记的数据 Release 并上传客户端 archive，发布后从公开附件 URL 读回验证 SHA；完成后才准备 Pages manifest、coverage、维护 seed/bootstrap 和发布记录。附件失败时不切换 Pages。
+
+同一次 Pages 部署切换 manifest 与维护输入。部署后仅在线上 manifest 和发布记录都匹配时清理旧版本，保留当前数据 Release 与实际被替换的一版；SDK Release 不参与清理。发布记录使失败后的重跑仍能保留正确的上一版。生成目录不提交到 Git 历史。
+
+手动重发当前已核验数据（包括周末），不访问交易所：
+
+```bash
+gh workflow run update-fee-data.yml --ref main -f republish_current=true
+```
+
+普通运行与定时运行继续使用原离线门禁。重发入口只恢复 Pages 现有输入并本地导出，采集步骤明确跳过。
 
 ## 数据安全边界
 

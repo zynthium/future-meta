@@ -20,19 +20,11 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
     let conn = crate::db::connect_readonly(db)?;
     ensure_only_official_fee_versions(&conn)?;
     crate::db::validate_fee_history_integrity(&conn)?;
-    std::fs::create_dir_all(out.join("artifacts"))?;
+    std::fs::create_dir_all(out)?;
     let archive = load_archive(&conn, OffsetDateTime::now_utc())?;
     let bytes = encode_archive_bytes(&archive)?;
     let sha = sha256_hex(&bytes);
-    let data_version = archive
-        .generated_at
-        .replace([':', '+'], "")
-        .replace('-', "");
-    let artifact_name =
-        format!("artifacts/future-meta-fees-v{SCHEMA_VERSION}-{data_version}.fmeta.zst");
-
     std::fs::write(out.join("latest.fmeta.zst"), &bytes)?;
-    std::fs::write(out.join(&artifact_name), &bytes)?;
 
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION,
@@ -44,7 +36,8 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         artifact: "latest.fmeta.zst".to_owned(),
         sha256: sha,
         size: bytes.len() as u64,
-        mirrors: vec!["https://zynthium.github.io/future-meta/latest.fmeta.zst".to_owned()],
+        // Publication supplies the verified, immutable Release asset URL.
+        mirrors: Vec::new(),
     };
     std::fs::write(
         out.join("manifest.json"),

@@ -21,7 +21,7 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertIn('pages: write', self.workflow)
         self.assertIn('id-token: write', self.workflow)
         self.assertIn('actions/upload-pages-artifact@v4', self.workflow)
-        self.assertRegex(self.workflow, r"- name: Deploy to GitHub Pages\s+if: steps\.refresh\.outputs\.publish == 'true'\s+uses: actions/deploy-pages@v4")
+        self.assertRegex(self.workflow, r"- name: Deploy to GitHub Pages\s+if: steps\.release\.outputs\.ready == 'true'\s+uses: actions/deploy-pages@v4")
         self.assertIn('verify-collected --db "$DB_PATH"', self.workflow)
         self.assertIn('xvfb-run -a python', self.workflow)
         self.assertIn('playwright install --with-deps chrome', self.workflow)
@@ -31,6 +31,15 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertIn("if: needs.admission.outputs.should_update == 'true'", self.workflow)
         self.assertIn('scripts/update_schedule.py --github-output', self.workflow)
         self.assertIn('--scheduled', self.workflow)
+
+    def test_release_precedes_pages_and_cleanup_follows_deploy(self):
+        self.assertIn('contents: write', self.workflow)
+        self.assertIn('persist-credentials: false', self.workflow)
+        self.assertIn('path: data/pages-site', self.workflow)
+        self.assertLess(self.workflow.index('scripts/publish_data.py prepare'), self.workflow.index('uses: actions/upload-pages-artifact@v4'))
+        self.assertLess(self.workflow.index('uses: actions/deploy-pages@v4'), self.workflow.index('scripts/publish_data.py cleanup'))
+        self.assertIn('if: inputs.republish_current != true', self.workflow)
+        self.assertIn('republish_current:', self.workflow)
 
     def test_failures_preserve_diagnostics(self):
         self.assertIn('set -euo pipefail', self.workflow)

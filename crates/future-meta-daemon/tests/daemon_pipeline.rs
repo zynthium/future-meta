@@ -3648,10 +3648,8 @@ fn exports_archive_loadable_by_client() {
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(out.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["artifact"], "latest.fmeta.zst");
-    assert_eq!(
-        manifest["mirrors"],
-        serde_json::json!(["https://zynthium.github.io/future-meta/latest.fmeta.zst"])
-    );
+    assert_eq!(manifest["mirrors"], serde_json::json!([]));
+    assert!(!out.join("artifacts").exists());
     assert_eq!(manifest["fee_effective_from"], fee_effective_from);
     assert_eq!(manifest["history_end"], fee_effective_from);
 

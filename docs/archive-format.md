@@ -32,7 +32,7 @@ schema 4 的私有字段顺序定义在 `compact_archive.rs`。后续改变该�
 
 ## 导出与下载
 
-daemon 的 manifest 和版本 artifact 路径均使用 `SCHEMA_VERSION`，例如 `artifacts/future-meta-fees-v4-<version>.fmeta.zst`。稳定下载入口仍为 `manifest.json` 和 `latest.fmeta.zst`。Actions 已使用 manifest 中的版本生成文件名，无需另设固定 schema 号。
+daemon 导出本地 `latest.fmeta.zst` 和暂存 manifest，schema 来自 `SCHEMA_VERSION`。发布脚本将 archive 上传到独立 `data-*` Release，再把固定版本附件 URL 写入 Pages manifest 的 `mirrors`。Pages 不保存 archive 副本或历史目录；SDK 仍以 manifest SHA 验证和缓存，数据版本不与 SDK 版本绑定。
 
 下载器接受已支持的 manifest 版本，按原 SHA-256 校验并更新缓存。旧缓存的 schema 3 在新客户端中仍可加载；线上切换后 SHA-256 改变时自动重新下载。不要求用户删除缓存，也不下载维护用 SQLite。
 
