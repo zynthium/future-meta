@@ -10,6 +10,17 @@ CALENDAR = Path(__file__).resolve().parents[1] / 'config/update-calendar.json'
 CHINA = ZoneInfo('Asia/Shanghai')
 
 
+def access_deadline(gate):
+    if not gate['should_update']:
+        raise ValueError('No admitted official access window')
+    evaluated = datetime.fromisoformat(gate['evaluated_at']).astimezone(CHINA)
+    return evaluated.replace(
+        hour=20 if gate['slot'] == 'evening' else 8,
+        minute=0 if gate['slot'] == 'evening' else 20,
+        second=0, microsecond=0,
+    ).isoformat()
+
+
 def weekday_neighbor(day, direction):
     day += timedelta(days=direction)
     while day.weekday() >= 5:

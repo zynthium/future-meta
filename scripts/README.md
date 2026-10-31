@@ -92,7 +92,7 @@ python3 scripts/collect_contract_specs.py   --offline   --evidence-dir data/offi
 
 ## 基于 archive 的官方日更
 
-`update_official.py` 从同一数据分支 commit 读取 manifest 和检查点，下载上一版客户端 archive，串行补齐所有缺失交易日。`incremental_inputs.py` 使用小规则配置、官方现行合约目录及新日期 CBI 生成完整参数；`update-archive` 验证并追加业务变化，不使用 SQLite 或 bootstrap。
+`update_official.py` 从同一数据分支 commit 读取 manifest 和检查点，下载上一版客户端 archive，串行补齐所有缺失交易日。`incremental_inputs.py` 使用已批准的小规则配置及新日期 CBI 生成参数；日更只访问日度参数、CBI 和必要的中金所参数目录/快照，不检查全量规格文档。`update-archive` 验证并追加业务变化，不使用 SQLite 或 bootstrap。
 
 ```bash
 xvfb-run -a python3 scripts/update_official.py \
@@ -103,6 +103,6 @@ xvfb-run -a python3 scripts/update_official.py \
 
 `data_branch.py` 原子更新 manifest 与小状态，记录尝试、成功和六所检查点。`publish_data.py` 上传并核验不可变附件、公开读回及安全清理。无变化保持原 archive 和 manifest。
 
-`catalog_guard.py` 校验现行合约入口，不把旧文档仍可下载当作没有新规则。新文档、历史同日修订、无法解析目录、日期错误或数据缺口均停止，需要本地核对。来源文档按 URL 去重并支持条件请求；官方窗口与重试上限见 [部署说明](../docs/deployment.md)。
+`audit_official_rules.py` 是独立手动维护入口：校验全量文档并调用 `catalog_guard.py` 检查现行合约入口，在 `data/rule-audits/<日期>-<时段>/` 写出单独带时间的 `rule-audit.json`，不发布、不推进日更检查点。同一时段原子占用一次，运行中或失败后重复触发均跳过。可用 `--previous <成功报告>` 复用条件请求与目录选择绑定，仍受官方日历和访问窗口限制。新文档、原文修订或无法解析目录均失败，需本地审阅。每日参数不含乘数/最小变动价位，日更状态明确记录规格为已批准规则复用；规格修订需另行维护。详见 [部署说明](../docs/deployment.md#独立规则维护)。
 
 `migrate_archive_state.py` 是一次性本地迁移工具：读取有完整 SHA 清单的封存，从已批准业务 archive、审计状态和官方清单提取小状态与规则。它不联网、不发布。原始证据仅在本地保存；CI 临时原件不长期上传。

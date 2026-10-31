@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import data_branch as branch
 import publish_data
-from update_schedule import decide as scheduled_decision
+from update_schedule import access_deadline, decide as scheduled_decision
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -110,14 +110,8 @@ def update(args):
     )
     # Only official transports read this deadline; GitHub publication may finish
     # after the collection window without contacting an exchange again.
-    deadline = evaluated.replace(
-        hour=20 if gate["slot"] == "evening" else 8,
-        minute=0 if gate["slot"] == "evening" else 20,
-        second=0,
-        microsecond=0,
-    )
     previous_deadline = os.environ.get("FUTURE_META_ACCESS_DEADLINE")
-    os.environ["FUTURE_META_ACCESS_DEADLINE"] = deadline.isoformat()
+    os.environ["FUTURE_META_ACCESS_DEADLINE"] = access_deadline(gate)
     published = False
     try:
         args.work_dir.mkdir(parents=True, exist_ok=False)

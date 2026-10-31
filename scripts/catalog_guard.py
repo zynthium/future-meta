@@ -37,7 +37,7 @@ class Links(HTMLParser):
 
 
 def fetch_catalog(url):
-    from incremental_inputs import fetch_source
+    from audit_official_rules import fetch_source
 
     return fetch_source({"url": url}, {})
 

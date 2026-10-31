@@ -6,11 +6,9 @@ import hashlib
 import json
 import math
 import re
-import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import official_access
 from update_schedule import CALENDAR
 
 
@@ -69,57 +67,6 @@ def specification(rules, symbol, observed):
             f"Missing/conflicting approved specification: {symbol} {observed}"
         )
     return max(matching, key=lambda r: r["valid_from"])
-
-
-def fetch_source(source, previous):
-    headers = {"User-Agent": "future-meta-official-update"}
-    if previous.get("etag"):
-        headers["If-None-Match"] = previous["etag"]
-    elif previous.get("last_modified"):
-        headers["If-Modified-Since"] = previous["last_modified"]
-    for attempt in range(3):
-        try:
-            response = official_access.request(
-                "GET", source["url"], headers=headers, timeout=15
-            )
-            if response.status_code in (200, 304):
-                return response
-            raise RuntimeError(
-                f"Official rule HTTP {response.status_code}: {source['url']}"
-            )
-        except official_access.AccessWindowClosed:
-            raise
-        except (OSError, RuntimeError) as error:
-            if attempt == 2:
-                raise RuntimeError(
-                    f"Official rule unavailable: {source['url']}"
-                ) from error
-            time.sleep((2, 8)[attempt])
-
-
-def check_rule_sources(rules, previous):
-    versions = {}
-    for source in rules["sources"]:
-        old = previous.get(source["url"], {})
-        # Validators belong to the exact approved digest, not just the URL.
-        response = fetch_source(
-            source, old if old.get("sha256") == source["sha256"] else {}
-        )
-        if response.status_code == 304:
-            if old.get("sha256") != source["sha256"]:
-                raise ValueError("Unbound official source validator")
-            versions[source["url"]] = dict(old)
-        else:
-            if hashlib.sha256(response.content).hexdigest() != source["sha256"]:
-                raise ValueError(
-                    f"Official rule changed; local review required: {source['url']}"
-                )
-            versions[source["url"]] = {
-                "sha256": source["sha256"],
-                "etag": response.headers.get("ETag"),
-                "last_modified": response.headers.get("Last-Modified"),
-            }
-    return versions
 
 
 def cffex_daily(baseline, snapshots, days, *, catalog_verified):
@@ -371,14 +318,18 @@ def collect_interval(archive, state, rules, days, work):
     store = collector.RawStore(work / "raw", None, False)
     previous = next(iter(state["checked_through"].values()))
     source_versions = copy.deepcopy(state["source_versions"])
-    source_versions["rules"] = check_rule_sources(
-        rules, source_versions.get("rules", {})
-    )
-    import catalog_guard
-
-    source_versions["catalogs"] = catalog_guard.check(
-        rules, source_versions["rules"], source_versions.get("catalogs", {})
-    )
+    # Daily parameter checks cannot verify fields absent from those responses.
+    # Full rule/document discovery is an explicit, separate maintenance command.
+    source_versions.pop("rules", None)
+    source_versions.pop("catalogs", None)
+    source_versions["specifications"] = {
+        "mode": "approved_rules",
+        "approved_through": rules["approved_through"],
+        "rules_sha256": hashlib.sha256(
+            json.dumps(rules, sort_keys=True).encode()
+        ).hexdigest(),
+        "live_check_performed": False,
+    }
     records = []
     lifecycle_by_day = {}
     for day in days:

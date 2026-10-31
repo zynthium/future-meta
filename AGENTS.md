@@ -19,7 +19,7 @@
 - archive 是已批准业务历史基线；保留合约 ID 和既有版本，仅在业务变化时追加/关闭区间。
 - 缺失交易日必须按顺序补齐，不能只比较最新截面而漏掉中间变化与恢复。
 - 新合约使用明确适用的官方规则，不能借用邻近合约或品种默认值。未知费率与零值严格区分。
-- 规格、生命周期及已授权假期假设必须保留标签。新原件/目录变化无法解释时停止，先在本地审阅小规则配置。
+- 规格、生命周期及已授权假期假设必须保留标签。日更复用已批准规格，不声称当日重新核验；全量原件/规格目录由独立手动审阅入口核对，发现无法解释的变化时停止审阅，先在本地修订小规则配置。
 - 中金所可在核对官方目录及现有快照 SHA 后延用有效参数；历史同日期原文修订不得忽略。
 - 原件正文与完整逐日观测不属于在线检查点。CI 原件只作本次临时输入，不作为长期 artifact 上传。
 
@@ -28,10 +28,11 @@
 `update-state.json` 区分：
 
 - `last_attempt`：最近开始/结束、结果、时段和 run URL；硬终止可能留 `running`。
-- `last_success_at`：最近完整检查成功，无业务变化也推进。
-- `checked_through`：六所完整核验到的交易日，原子推进。
+- `last_success_at`：最近日度参数检查成功，无业务变化也推进，不表示规格文档重新核验。
+- `checked_through`：六所日度参数完整核验到的交易日，原子推进。
 - `archive_sha256` 和当前/上一版 Release：检查点对应的业务基线。
 - `exceptions` / `source_versions`：必要未知、假设和当前来源版本。
+- `source_versions.specifications`：规则配置 SHA、批准截止日与 `live_check_performed=false`；独立规则审阅时间写在本地报告，不随日更推进。
 
 无业务变化时 archive 字节、SHA、生成时间、manifest 和数据 Release 不变，只更新状态。失败只记录尝试，不推进成功检查点。`manifest.history_end` 不是核验截止日。
 
@@ -40,7 +41,7 @@
 - `crates/future-meta-daemon/src/archive_update.rs`：完整六所批次校验及 archive 版本合并。
 - `scripts/update_official.py`：时段复核、状态、采集、合并与发布。
 - `scripts/incremental_inputs.py`：日期、规格、生命周期及官方采集适配。
-- `scripts/catalog_guard.py`：现行合约入口/规则检查，不能用旧附件仍可访问证明没有新规则。
+- `scripts/audit_official_rules.py`：独立手动规则审阅，调用 `catalog_guard.py` 检查现行入口；不由日更触发，不发布，不推进日更检查点。不能用旧附件仍可访问证明没有新规则。
 - `scripts/official_access.py`：HTTP 重定向及浏览器逐请求截止控制。
 - `scripts/data_branch.py`：同一 commit 读取索引/状态，Git API 非强制提交。
 - `scripts/publish_data.py`：不可变附件发布、公开 SHA 验证和退役数据清理。
@@ -60,6 +61,7 @@
 - 每次 HTTP 重定向和浏览器网络请求复核截止；不得通过手动日更绕过窗口。
 - 当前准入日历只涵盖 2026，缺少年份停止；生命周期假设不能当成采集日历。
 - 实际采集包含多份官方文件和浏览器资源，不能把一轮更新说成一个 HTTP 请求。
+- 日更不检查全量规则文档/规格目录；中金所日度参数目录及基准快照校验仍必需。独立手动规则审阅同样遵循日历和窗口门禁。
 
 ## 常用检查
 

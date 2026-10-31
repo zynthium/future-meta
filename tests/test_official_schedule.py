@@ -49,6 +49,16 @@ class OfficialScheduleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'timezone'):
             schedule.decide(datetime(2026, 10, 30, 18, 45))
 
+    def test_shared_deadline_matches_each_admitted_window(self):
+        for at, expected in (
+            ('2026-11-02T18:45', '2026-11-02T20:00:00+08:00'),
+            ('2026-10-08T08:05', '2026-10-08T08:20:00+08:00'),
+        ):
+            with self.subTest(at=at):
+                self.assertEqual(schedule.access_deadline(self.plan(at)), expected)
+        with self.assertRaisesRegex(ValueError, 'No admitted'):
+            schedule.access_deadline(self.plan('2026-11-01T18:45'))
+
     def test_missing_calendar_fails_without_guessing_holidays(self):
         with tempfile.TemporaryDirectory() as temp:
             calendar = Path(temp)/'calendar.json'

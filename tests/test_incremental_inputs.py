@@ -7,6 +7,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import incremental_inputs as inputs
 import official_access as access
+import audit_official_rules as rule_audit
 
 
 class InputTests(unittest.TestCase):
@@ -92,9 +93,9 @@ class InputTests(unittest.TestCase):
             },
         )()
         source = {"url": "https://www.shfe.com.cn/rule.pdf", "sha256": "a" * 64}
-        with patch.object(inputs, "fetch_source", return_value=response):
+        with patch.object(rule_audit, "fetch_source", return_value=response):
             with self.assertRaisesRegex(ValueError, "changed"):
-                inputs.check_rule_sources({"sources": [source]}, {})
+                rule_audit.check_rule_sources({"sources": [source]}, {})
 
     def test_cffex_carry_requires_verified_catalog_and_respects_expiry(self):
         baseline = [
