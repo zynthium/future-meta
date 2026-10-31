@@ -1,11 +1,16 @@
 # future-meta Deployment
 
-部署架构使用 GitHub Actions 采集官方日参数，GitHub Pages 免费层做静态分发和维护输入托管。维护数据已核验至 2026-10-30；新地址上线状态见下文验收记录。
+部署架构使用 GitHub Actions 采集官方日参数，GitHub Pages 做静态分发和维护输入托管。2026-10-31 已完成迁移及新生产地址读回验收，维护数据已核验至 2026-10-30。
 
 ## 验证与上线状态
 
-0.6.0 将发布与维护输入统一迁到 GitHub Pages。迁移不保留旧托管地址、域名跳转或旧分片传输协议。
-当前源码使用新地址；首次部署及生产读回结果须单独验收。
+0.6.0 将发布与维护输入统一迁到 GitHub Pages。[首发 workflow 41185460063](https://github.com/zynthium/future-meta/actions/runs/41185460063) 已通过完整测试、迁移包校验及官方 Pages actions 部署，全程未访问交易所。
+
+从新生产地址读回的 archive 大小、SHA-256 与 manifest 完全一致；SQLite seed 与原先已验收维护库逐字节一致，完整性 `ok`，保留 1,469,432 条观测、7,036 个合约、7,447 个规格版本。单包 bootstrap 的 519 份官方原件、截止日及整体 SHA 均通过校验；0.6.0 客户端以全新缓存完成默认下载并查询成功。
+
+覆盖边界继续保留：12 个合约没有日观测，461 个合约保留既有 2027 假期假设标签，待复核公告 `citics:826232` 未被清空。
+
+原云项目及仓库内两项旧云 secrets 已删除，旧托管地址、跳转和分片协议不再提供；一次性迁移 workflow 与临时 Release 已清理。生产只保留 GitHub Pages 和正式更新 workflow。
 
 ## 当前 GitHub Pages 部署
 
