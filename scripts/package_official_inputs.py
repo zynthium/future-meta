@@ -10,9 +10,10 @@ import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import urljoin, urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 PART_SIZE = 20 * 1024 * 1024
+USER_AGENT = "future-meta-daemon/0.5 (+https://github.com/zynthium/future-meta)"
 MANIFEST_PATTERNS = ("*-product-spec-*.tsv", "cffex-product-metadata.tsv",
                      "*-contract-base-info-*.tsv", "*-lifecycle-*.tsv", "cffex-calendar-*.tsv")
 GFEX_CALENDAR = "f58f1b90262132b875cb47fa52163b044b87e63b15bfd78c401169c734685a26.json"
@@ -181,7 +182,7 @@ def fetch(url, out):
         raise ValueError("Official bootstrap URL must use HTTPS without credentials")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with urlopen(url, timeout=60) as response:
+    with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=60) as response:
         out.write_bytes(response.read())
     transport = transport_manifest(out)
     for part in transport["parts"]:
@@ -189,7 +190,7 @@ def fetch(url, out):
         destination = urlparse(part_url)
         if (destination.scheme, destination.netloc, str(Path(destination.path).parent)) != (parsed.scheme, parsed.netloc, str(Path(parsed.path).parent)):
             raise ValueError("Bootstrap part escaped Pages ops location")
-        with urlopen(part_url, timeout=120) as response:
+        with urlopen(Request(part_url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:
             body = response.read(PART_SIZE + 1)
         if len(body) != part["size"] or digest(body) != part["sha256"]:
             raise ValueError(f"Downloaded bootstrap part checksum mismatch: {part['file']}")

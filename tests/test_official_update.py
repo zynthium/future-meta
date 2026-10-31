@@ -9,6 +9,7 @@ import unittest
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
@@ -17,6 +18,26 @@ import update_official as update
 
 
 class OfficialUpdateTests(unittest.TestCase):
+    def test_fetch_identifies_manifest_and_parts_to_pages(self):
+        body = b'official archive bytes'
+        sha = hashlib.sha256(body).hexdigest()
+        transport = {'schema': 1, 'through': '2026-10-30', 'archive_sha256': sha,
+                     'archive_size': len(body), 'parts': [{'file': 'part-000', 'size': len(body), 'sha256': sha}]}
+        base = 'https://future-meta.pages.dev/ops/'
+        requested = []
+
+        def pages(request, timeout):
+            if not hasattr(request, 'get_header') or request.get_header('User-agent') != bundle.USER_AGENT:
+                raise HTTPError(base, 403, 'Forbidden', {}, io.BytesIO(b'error code: 1010'))
+            requested.append(request.full_url)
+            return io.BytesIO(json.dumps(transport).encode() if request.full_url.endswith('official-inputs.json') else body)
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(bundle, 'urlopen', side_effect=pages):
+            output = Path(temp) / 'official-inputs.json'
+            self.assertEqual(bundle.fetch(base + output.name, output), transport)
+            self.assertEqual((output.parent / 'part-000').read_bytes(), body)
+        self.assertEqual(requested, [base + 'official-inputs.json', base + 'part-000'])
+
     def test_completed_china_day_before_and_after_daily_publication(self):
         tz = ZoneInfo('Asia/Shanghai')
         self.assertEqual(update.completed_china_date(datetime(2026, 10, 30, 18, 29, tzinfo=tz)), date(2026, 10, 29))
