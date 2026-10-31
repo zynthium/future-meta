@@ -110,6 +110,7 @@ def fetch_with_retry(
     timeout: int = 15,
     max_retries: int = 5,
     backoff: float = 1.0,
+    data: Optional[dict] = None,
 ) -> requests.Response:
     hdr = {"User-Agent": USER_AGENT}
     if headers:
@@ -117,7 +118,7 @@ def fetch_with_retry(
 
     for attempt in range(1, max_retries + 1):
         try:
-            r = requests.request(method, url, headers=hdr, timeout=timeout)
+            r = requests.request(method, url, headers=hdr, timeout=timeout, data=data)
             if r.status_code == 200:
                 return r
             else:
@@ -317,8 +318,7 @@ class RawStore:
             response = fetch_with_retry(url)
         else:
             # Requests data, including trade_date, is retained with the exact response.
-            response = requests.post(url, data=form, headers={"User-Agent": USER_AGENT}, timeout=30)
-            response.raise_for_status()
+            response = fetch_with_retry(url, method="POST", data=form, timeout=30)
         body = response.content
         save_key = key
         # Do not overwrite the legacy combined INE wrapper while adding its daily raw.
@@ -1067,7 +1067,7 @@ def main():
                     collect_dce(expected, str(staged), store, args.futures_only)
                 else:
                     collect_parallel(expected, exchange, str(staged), store,
-                                     min(args.workers, 3) if exchange == "GFEX" else args.workers,
+                                     1 if exchange == "GFEX" else args.workers,
                                      args.futures_only)
                 # Validate complete daily coverage; a partially populated old day
                 # never suppresses a fresh collection attempt.
