@@ -1,10 +1,16 @@
 # future-meta Deployment
 
-部署架构使用 GitHub Actions 采集官方日参数，Cloudflare Pages 免费层做静态分发和维护输入托管。下文描述当前源码流程；新日更工作流及 bootstrap 尚需正式发布与线上验收，不能由本地改动推断已上线。
+部署架构使用 GitHub Actions 采集官方日参数，Cloudflare Pages 免费层做静态分发和维护输入托管。2026-10-31 已完成正式增量发布及生产域名读回验收，官方历史更新至 2026-10-30。
 
 ## 验证与上线状态
 
-2026-10-31 的大商所 GitHub runner 专项验证在独立验证分支上完成 3/3，记录见 [Actions run 41115763927](https://github.com/zynthium/future-meta/actions/runs/41115763927)。这份结果验证大商所采集在 runner 上可运行，不代表正式 `update-fee-data` 工作流已发布、完整增量链路已在线验收或新的 bootstrap 已部署。正式发布应另行触发工作流并读回 Pages 的 manifest、覆盖报告及配套维护输入。
+大商所 GitHub runner 专项验证在独立验证分支上完成 3/3，记录见 [Actions run 41115763927](https://github.com/zynthium/future-meta/actions/runs/41115763927)。
+
+正式 [Actions run 41176848864](https://github.com/zynthium/future-meta/actions/runs/41176848864) 在源码 `963670d` 上通过完整测试、六所官方采集、2026-10-20 至 2026-10-30 增量合并、导出和 Pages 部署。上期所 2026-10-27 合约元数据的普通 HTTP 重试耗尽后，Chrome 后备取得同一官方文件并通过严格校验。部署记录为 [9ee0d52e](https://9ee0d52e.future-meta.pages.dev)。
+
+生产域名 `https://future-meta.pages.dev` 读回验证：schema 4、历史截止 2026-10-30，archive 大小及 SHA-256 与线上 manifest 一致；维护 SQLite 完整性为 `ok`。全部 1,469,432 条观测、7,036 个合约及 7,447 个规格版本与本地审阅数据的业务字段零差异。bootstrap 分片、原件 SHA 和截止日均通过校验，`citics:826232` 待复核公告状态保留。
+
+覆盖报告仍明确记录 12 个合约无观测、461 个合约保留既有的 2027 假期假设标签；这些边界不会被宣称为官方确认的完整覆盖。
 
 ## 当前 Cloudflare 部署
 
@@ -188,7 +194,7 @@ SQLite gzip 和下一次运行所需的 bootstrap。bootstrap 自动切成 20 Mi
 不会因官方日参数更新被标记为已解决，也不使用旧二十四小时公告门槛阻断官方日更。
 公告扫描失败会留下显式审计错误报告，既有待复核队列继续保留；不会阻断已验证的官方日参数更新。工作流以 concurrency 串行恢复最新线上 seed，避免并发旧运行覆盖新历史。
 所有运行（包括失败）上传诊断、原始输入、元数据缺口/来源报告和覆盖报告，保留三天；DCE 浏览器在 Linux
-上由 Chrome + `xvfb-run` 运行。源码改动不代表 bootstrap 已发布或线上工作流已验收。
+上由 Chrome + `xvfb-run` 运行。后续源码改动仍须独立验证发布结果，当前验收记录见上文。
 
 手动验证同一流程，不触发部署：
 
