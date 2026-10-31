@@ -13,6 +13,39 @@ import collect_contract_specs as specs
 
 
 class OfficialPostTransportTests(unittest.TestCase):
+    def test_cbi_browser_after_http_exhaustion_retains_original_bytes(self):
+        body = b'{"report_date":"20261030","original":"\\u94dc"}\n'
+        playwright = Mock()
+        browser = playwright.chromium.launch.return_value
+        response = browser.new_page.return_value.goto.return_value
+        response.status, response.body.return_value = 200, body
+        manager = Mock()
+        manager.__enter__ = Mock(return_value=playwright)
+        manager.__exit__ = Mock(return_value=False)
+        url = 'https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261030.dat'
+        with patch.object(collector, 'fetch_with_retry', side_effect=RuntimeError('HTTP exhausted')), \
+                patch.object(collector, 'get_chrome_path', return_value=None), \
+                patch('playwright.sync_api.sync_playwright', return_value=manager):
+            self.assertEqual(specs.fetch_cbi_body(url), body)
+        browser.new_page.return_value.goto.assert_called_once_with(url, wait_until='load', timeout=30000)
+        browser.close.assert_called_once()
+
+    def test_cbi_browser_failure_closes_browser_and_does_not_return_error_body(self):
+        playwright = Mock()
+        browser = playwright.chromium.launch.return_value
+        response = browser.new_page.return_value.goto.return_value
+        response.status = 503
+        manager = Mock()
+        manager.__enter__ = Mock(return_value=playwright)
+        manager.__exit__ = Mock(return_value=False)
+        with patch.object(collector, 'fetch_with_retry', side_effect=RuntimeError('HTTP exhausted')), \
+                patch.object(collector, 'get_chrome_path', return_value=None), \
+                patch('playwright.sync_api.sync_playwright', return_value=manager):
+            with self.assertRaisesRegex(RuntimeError, 'browser request failed'):
+                specs.fetch_cbi_body('https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261030.dat')
+        response.body.assert_not_called()
+        browser.close.assert_called_once()
+
     def test_contract_base_info_uses_same_retried_transport_and_retains_bytes(self):
         day = '2026-10-30'
         bodies = [json.dumps({'report_date': day, 'ContractBaseInfo': [

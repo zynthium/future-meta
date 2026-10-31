@@ -15,6 +15,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import math
 import re
 import sys
@@ -256,6 +257,34 @@ def read_table(path):
         yield from csv.DictReader(source, delimiter="\t" if path.suffix == ".tsv" else ",")
 
 
+def fetch_cbi_body(url):
+    # Keep offline metadata generation independent of HTTP/browser dependencies.
+    from collect_settle_params import fetch_with_retry, get_chrome_path
+
+    try:
+        return fetch_with_retry(url, timeout=30).content
+    except RuntimeError:
+        logging.warning("CBI HTTP retries exhausted; reading the same official URL with Chrome: %s", url)
+
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        options = {"headless": True}
+        chrome = get_chrome_path()
+        if chrome:
+            options["executable_path"] = chrome
+        else:
+            options["channel"] = "chrome"
+        browser = playwright.chromium.launch(**options)
+        try:
+            response = browser.new_page().goto(url, wait_until="load", timeout=30000)
+            if response is None or response.status != 200:
+                raise RuntimeError(f"Official CBI browser request failed: {url}")
+            return response.body()
+        finally:
+            browser.close()
+
+
 def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir):
     records = {}
 
@@ -330,16 +359,12 @@ def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir
             identity, body = evidence.register(exchange, row["canonical_url"], row["sha256"], row.get("raw_path", ""), Path(index).parent)
             cbi(exchange, observed, json.loads(body), identity)
 
-    # Offline metadata generation stays independent of HTTP dependencies.
-    if network_dates:
-        from collect_settle_params import fetch_with_retry
     # Network responses use exactly the same dated merge as cached responses.
     for observed in sorted(set(network_dates)):
         observed = iso_date(observed, True)
         for exchange, host in [("SHFE", "www.shfe.com.cn"), ("INE", "www.ine.cn")]:
             url = f"https://{host}/data/busiparamdata/future/ContractBaseInfo{observed.replace('-', '')}.dat"
-            response = fetch_with_retry(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-            body = response.content
+            body = fetch_cbi_body(url)
             digest = hashlib.sha256(body).hexdigest()
             data = json.loads(body)
             cbi(exchange, observed, data, digest)
