@@ -3,8 +3,8 @@
 use crate::{
     db,
     hash::{row_rule_hash, row_state_hash},
+    model::AllowedRow,
     official::validate_official_canonical_url,
-    parse::AllowedRow,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};

@@ -1,7 +1,7 @@
 //! Import retained SHFE monthly parameters paired with close-today notices.
 
 use crate::db;
-use crate::parse::AllowedRow;
+use crate::model::AllowedRow;
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use rusqlite::OptionalExtension;

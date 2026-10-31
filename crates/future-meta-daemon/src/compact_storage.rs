@@ -66,6 +66,37 @@ pub(crate) fn normalize(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Materialize canonical provenance rows before incremental imports.
+pub(crate) fn expand_provenance(conn: &Connection) -> Result<()> {
+    for (table, id, column, parent) in [
+        (
+            "rebuild_contract_provenance",
+            "contract_id",
+            "provenance_json",
+            "contracts",
+        ),
+        (
+            "rebuild_spec_provenance",
+            "spec_id",
+            "source_json",
+            "contract_spec_versions",
+        ),
+    ] {
+        if is_table(conn, table)? {
+            continue;
+        }
+        let temporary = format!("{table}_expanded");
+        conn.execute_batch(&format!(
+            "create table {temporary}({id} integer primary key references {parent}(id), {column} text not null check(json_valid({column})));
+             insert into {temporary} select * from {table};
+             drop view {table};
+             drop table {table}_parts;
+             alter table {temporary} rename to {table};"
+        ))?;
+    }
+    Ok(())
+}
+
 fn literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }

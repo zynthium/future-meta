@@ -1,5 +1,7 @@
 # Future Meta Fee History Implementation Plan
 
+> 已归档：本文是 2026-06-04 的初版设计/实施计划，保留原始架构与历史背景。第三方采集、旧 CLI、模块路径及 workflow 步骤均已被官方采集重建与增量流程取代，不应继续照此实施。当前操作请使用 [部署说明](../../deployment.md)、[官方重建说明](../../official-rebuild.md) 和仓库根目录 `AGENTS.md`。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the first usable `future-meta` system: daemon-maintained futures fee-rule history, compressed binary archive publishing, and local high-performance client as-of queries using TqSdk-style symbols.

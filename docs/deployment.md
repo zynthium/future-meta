@@ -1,6 +1,10 @@
 # future-meta Deployment
 
-使用 GitHub Actions 做定时更新，Cloudflare Pages 免费层做静态分发和 daemon seed 托管。
+部署架构使用 GitHub Actions 采集官方日参数，Cloudflare Pages 免费层做静态分发和维护输入托管。下文描述当前源码流程；新日更工作流及 bootstrap 尚需正式发布与线上验收，不能由本地改动推断已上线。
+
+## 验证与上线状态
+
+2026-10-31 的大商所 GitHub runner 专项验证在独立验证分支上完成 3/3，记录见 [Actions run 41115763927](https://github.com/zynthium/future-meta/actions/runs/41115763927)。这份结果验证大商所采集在 runner 上可运行，不代表正式 `update-fee-data` 工作流已发布、完整增量链路已在线验收或新的 bootstrap 已部署。正式发布应另行触发工作流并读回 Pages 的 manifest、覆盖报告及配套维护输入。
 
 ## 当前 Cloudflare 部署
 
@@ -17,6 +21,8 @@
 - `latest.fmeta.zst`
 - `artifacts/*.fmeta.zst`
 - `ops/future-meta.sqlite.gz`
+- `coverage.json`
+- `ops/official-inputs.json` 及其引用的 gzip 分片
 
 `ops/future-meta.sqlite.gz` 是 daemon 的 SQLite 历史 seed，只供 GitHub Actions 后续更新使用；client 不下载它。
 
@@ -68,7 +74,7 @@ cargo run -p future-meta-daemon -- import-cffex-metadata \
   --snapshot-dir data/official-evidence
 ```
 
-官方证据库与 `data/future-meta.sqlite` 完全隔离，且不属于 Pages 发布物。满足完整、连续、人工复核条件前，禁止把候选材料写入生产历史。具体标准见 [官方历史证据流程](official-evidence.md)。
+公告候选证据 SQLite 与 `data/future-meta.sqlite` 完全隔离，且不属于 Pages 发布物；日更所需的已验证官方元数据原件则通过下文 bootstrap 发布。满足完整、连续、人工复核条件前，禁止把候选材料写入生产历史。具体标准见 [官方历史证据流程](official-evidence.md)。
 
 完整交易所参数表可作为较低等级 `official_parameter` 证据，无需配对公告，但必须保留
 原始字节、核对官方 URL 与 SHA-256，并明确三腿手续费及单位。CZCE 审阅副本导入：
@@ -123,7 +129,7 @@ cargo run -p future-meta-daemon -- apply-verified-official \
   --evidence-db data/official-evidence.sqlite
 ```
 
-该命令不在定时 workflow 中。必须先完成[证据门控更新验证](evidence-gated-update-validation.md)规定的二十四个月回放与十四天影子运行；在此之前不得对生产 SQLite、发布产物或 Cloudflare 部署执行该操作。
+该命令不在定时 workflow 中。必须先在隔离副本核对完整三腿、原件摘要、生效区间和审阅结果，再按用户授权发布。旧的[证据门控更新验证](evidence-gated-update-validation.md)已归档，其第三方候选回放、影子运行与二十四小时公告门槛不适用于当前官方参数日更。
 
 审阅副本导出前必须通过严格覆盖审计：
 
@@ -141,43 +147,66 @@ cargo run -p future-meta-daemon -- audit-coverage \
 
 ## GitHub 定时更新
 
-定时任务每天北京时间 18:45 运行，对应 GitHub Actions cron `45 10 * * *`。
+每天北京时间 18:45 (`45 10 * * *`) 运行。更新源为六所官方逐日参数，不再使用
+9qihuo/Jin10 候选触发历史写入或冻结客户端 artifact。CI 只补缺失区间，不从零采集历史。
 
-GitHub Actions 不从零构建历史库。每次运行：
+启动前需要把同一观测截止日的两份文件发布到 Pages `ops/`：
 
-生产 seed 已迁移为交易所采集输出全新重建库。`rebuild_summary.source` 必须为
-`fresh_collector_outputs_no_seed`；工作流不再恢复或迁移到 V18 旧库。
+- `future-meta.sqlite.gz`：通过 `verify-collected` 的官方采集重建维护库。
+- `official-inputs.json`：可移植的官方规格/生命周期/CBI/日历清单及其原始证据；不含 SQLite
+  或旧手续费 CSV。bootstrap 清单包含截止日、每个文件 SHA-256、显式生命周期假设配置。JSON 传输索引引用同一 Pages `ops/` 中不超过 20 MiB 的 gzip 分片，并记录分片及完整 archive 的摘要和大小。
 
-1. 下载并解压 `ops/future-meta.sqlite.gz`。
-2. 运行 `verify-collected`，验证采集来源标记、逐日观察关联、保证金、官方 URL、版本证据、SQLite 完整性和外键，并生成 `public/coverage.json`。
-3. 运行 `scan-announcements` 发现候选，周五额外扫描华泰。
-4. `update-latest --require-seed` 只读诊断。无差异时导出当前官方库；需审阅的候选冻结现有 artifact。抓取或解析错误仍使工作流失败。
-5. 只有通过检查的 seed 可重新压缩并部署。任何失败都不回退旧 SQLite。
+本地生成 bootstrap（示例中的假期参数仅复用已授权的 2027 配置）：
 
-`coverage.json` 公布观测起止日、上市日至首条观测的未知区间、无日记录合约数和推算到期日数。
-逐条来源一致不表示每个合约自上市起完整覆盖；未知区间保持无值。2026-10-18 发布覆盖
-2020-01-02 至 2026-10-15，16 个合约存在观测前空档，147 个合约没有日参数记录，
-426 个到期日使用用户授权的日历推断。不能宣称这些日期均为交易所已确认。
+```bash
+python3 scripts/package_official_inputs.py package \
+  --evidence-dir data/official-evidence \
+  --provenance data/contracts_meta_provenance.json \
+  --through 2026-10-30 --assume-2027-holidays \
+  --out public/ops/official-inputs.json
+```
 
-最新截面来自 9qihuo 总页 HTML 的 `table#heyuetbl`。页面上的 Excel 按钮是 `tableToExcel('heyuetbl', ...)` 生成，不存在稳定的 `heyue=all` CSV 下载端点，因此 daemon 直接解析 HTML 表格。此日更路径只诊断候选，不为历史回填或发布提供证据。
+工作流恢复并校验两份输入，要求截止日一致。从 `rebuild_summary.through` 的次日开始，
+独立获取官方 CFFEX 月度交易日历，跳过有证据的休市日；日历请求失败直接失败。没有新交易日
+时正常结束、不部署。18:30 中国时间前只允许采到前一天，之后可请求当天已完成的结算数据；
+任何交易所尚未发布完整参数都会失败，保留诊断，不以旧日参数伪装当天结果。
 
-Jin10 HTTP 成功且响应结构正常、但请求窗口没有快照时，按零份佐证继续候选诊断。
-变化候选仍必须有同日匹配或官方证据，否则延期并冻结客户端档案；无变化时不需要外部佐证。
-不会扩大近期窗口或借用旧快照。非正常状态、网络错误、解析错误，以及有快照却无可用行仍失败。
-日志明确记录请求日期及无快照状态。
+脚本采集六所缺失区间，保留逐份原件和 SHA，按新增交易日抓取 SHFE/INE ContractBaseInfo，
+用原有官方规则再生生命周期，然后严格生成规格元数据和短区间 `rebuild-collected` 库。
+`update-collected --db SEED --delta DELTA --out NEW` 合并到新维护副本，保留旧历史及公告状态，
+冲突、缺失元数据、已观测且未到期合约在后续交易日缺行都会硬失败；首次观测前的未知区间继续保留。
+随后执行 `verify-collected`、`export`、`compact-seed`，生成新的
+SQLite gzip 和下一次运行所需的 bootstrap。bootstrap 自动切成 20 MiB 分片；维护库 gzip 超过 Pages 25 MiB 上限就中止。
 
-Jin10 只作为 9qihuo 最新截面候选的同日交叉确认，不会独立写入生产费率版本，也不能作为 9qihuo 失败时的自动替代源。固定值/成交金额比例切换、平昨/平今字段置换、零费率切换、单腿超过两倍的跳变、超过 12 条的同批变更，以及疑似 `0.1 元`占位或统一 `+0.01/+0.09/+0.1` 固定费偏移都会在交叉核验阶段明确标记风险；但即使普通候选双源一致，也必须进入交易所官方证据与人工审阅流程。实时路径不会以产品众数或固定费偏移规则覆写已有费率。
+既有 `user_assumed_holiday_calendar`、`assumed_lifecycle` 和 `official_only=false` 标签继续保留。
+只有 bootstrap 显式记录既有授权时才启用 `--assume-2027-holidays`；不会自动新增年份假期。
+当官方日历尚不足以生成新合约生命周期时，更新失败，待补充原件后重跑。
 
-新上市 symbol 也需要完整官方手续费、生命周期和规格证据，随后仅在审阅副本创建前向生效的具体合约记录。Jin10 覆盖只能辅助核对，不能代替官方证据。
+`scan-announcements` 是补充审计，待复核候选保留在维护库及 `pending-announcements.json`，
+不会因官方日参数更新被标记为已解决，也不使用旧二十四小时公告门槛阻断官方日更。
+公告扫描失败会留下显式审计错误报告，既有待复核队列继续保留；不会阻断已验证的官方日参数更新。工作流以 concurrency 串行恢复最新线上 seed，避免并发旧运行覆盖新历史。
+所有运行（包括失败）上传诊断、原始输入、元数据缺口/来源报告和覆盖报告，保留三天；DCE 浏览器在 Linux
+上由 Chrome + `xvfb-run` 运行。源码改动不代表 bootstrap 已发布或线上工作流已验收。
 
-archive schema v2 导出 `contract_spec_versions`，用于查询历史乘数和最小变动价位。可在审阅副本显式运行已审阅的交易所规格迁移：
+手动验证同一流程，不触发部署：
+
+```bash
+xvfb-run -a python3 scripts/update_official.py \
+  --db data/future-meta.sqlite --inputs data/official-inputs.json \
+  --work-dir /tmp/future-meta-official-update --public-dir /tmp/future-meta-pages
+```
+
+每次使用新的 work-dir。失败诊断位于其 `diagnostics/`；原始输入库保持只读。
+`coverage.json` 保留未知观察区间和推算到期日计数，逐条来源一致不等于自上市日起完整覆盖。
+
+当前 schema 4 完整导出规格历史，客户端可查询历史乘数和最小变动价位。旧审阅库可显式运行已审阅的交易所规格迁移；官方采集重建库的规格来源应通过采集流程维护：
 
 ```bash
 cargo run -p future-meta-daemon -- migrate-contract-specs \
   --db path/to/review-copy.sqlite
 ```
 
-当前内置迁移覆盖 DCE 棕榈油/豆油、GFEX 碳酸锂和 INE 集运欧线的官方调整，并逐合约保留有效期和公告 URL。schema v2 客户端继续兼容读取 schema v1 artifact。
+当前内置迁移覆盖 DCE 棕榈油/豆油、GFEX 碳酸锂和 INE 集运欧线的官方调整，并逐合约保留有效期和公告 URL。该兼容维护命令不替代 `collect_contract_specs.py` 的完整来源与覆盖校验。
 
 ## 人工审阅发布
 
@@ -247,8 +276,8 @@ cargo run -p future-meta-daemon -- compact-seed \
 - 不提交原始证据文件或 `data/official-evidence.sqlite`。
 - 不提交 `public/` 生成物。
 - 不存储或发布价格、涨跌停、每手保证金、每跳盈亏、开平合计手续费等派生字段。
-- latest HTML 中不是普通期货合约的代码会跳过，例如源站的月均价类 `l2607F`。
-- latest HTML 不提供上市日、到期日、每手数量、最小跳动时，daemon 优先从 seed 补齐；seed 不认识的新 symbol 必须通过上述受控准入，否则整个发布失败，绝不静默跳过。
+- 官方参数中的期权和 DCE 月均价 F 合约不属于当前普通期货重建范围，不宽松转换为普通合约。
+- 新合约缺少官方生命周期、规格或参数时保留诊断并失败，不能从旧 SQLite、相邻合约或品种默认值补齐，也不能静默跳过。
 
 ## Client URL
 

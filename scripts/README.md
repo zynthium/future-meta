@@ -1,6 +1,6 @@
 # 交易所官方数据采集
 
-两个脚本独立生成官方结算参数、合约元数据和规格历史，供后续从零构建数据库使用。采集链路不读取 `future-meta.sqlite`，也不使用第三方手续费数据补值。
+采集脚本独立生成官方结算参数、合约元数据和规格历史，供从零重建或短区间日更使用。采集链路不读取 `future-meta.sqlite`，也不使用第三方手续费数据补值。
 
 ## 来源与输出
 
@@ -88,3 +88,28 @@ python3 scripts/collect_contract_specs.py   --offline   --evidence-dir data/offi
 `data/`、官方缓存与生成报告不提交到 Git。本脚本修复不自动替换数据库，也不发布 artifact。
 
 完整新库导入入口为 daemon 的 `rebuild-collected`，会导入多空保证金与日内开仓费并按变化生成版本，见 [官方数据重建说明](../docs/official-rebuild.md)。旧的单所手续费审阅导入命令不等同于这一完整重建入口。
+
+
+## 官方日更与可移植输入
+
+`update_official.py` 只采集维护库截止日后的官方交易日，使用独立日历证据判断周末/休市。
+没有新交易日时不发布。六所参数与新日期 CBI 原件全部成功后，严格构建元数据和短区间
+重建库，调用 `update-collected` 合并历史，验证、导出、整理空间，并准备下一轮 bootstrap。
+输入 SQLite 不写入；使用新的 `--work-dir` 保存原件、候选元数据和诊断。
+
+```bash
+python3 scripts/update_official.py --db data/future-meta.sqlite \
+  --inputs data/official-inputs.json --work-dir /tmp/official-daily \
+  --public-dir /tmp/official-public
+```
+
+Linux 需安装 `requests`、Playwright Chrome 并通过 `xvfb-run -a` 执行，以支持大商所浏览器。
+`--through YYYY-MM-DD` 可显式限制截止日；默认中国时间 18:30 前使用前一天，之后使用当天。
+交易所尚未发布、网络错误、缺少规格/生命周期原件或合并冲突均失败，不将错误当作休市。
+
+`package_official_inputs.py package` 根据官方清单与元数据来源账本验证原件 SHA，重写相对
+`raw_path` 并打包。包中保留产品规格清单、生命周期清单、CBI 索引、官方日历及原件，
+不含业务 SQLite、旧参数 CSV、凭据。`restore --archive FILE --out EMPTY_DIR` 校验逐文件 SHA
+和安全路径后恢复。包和维护库必须有同一 `through`。JSON 索引列出同目录 20 MiB 分片的名称、SHA、大小和整体摘要，每个发布文件均低于 Pages 的 25 MiB 限制。
+显式假期配置写入 bootstrap，日更只继承该配置，不自行引入新假期假设。详细运行与部署边界见
+[部署说明](../docs/deployment.md#github-定时更新)。

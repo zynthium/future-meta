@@ -4,9 +4,8 @@ use future_meta_daemon::announcement::{
     parse_htfc_article_html, scan_announcements,
 };
 use future_meta_daemon::db::{
-    announcement_health, connect, ensure_schema, record_announcement_candidate,
-    record_announcement_document, record_announcement_source_success,
-    resolve_announcement_candidates_for_official_urls,
+    connect, ensure_schema, record_announcement_candidate, record_announcement_document,
+    record_announcement_source_success, resolve_announcement_candidates_for_official_urls,
 };
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -289,7 +288,7 @@ fn candidate_with_distinct_official_url_remains_unresolved() {
 }
 
 #[test]
-fn announcement_health_rejects_candidate_unresolved_for_more_than_a_day() {
+fn old_pending_candidate_remains_available_as_an_audit_record() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("announcements.sqlite");
     let conn = connect(&db_path).unwrap();
@@ -307,10 +306,22 @@ fn announcement_health_rejects_candidate_unresolved_for_more_than_a_day() {
     )
     .unwrap();
 
-    let error = announcement_health(&conn, "2026-08-23T00:30:00+08:00").unwrap_err();
-
-    assert!(error.to_string().contains("unresolved fee candidate"));
-    assert!(error.to_string().contains("825999"));
+    let pending: (String, Option<String>) = conn
+        .query_row(
+            "select article_id,resolved_at from announcement_candidates",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(pending, ("825999".to_owned(), None));
+    let last_scan: String = conn
+        .query_row(
+            "select last_success_at from announcement_source_state where source='citics'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(last_scan, "2026-08-23T00:00:00+08:00");
 }
 
 #[derive(Default)]

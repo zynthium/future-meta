@@ -2,139 +2,85 @@ name: update-fee-data
 
 on:
   schedule:
-    # 18:45 Asia/Shanghai.
+    # 18:45 Asia/Shanghai, after daily settlement publication.
     - cron: "45 10 * * *"
   workflow_dispatch:
+
+# A queued older run must restore the latest published seed after its predecessor.
+concurrency:
+  group: future-meta-production-official-update
+  cancel-in-progress: false
 
 env:
   DB_PATH: data/future-meta.sqlite
   SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
-  SEED_ARCHIVE: public/ops/future-meta.sqlite.gz
+  INPUTS_URL: https://future-meta.pages.dev/ops/official-inputs.json
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v6
-
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
-
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install official collector dependencies
+        run: |
+          python -m pip install requests playwright
+          python -m playwright install --with-deps chrome
       - name: Test
         run: |
           cargo fmt --all -- --check
           cargo check --workspace --all-targets
           cargo test --workspace
           cargo test -p future-meta --features download
-
-      - name: Restore Cloudflare daemon seed
+          python -m unittest discover -s tests -p 'test_*official*.py'
+          python -m unittest discover -s tests -p 'test_update_fee_workflow.py'
+      - name: Restore matching official seed and metadata inputs
         run: |
           set -euo pipefail
-          mkdir -p "$(dirname "$DB_PATH")"
+          mkdir -p data
           curl --fail --location --show-error "$SEED_URL" --output /tmp/future-meta.sqlite.gz
+          python scripts/package_official_inputs.py fetch --url "$INPUTS_URL" --out data/official-inputs.json
           gzip -dc /tmp/future-meta.sqlite.gz > "$DB_PATH"
-          cargo run -p future-meta-daemon -- inspect --db "$DB_PATH"
-
-      - name: Verify collected daemon seed
-        run: |
-          set -euo pipefail
-          mkdir -p public
-          cargo run -q -p future-meta-daemon -- verify-collected \
-            --db "$DB_PATH" --out public/coverage.json
-
-      - name: Refresh data
+          cargo run -q -p future-meta-daemon -- verify-collected --db "$DB_PATH" --out data/restored-coverage.json
+      - name: Increment official daily history
         id: refresh
-        timeout-minutes: 20
         run: |
           set -euo pipefail
-          if [ "$(TZ=Asia/Shanghai date +%u)" = "5" ]; then
-            cargo run -p future-meta-daemon -- scan-announcements --db "$DB_PATH" --reconcile-htfc
-          else
-            cargo run -p future-meta-daemon -- scan-announcements --db "$DB_PATH"
-          fi
-          set +e
-          cargo run -p future-meta-daemon -- update-latest --db "$DB_PATH" --require-seed 2> /tmp/update-latest.stderr
-          refresh_status=$?
-          set -e
-          if [ "$refresh_status" -eq 0 ]; then
-            echo "fee_publish=true" >> "$GITHUB_OUTPUT"
-          else
-            cat /tmp/update-latest.stderr >&2
-            if ! grep -Eq "latest fee candidates before history write|require staged verified official evidence before history write|new concrete contracts require staged official fee evidence" /tmp/update-latest.stderr; then
-              echo "latest refresh failed unexpectedly (exit=$refresh_status)" >&2
-              exit "$refresh_status"
-            fi
-            echo "latest fee changes deferred: waiting for official evidence"
-            echo "fee_publish=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "seed_publish=true" >> "$GITHUB_OUTPUT"
-
-      - name: Validate Jin10 secondary source
-        if: steps.refresh.outputs.fee_publish == 'true'
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          SNAPSHOT_DATE="$(TZ=Asia/Shanghai date +%F)"
-          cargo run -p future-meta-daemon -- validate-jin10 \
-            --db "$DB_PATH" \
-            --from "$SNAPSHOT_DATE" \
-            --to "$SNAPSHOT_DATE" \
-            --out /tmp/jin10-validation.json
-          cat /tmp/jin10-validation.json
-
-      - name: Export Pages artifact
-        if: steps.refresh.outputs.fee_publish == 'true'
-        run: cargo run -p future-meta-daemon -- export --db "$DB_PATH" --out public
-
-      - name: Prepare frozen Pages artifacts
-        if: steps.refresh.outputs.fee_publish != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p public/artifacts
-          curl --fail --location --show-error \
-            https://future-meta.pages.dev/manifest.json \
-            --output public/manifest.json
-          artifact="$(jq -er '.artifact' public/manifest.json)"
-          expected_sha="$(jq -er '.sha256' public/manifest.json)"
-          expected_size="$(jq -er '.size' public/manifest.json)"
-          if [ "$artifact" != "latest.fmeta.zst" ] \
-            || ! [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] \
-            || ! [[ "$expected_size" =~ ^[0-9]+$ ]]; then
-            echo "invalid frozen Pages manifest" >&2
-            exit 1
-          fi
-          curl --fail --location --show-error \
-            "https://future-meta.pages.dev/$artifact" \
-            --output "public/$artifact"
-          actual_sha="$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)"
-          actual_size="$(stat -c%s public/latest.fmeta.zst)"
-          if [ "$actual_sha" != "$expected_sha" ] || [ "$actual_size" != "$expected_size" ]; then
-            echo "frozen Pages artifact checksum mismatch" >&2
-            exit 1
-          fi
-          data_version="$(jq -er '.data_version' public/manifest.json)"
-          archive_version="$(printf '%s' "$data_version" | tr -d ':+-')"
-          schema_version="$(jq -er '.schema_version' public/manifest.json)"
-          cp public/latest.fmeta.zst "public/artifacts/future-meta-fees-v$schema_version-$archive_version.fmeta.zst"
-
-      - name: Publish updated daemon seed
-        if: steps.refresh.outputs.seed_publish == 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p "$(dirname "$SEED_ARCHIVE")"
-          gzip -9 -c "$DB_PATH" > "$SEED_ARCHIVE"
-
-      - name: Compute artifact hash
-        if: steps.refresh.outputs.fee_publish == 'true'
-        id: artifact
-        run: echo "sha=$(sha256sum public/latest.fmeta.zst | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-
+          mkdir -p data/official-update/diagnostics
+          xvfb-run -a python -u scripts/update_official.py \
+            --db "$DB_PATH" --inputs data/official-inputs.json \
+            --work-dir data/official-update --public-dir public \
+            --github-output "$GITHUB_OUTPUT" \
+            2>&1 | tee data/official-update/diagnostics/update.log
+      - name: Retain official update diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-update-${{ github.run_id }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            data/official-update/diagnostics/
+            data/official-update/metadata/*gaps.json
+            data/official-update/metadata/*provenance.json
+            data/official-update/metadata/official-cache/
+            data/official-update/official-evidence/*.tsv
+            data/official-inputs*
+            data/official-update/settlement-evidence/
+            data/official-update/raw/
+            public/ops/official-inputs*
+            data/restored-coverage.json
+            public/coverage.json
       - name: Deploy to Cloudflare Pages
-        if: steps.refresh.outputs.seed_publish == 'true'
+        if: steps.refresh.outputs.publish == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -1,6 +1,6 @@
 //! Canonical allowed-field hashing.
 
-use crate::parse::AllowedRow;
+use crate::model::AllowedRow;
 use future_meta::model::{FeeKind, FeeSpec};
 use serde::Serialize;
 
@@ -70,20 +70,6 @@ fn assert_finite(value: f64, field: &str) {
     assert!(value.is_finite(), "{field} must be finite");
 }
 
-/// Hash an order-independent set of allowed rows.
-#[must_use]
-pub fn rule_set_hash(rows: &[AllowedRow]) -> String {
-    let mut hashes = rows.iter().map(row_rule_hash).collect::<Vec<_>>();
-    hashes.sort();
-    digest_text(&hashes.join("\n"))
-}
-
-/// Hash a source's stable probe identity.
-#[must_use]
-pub fn source_probe_hash(csv_url: &str, detail_url: &str) -> String {
-    digest_text(&format!("{csv_url}\n{detail_url}"))
-}
-
 #[derive(Serialize)]
 struct CanonicalRow {
     open: CanonicalFee,
@@ -131,4 +117,108 @@ fn digest_text(text: &str) -> String {
     use sha2::{Digest, Sha256};
 
     hex::encode(Sha256::digest(text.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{row_rule_hash, row_state_hash};
+    use crate::model::AllowedRow;
+    use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
+
+    fn fee(kind: FeeKind, value: Option<f64>) -> FeeSpec {
+        FeeSpec {
+            kind,
+            value,
+            raw_text: None,
+        }
+    }
+
+    fn parameter_row() -> AllowedRow {
+        AllowedRow {
+            symbol: "SHFE.cu2607".to_owned(),
+            listing_date: Some("2025-07-16".to_owned()),
+            expiry_date: Some("2026-07-15".to_owned()),
+            trading_status: TradingStatus::Trading,
+            buy_margin_rate: Some(12.0),
+            sell_margin_rate: Some(13.0),
+            open_fee: fee(FeeKind::CnyPerLot, Some(0.1)),
+            close_yesterday_fee: fee(FeeKind::CnyPerLot, Some(0.2)),
+            close_today_fee: fee(FeeKind::TurnoverRatePerTenThousand, Some(0.51)),
+            intraday_open_fee: None,
+            lot_size: 5.0,
+            tick_size: 10.0,
+            source_updated_at: None,
+            is_main_contract: false,
+        }
+    }
+
+    #[test]
+    fn canonical_hashes_remain_compatible() {
+        let row = parameter_row();
+        assert_eq!(
+            row_rule_hash(&row),
+            "7fc9f043074c2db149aed4f498df5534b9e9ebf6a30d20d410c6e6086d1739f9"
+        );
+        assert_eq!(
+            row_state_hash(&row),
+            "43bfbb613fcc34310aaa1e038a2ddbc23ff2213d0d8add79318da42233257405"
+        );
+    }
+
+    #[test]
+    fn observation_and_metadata_do_not_rekey_parameter_states() {
+        let row = parameter_row();
+        let mut changed = row.clone();
+        changed.source_updated_at = Some("2026-07-01T08:00:00Z".to_owned());
+        changed.listing_date = Some("2025-07-17".to_owned());
+        changed.expiry_date = Some("2026-07-16".to_owned());
+        changed.trading_status = TradingStatus::NotTrading;
+        changed.is_main_contract = true;
+        changed.lot_size = 10.0;
+        changed.tick_size = 1.0;
+        changed.open_fee.raw_text = Some("0.10元".to_owned());
+        assert_eq!(row_rule_hash(&row), row_rule_hash(&changed));
+        assert_eq!(row_state_hash(&row), row_state_hash(&changed));
+    }
+
+    #[test]
+    fn margins_change_state_without_rekeying_fee_evidence() {
+        let row = parameter_row();
+        let mut changed = row.clone();
+        changed.buy_margin_rate = Some(14.0);
+        assert_eq!(row_rule_hash(&row), row_rule_hash(&changed));
+        assert_ne!(row_state_hash(&row), row_state_hash(&changed));
+        changed = row.clone();
+        changed.sell_margin_rate = None;
+        assert_eq!(row_rule_hash(&row), row_rule_hash(&changed));
+        assert_ne!(row_state_hash(&row), row_state_hash(&changed));
+    }
+
+    #[test]
+    fn intraday_open_fee_changes_rule_and_state() {
+        let row = parameter_row();
+        let mut changed = row.clone();
+        changed.intraday_open_fee = Some(fee(FeeKind::Zero, Some(0.0)));
+        assert_ne!(row_rule_hash(&row), row_rule_hash(&changed));
+        assert_ne!(row_state_hash(&row), row_state_hash(&changed));
+    }
+
+    #[test]
+    fn equivalent_zero_units_have_the_same_rule_hash() {
+        let mut row = parameter_row();
+        row.open_fee = fee(FeeKind::Zero, Some(0.0));
+        let mut changed = row.clone();
+        changed.open_fee = fee(FeeKind::CnyPerLot, Some(-0.0));
+        assert_eq!(row_rule_hash(&row), row_rule_hash(&changed));
+        changed.open_fee = fee(FeeKind::TurnoverRatePerTenThousand, Some(0.0));
+        assert_eq!(row_rule_hash(&row), row_rule_hash(&changed));
+    }
+
+    #[test]
+    #[should_panic(expected = "open_fee must be finite")]
+    fn rejects_non_finite_rule_values() {
+        let mut row = parameter_row();
+        row.open_fee.value = Some(f64::NAN);
+        let _ = row_rule_hash(&row);
+    }
 }

@@ -1,8 +1,7 @@
 //! Import retained GFEX daily settlement parameters as complete fee tuples.
 
 use crate::db;
-use crate::jin10::ContractStaticMetadata;
-use crate::parse::AllowedRow;
+use crate::model::{AllowedRow, ContractStaticMetadata};
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;

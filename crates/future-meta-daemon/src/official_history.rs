@@ -1,8 +1,8 @@
 //! Materialize retained, paired official adjustment documents as fee history.
 
 use crate::db;
+use crate::model::AllowedRow;
 use crate::official::{EvidenceKind, OfficialEvidence, OfficialFeeAdjustment, validate_adjustment};
-use crate::parse::AllowedRow;
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;

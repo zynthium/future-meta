@@ -1,9 +1,11 @@
 # Official historical-fee evidence
 
+本文前半部分是人工官方证据暂存与审阅导入指南；日常官方参数采集、重建和增量更新见 [部署说明](deployment.md) 与 [官方数据重建说明](official-rebuild.md)。本文后半部分的候选计数、SC/LU 缺口与 SHFE 发现记录是历史审计快照，仅描述当时的独立证据库，不能当作当前线上采集覆盖；历史原件和来源引用继续保留。
+
 Historical fee changes must be staged in `data/official-evidence.sqlite` before
 anyone considers adding them to the production history. This database is
-separate from `data/future-meta.sqlite`, is never exported to Pages, and cannot
-change daily `update-latest` behaviour.
+separate from `data/future-meta.sqlite` and is never exported to Pages.
+候选证据库不会直接改变官方参数日更的输入或发布结果。
 
 Only original exchange URLs are accepted as `canonical_url`. HTTPS is required
 except for the CFFEX, DCE and GFEX primary domains, whose historical notices and
@@ -316,7 +318,11 @@ Allowed fee kinds are `CnyPerLot`, `TurnoverRatePerTenThousand`, and `Zero`.
 HTTP URLs outside the CFFEX exception, invalid timestamps, and invalid SHA-256
 values are rejected.
 
-## CFFEX 2020 candidate boundary
+## 历史审计快照（保留原记录）
+
+以下各节保留当时人工证据整理的结果与待办。日期、计数和覆盖结论不随官方日更自动更新；当前覆盖应读取线上 `coverage.json`，手动补充历史仍须逐份复核原件。
+
+### CFFEX 2020 candidate boundary
 
 `data/official-evidence/cffex-2020-listing-candidates.json` stages 48 verified
 CFFEX listing-day candidates, backed by 22 retained official documents. They
@@ -590,11 +596,8 @@ still requires retained original bytes and a matching SHFE notice that states
 its effective date; table cell styling must be reviewed so ordinary monthly
 carry-forward values are not mistaken for changes.
 
-## Promotion rule
+## 人工历史导入边界
 
-Promotion into `fee_versions` is intentionally not implemented. It may happen
-only after a reviewer reconstructs all three fields for every affected concrete
-contract from a contiguous chain beginning at its listing date. The review must
-show that every interval is covered by official documents and that its fee unit
-is preserved. Gaps remain gaps; they must never be filled from Jin10, the 9q
-single-variety CSV, or a broker/portal repost.
+`import-official-history` 与 `apply-verified-official` 已实现受控导入，只在隔离审阅副本中使用；它们不属于定时官方参数日更。导入前必须核对具体合约、完整三腿费率、单位、生效区间、原件 URL 与 SHA-256，不能从后继版本或品种费率推算缺失字段。
+
+历史配对证据的审阅要求继续适用。上文旧候选库中的缺口与未决状态不应自动解除，也不应扩展为对当前官方采集维护库的覆盖结论。缺口保持未知，第三方转载、搜索摘要、Jin10 或 9qihuo CSV 均不能替代交易所原件。

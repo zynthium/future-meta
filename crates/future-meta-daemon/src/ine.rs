@@ -1,9 +1,8 @@
 //! Import retained INE daily parameters paired with reviewed close-today rules.
 
 use crate::db;
-use crate::jin10::ContractStaticMetadata;
+use crate::model::{AllowedRow, ContractStaticMetadata};
 use crate::official::validate_official_canonical_url;
-use crate::parse::AllowedRow;
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;

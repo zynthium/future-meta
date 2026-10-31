@@ -104,8 +104,8 @@ def load_trading_days():
 
     return sorted(days)
 
-TRADING_DAYS = load_trading_days()
-TRADING_DAYS_SET = set(TRADING_DAYS)
+TRADING_DAYS = []
+TRADING_DAYS_SET = set()
 
 def get_nth_trading_day(year, month, n):
     prefix = f"{year:04d}-{month:02d}"
@@ -860,11 +860,17 @@ def build_czce_lifecycle(observations):
     print(f"Generated {out_path} with {len(rows)} CZCE event rows")
 
 def main():
-    global ASSUME_2027_HOLIDAYS, TRADING_DAYS, TRADING_DAYS_SET
+    global EVIDENCE_DIR, SETTLE_DIR, ASSUME_2027_HOLIDAYS, TRADING_DAYS, TRADING_DAYS_SET
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--evidence-dir", type=Path, default=EVIDENCE_DIR)
+    parser.add_argument("--settle-dir", type=Path, default=SETTLE_DIR)
     parser.add_argument("--assume-2027-holidays", action="store_true",
                         help="Use the user-provided provisional 2027 closures; label inferred expiry dates separately")
     args = parser.parse_args()
+    EVIDENCE_DIR = args.evidence_dir
+    SETTLE_DIR = args.settle_dir
+    TRADING_DAYS = load_trading_days()
+    TRADING_DAYS_SET = set(TRADING_DAYS)
     ASSUME_2027_HOLIDAYS = args.assume_2027_holidays
     if ASSUME_2027_HOLIDAYS:
         TRADING_DAYS = sorted(set(TRADING_DAYS) | set(assumed_2027_trading_days()))

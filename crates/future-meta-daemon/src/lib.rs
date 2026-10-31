@@ -1,5 +1,4 @@
 pub mod announcement;
-pub mod baseline;
 pub mod cffex_metadata;
 pub mod compact;
 mod compact_storage;
@@ -13,17 +12,14 @@ pub mod export;
 pub mod gfex;
 pub mod hash;
 pub mod ine;
-pub mod jin10;
-pub mod latest;
+pub mod model;
 pub mod official;
 pub mod official_history;
 pub mod official_metadata;
-pub mod parse;
 pub mod product_spec;
 pub mod rebuild;
-pub mod refresh;
 pub mod shfe;
-pub mod source;
+pub mod update_collected;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -38,6 +34,14 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    UpdateCollected {
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long)]
+        delta: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     CompactSeed {
         #[arg(long)]
         db: PathBuf,
@@ -60,32 +64,6 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    Discover {
-        #[arg(long)]
-        out: PathBuf,
-    },
-    SeedHistory {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        force_full: bool,
-    },
-    ImportV11Baseline {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        input: PathBuf,
-        #[arg(long)]
-        metadata_db: PathBuf,
-        #[arg(long)]
-        patch: Option<PathBuf>,
-    },
-    UpdateLatest {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        require_seed: bool,
-    },
     MigrateContractSpecs {
         #[arg(long)]
         db: PathBuf,
@@ -97,12 +75,6 @@ enum Command {
         time_repairs: PathBuf,
         #[arg(long, required = true)]
         confirm_review_copy: bool,
-    },
-    DiagnoseLatest {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        out: PathBuf,
     },
     ScanAnnouncements {
         #[arg(long)]
@@ -268,32 +240,6 @@ enum Command {
         #[arg(long)]
         from: String,
     },
-    BackfillJin10 {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        from: String,
-        #[arg(long)]
-        to: String,
-    },
-    ValidateJin10 {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        from: String,
-        #[arg(long)]
-        to: String,
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Refresh {
-        #[arg(long)]
-        db: PathBuf,
-        #[arg(long)]
-        force_full: bool,
-        #[arg(long)]
-        require_seed: bool,
-    },
     Export {
         #[arg(long)]
         db: PathBuf,
@@ -327,6 +273,11 @@ enum Command {
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::UpdateCollected { db, delta, out } => {
+            let report = update_collected::update_collected(&db, &delta, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Command::CompactSeed { db, out } => {
             let report = compact::compact_seed(&db, &out)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
@@ -351,30 +302,6 @@ pub fn run() -> anyhow::Result<()> {
                 out,
             })?;
             println!("{}", serde_json::to_string_pretty(&result)?);
-            Ok(())
-        }
-        Command::Discover { out } => source::discover_to_file(&out),
-        Command::ImportV11Baseline {
-            db,
-            input,
-            metadata_db,
-            patch,
-        } => {
-            let imported = if let Some(patch) = patch {
-                baseline::import_v11_baseline_with_patches(&db, &input, &metadata_db, &patch)?
-            } else {
-                baseline::import_v11_baseline(&db, &input, &metadata_db)?
-            };
-            eprintln!(
-                "V11 baseline imported: rows={} contracts={} sha256={}",
-                imported.rows, imported.contracts, imported.source_sha256
-            );
-            Ok(())
-        }
-        Command::SeedHistory { db, force_full } => refresh::refresh(&db, force_full),
-        Command::UpdateLatest { db, require_seed } => {
-            let outcome = refresh::update_latest(&db, require_seed)?;
-            eprintln!("latest update outcome: {outcome:?}");
             Ok(())
         }
         Command::MigrateContractSpecs { db } => {
@@ -407,16 +334,6 @@ pub fn run() -> anyhow::Result<()> {
             eprintln!(
                 "review history repaired: observation_times={} fee_versions={} evidence={}",
                 observation_times, rekey.fee_versions, rekey.evidence
-            );
-            Ok(())
-        }
-        Command::DiagnoseLatest { db, out } => {
-            let diagnosis = refresh::diagnose_latest(&db, &out)?;
-            eprintln!(
-                "latest diagnostic: rows={} rejected={} out={}",
-                diagnosis.qihuo_rows,
-                diagnosis.diagnostics.len(),
-                out.display()
             );
             Ok(())
         }
@@ -774,38 +691,6 @@ pub fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Command::BackfillJin10 { db, from, to } => {
-            let result = refresh::backfill_jin10(&db, &from, &to)?;
-            eprintln!(
-                "Jin10 backfill complete: snapshots={} rows={} skipped_invalid_symbols={}",
-                result.snapshots, result.rows, result.skipped_invalid_symbols
-            );
-            Ok(())
-        }
-        Command::ValidateJin10 { db, from, to, out } => {
-            let result = refresh::validate_jin10(&db, &from, &to, out.as_deref())?;
-            eprintln!(
-                "Jin10 validation: snapshots={} rows={} compared={} mismatches={} skipped_invalid_symbols={} skipped_missing_metadata={}",
-                result.snapshots,
-                result.jin10_rows,
-                result.compared_rows,
-                result.mismatch_count,
-                result.skipped_invalid_symbols,
-                result.skipped_missing_metadata,
-            );
-            Ok(())
-        }
-        Command::Refresh {
-            db,
-            force_full,
-            require_seed,
-        } => refresh::refresh_with_options(
-            &db,
-            refresh::RefreshOptions {
-                force_full,
-                require_seed,
-            },
-        ),
         Command::Export { db, out } => export::export_archive(&db, &out),
         Command::Inspect { db } => db::inspect(&db),
         Command::AuditCoverage {
@@ -834,6 +719,46 @@ mod tests {
     use super::{Cli, Command};
     use clap::Parser;
     use std::path::PathBuf;
+
+    #[test]
+    fn retired_automatic_update_commands_are_rejected() {
+        for command in [
+            "discover",
+            "seed-history",
+            "import-v11-baseline",
+            "update-latest",
+            "diagnose-latest",
+            "backfill-jin10",
+            "validate-jin10",
+            "refresh",
+        ] {
+            let error = Cli::try_parse_from(["future-meta-daemon", command]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
+    }
+
+    #[test]
+    fn official_increment_cli_keeps_seed_delta_and_new_output_separate() {
+        let cli = Cli::try_parse_from([
+            "future-meta-daemon",
+            "update-collected",
+            "--db",
+            "/tmp/seed.sqlite",
+            "--delta",
+            "/tmp/delta.sqlite",
+            "--out",
+            "/tmp/updated.sqlite",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::UpdateCollected { db, delta, out } => {
+                assert_eq!(db, PathBuf::from("/tmp/seed.sqlite"));
+                assert_eq!(delta, PathBuf::from("/tmp/delta.sqlite"));
+                assert_eq!(out, PathBuf::from("/tmp/updated.sqlite"));
+            }
+            _ => panic!("expected update-collected command"),
+        }
+    }
 
     #[test]
     fn import_official_history_cli_accepts_multiple_reviewed_inputs() {
@@ -1157,26 +1082,6 @@ mod tests {
         match cli.command {
             Command::ScanAnnouncements { reconcile_htfc, .. } => assert!(reconcile_htfc),
             _ => panic!("expected scan-announcements command"),
-        }
-    }
-
-    #[test]
-    fn diagnose_latest_cli_requires_review_database_and_output_path() {
-        let cli = Cli::try_parse_from([
-            "future-meta-daemon",
-            "diagnose-latest",
-            "--db",
-            "/tmp/review.sqlite",
-            "--out",
-            "/tmp/latest-diagnostics.json",
-        ])
-        .unwrap();
-        match cli.command {
-            Command::DiagnoseLatest { db, out } => {
-                assert_eq!(db, PathBuf::from("/tmp/review.sqlite"));
-                assert_eq!(out, PathBuf::from("/tmp/latest-diagnostics.json"));
-            }
-            _ => panic!("expected diagnose-latest command"),
         }
     }
 

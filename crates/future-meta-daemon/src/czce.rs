@@ -1,7 +1,7 @@
 //! Import retained CZCE daily clearing parameters as complete fee tuples.
 
 use crate::db;
-use crate::parse::AllowedRow;
+use crate::model::AllowedRow;
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::derive_underlying_symbol;

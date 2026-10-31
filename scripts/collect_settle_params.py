@@ -912,9 +912,9 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
         browser = playwright.chromium.launch(**options)
         try:
             page = browser.new_page()
-            page.goto("http://www.dce.com.cn/", timeout=20000)
+            page.goto("http://www.dce.com.cn/", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3500)
-            page.goto("http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", timeout=20000)
+            page.goto("http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(4000)
             for i, day in enumerate(pending, 1):
                 if i % 20 == 1 or i == len(pending):

@@ -1,50 +1,31 @@
-import re
 import unittest
 from pathlib import Path
-
-
-WORKFLOW = Path(".github/workflows/update-fee-data.yml")
 
 
 class UpdateFeeWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.workflow = WORKFLOW.read_text(encoding="utf-8")
+        cls.workflow = Path('.github/workflows/update-fee-data.yml').read_text()
 
-    def test_deferred_fee_refresh_still_marks_seed_for_publication(self):
-        self.assertIn('echo "fee_publish=false" >> "$GITHUB_OUTPUT"', self.workflow)
-        self.assertIn('echo "seed_publish=true" >> "$GITHUB_OUTPUT"', self.workflow)
-        self.assertRegex(
-            self.workflow,
-            r'if \[ "\$refresh_status" -eq 0 \]; then\s+echo "fee_publish=true"',
-        )
+    def test_official_increment_only_and_serialized_publication(self):
+        self.assertIn('scripts/update_official.py', self.workflow)
+        self.assertIn('cancel-in-progress: false', self.workflow)
+        self.assertIn('ops/official-inputs.json', self.workflow)
+        self.assertNotIn('update-latest', self.workflow)
+        self.assertNotIn('validate-jin10', self.workflow)
+        self.assertNotIn('seed-history', self.workflow)
 
-    def test_client_fee_artifacts_are_gated_only_by_fee_publish(self):
-        self.assertRegex(
-            self.workflow,
-            r'- name: Export Pages artifact\s+if: steps\.refresh\.outputs\.fee_publish == \'true\'',
-        )
-        self.assertRegex(
-            self.workflow,
-            r'- name: Compute artifact hash\s+if: steps\.refresh\.outputs\.fee_publish == \'true\'',
-        )
+    def test_verified_update_gates_deploy_and_holidays_skip(self):
+        self.assertRegex(self.workflow, r"- name: Deploy to Cloudflare Pages\s+if: steps\.refresh\.outputs\.publish == 'true'")
+        self.assertIn('verify-collected --db "$DB_PATH"', self.workflow)
+        self.assertIn('xvfb-run -a python', self.workflow)
+        self.assertIn('playwright install --with-deps chrome', self.workflow)
 
-    def test_seed_only_deployment_preserves_and_verifies_current_client_artifact(self):
-        self.assertRegex(
-            self.workflow,
-            r'- name: Prepare frozen Pages artifacts\s+if: steps\.refresh\.outputs\.fee_publish != \'true\'',
-        )
-        self.assertIn('https://future-meta.pages.dev/manifest.json', self.workflow)
-        self.assertIn('sha256sum public/latest.fmeta.zst', self.workflow)
-        self.assertRegex(
-            self.workflow,
-            r'- name: Publish updated daemon seed\s+if: steps\.refresh\.outputs\.seed_publish == \'true\'',
-        )
-        self.assertRegex(
-            self.workflow,
-            r'- name: Deploy to Cloudflare Pages\s+if: steps\.refresh\.outputs\.seed_publish == \'true\'',
-        )
+    def test_failures_preserve_diagnostics(self):
+        self.assertIn('set -euo pipefail', self.workflow)
+        self.assertRegex(self.workflow, r'- name: Retain official update diagnostics\s+if: always\(\)')
+        self.assertIn('actions/upload-artifact@v4', self.workflow)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

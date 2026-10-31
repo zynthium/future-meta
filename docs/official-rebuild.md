@@ -51,7 +51,7 @@ cargo run -p future-meta-daemon -- export --db data/rebuilt-20261018.sqlite --ou
 cargo run -p future-meta --example inspect_archive -- data/rebuild-20261018/public/latest.fmeta.zst DCE.bb2001 2020-01-02T10:00:00+08:00
 ```
 
-普通开发的构建检查不需要 Python；Python 只用于已有的离线采集和数据审计步骤。
+普通 Rust 构建检查不需要 Python；Python 用于官方在线/离线采集、元数据生成及增量更新。完整日更由 `scripts/update_official.py` 编排，恢复配套 bootstrap 后采集缺失日期，再调用 `update-collected`、`verify-collected` 和导出，见 [部署说明](deployment.md#github-定时更新)。
 
 ## 发布校验及覆盖边界
 
@@ -59,7 +59,9 @@ cargo run -p future-meta --example inspect_archive -- data/rebuild-20261018/publ
 cargo run -p future-meta-daemon -- verify-collected --db data/rebuilt-20261018.sqlite --out data/rebuild-20261018/public/coverage.json
 ```
 
-0.4.0 发布 schema 3。工作流验证采集库关联，任何失败均不恢复 V18 旧基线。
+0.4.0 使用 schema 3，0.5.0 导出 schema 4。当前流程验证采集库关联，失败时保留诊断，不恢复旧第三方基线。
+
+以下数字是 2026-10-18 发布的历史快照，当前线上覆盖以实际 `coverage.json` 为准：
 2026-10-18 发布含 1,199,203 条观测、47,055 个参数版本；16 个合约在上市日至首条
 官方参数观测前留有空档，147 个合约无日记录。2020-01-01 为休市日，首条观测为
 2020-01-02。原严格覆盖审计仍可报告缺口；本发布不宣称所有合约自上市起完整覆盖。

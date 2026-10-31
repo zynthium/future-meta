@@ -5,7 +5,7 @@
 //! hash-verified raw JSON snapshots and their date-bound manifest.
 
 use crate::db;
-use crate::parse::AllowedRow;
+use crate::model::AllowedRow;
 use anyhow::{Context, Result, anyhow, bail};
 use future_meta::model::{FeeKind, FeeSpec, TradingStatus};
 use future_meta::symbol::{SymbolKind, parse_symbol};

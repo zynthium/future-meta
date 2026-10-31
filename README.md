@@ -19,7 +19,7 @@
 - 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
 - daemon 使用 SQLite 保存历史版本，按手续费或投机保证金变化生成有效期区间，独立保留日内开仓费。
-- GitHub Actions 每天北京时间 18:45 采集候选；仅人工审阅的官方证据可创建新的具体合约费率记录并发布。
+- 官方日更流程采集六所逐日参数，验证原件、生命周期和规格后生成新的维护库及客户端 artifact；定时配置为每天北京时间 18:45。新流程的线上状态须以实际运行和发布读回为准。
 
 ## 架构
 
@@ -38,7 +38,7 @@ flowchart LR
 | Crate | 作用 |
 | --- | --- |
 | `future-meta` | 公开模型、archive 编解码、下载缓存、TqSdk symbol 解析和 as-of 查询 API |
-| `future-meta-daemon` | 9qihuo 抓取、CSV/HTML 解析、SQLite 历史维护、Cloudflare artifact 导出 |
+| `future-meta-daemon` | 官方采集输出重建与增量合并、证据审阅导入、SQLite 历史维护、Cloudflare artifact 导出 |
 
 ## 快速开始
 
@@ -179,15 +179,15 @@ for tick in ticks {
 
 ## 数据来源与边界
 
-历史补充与日常增量是两条不同路径：
+当前维护链路只接受交易所官方原件及其可追溯采集输出：
 
-- 历史手续费事实：只接受交易所原始公告、收费表和结算/业务参数文件。先暂存到独立的官方证据库，不能直接导出或发布；详见 [官方历史证据流程](docs/official-evidence.md)。
-- 每日候选采集：GitHub Actions 拉取 Cloudflare 官方采集 seed，解析 9qihuo 总表并用 Jin10 辅助核对；只有交易所原件经审阅后才能写入历史。
-- 新上市 symbol 需要官方手续费、生命周期和规格证据，缺失时保留未知，不从旧 SQLite 或品种费率锚点回填。
+- 初始历史使用六所官方参数、生命周期与合约规格从零重建，不读取旧 SQLite 补值。步骤见 [官方数据重建说明](docs/official-rebuild.md)。
+- 日常增量恢复同一截止日的维护库和官方元数据 bootstrap，仅采集其后缺失的官方交易日；校验短区间重建库后，由 `update-collected` 合并到新副本。完整流程见 [部署说明](docs/deployment.md#github-定时更新)。
+- 新上市 symbol 必须有生命周期和规格依据；缺少参数或元数据时失败并保留诊断，不以旧合约、品种费率或零值补齐。首条官方观测前的空档继续保留为未知。
+- 公告扫描只做补充发现和审计，待复核队列独立保留；人工历史补充仍按 [官方历史证据流程](docs/official-evidence.md) 暂存、复核并导入审阅副本。
 - archive schema 4 使用共享字典、按合约批量变更和日期引用增量编码，完整保留规格历史、多空保证金和独立日内开仓费。0.5.0 客户端兼容 schema 1/2/3，加载后仍使用原查询模型；详见 [格式迁移说明](docs/archive-format.md)。
-- Jin10 仅作为 9qihuo 候选的交叉确认，不会独立写入 `fee_versions`，也不会替代 9qihuo 更新。费率类型切换、平昨/平今字段置换、零费率切换、超过两倍的单腿跳变、超过 12 条的同批变化，以及疑似 `0.1 元`占位或统一小数固定费偏移，均失败关闭；它们不是“错误”结论，而是必须暂存并按交易所官方证据导入的队列。实时更新绝不以品种众数静默覆写既有费率。
 
-`9qihuo` 单品种 CSV、Jin10 和其他第三方衍生数据不再用于补充历史手续费。`seed-history`/`refresh` 会明确拒绝该用途；现有历史记录也不会因此被追溯认定为官方证据。
+旧第三方抓取、候选交叉核验及其更新命令已移除。历史来源记录和审阅材料仍保留，但不作为日更输入，也不追溯改称官方证据。
 
 项目只持久化手续费查询需要的基础字段。不会把源站展示用派生字段写入 client archive，例如价格、涨跌停、每手保证金、每跳盈亏、手续费折算金额等。
 
@@ -299,43 +299,34 @@ cargo run -p future-meta-daemon -- import-ine-parameters \
 或 SHA-256 不合法时，导入在写库前硬失败。成功版本同时保留日参数与平今规则两份
 官方证据，并标记为 `paired_official`。
 
-检查最新第三方截面（只读，不会改写或创建手续费历史）：
+运行官方日更到独立输出目录（Linux 下大商所浏览器使用 `xvfb-run -a`）：
 
 ```bash
-cargo run -p future-meta-daemon -- update-latest --db data/future-meta.sqlite --require-seed
+python3 scripts/update_official.py \
+  --db data/future-meta.sqlite --inputs data/official-inputs.json \
+  --work-dir /tmp/future-meta-official-update --public-dir /tmp/future-meta-pages
 ```
 
-有候选但没有新合格费率时，该命令以 `Deferred` 原因非零退出；定时任务将它视为预期
-的“不发布”。发现候选后，先保留并人工复核交易所原始证据，再只在审阅副本中创建前向
-生效的具体合约记录。
+`official-inputs.json` 与维护库必须有相同观测截止日；每次使用新的 work-dir。
+原维护库只读，失败诊断和原始输入保留在工作目录。无新交易日时不发布。
+初始官方采集需要本地完成，GitHub Actions 只做增量；新 bootstrap 的打包与恢复见
+[部署说明](docs/deployment.md)。
 
-只读核验 Jin10（不会修改手续费历史）：
-
-```bash
-cargo run -p future-meta-daemon -- validate-jin10 \
-  --db data/future-meta.sqlite \
-  --from 2026-08-22 \
-  --to 2026-08-22 \
-  --out /tmp/jin10-validation.json
-```
-
-仅在审阅副本通过完整性与覆盖审计后导出 Cloudflare Pages artifacts：
+对官方采集维护库验证并导出：
 
 ```bash
-cargo run -p future-meta-daemon -- audit-coverage \
-  --db path/to/review-copy.sqlite \
-  --from 2020-01-01 --through YYYY-MM-DD \
-  --out /tmp/future-meta-coverage.json --strict
-
+cargo run -p future-meta-daemon -- verify-collected \
+  --db path/to/review-copy.sqlite --out public/coverage.json
 cargo run -p future-meta-daemon -- export \
   --db path/to/review-copy.sqlite --out public
 mkdir -p public/ops
-gzip -c path/to/review-copy.sqlite > public/ops/future-meta.sqlite.gz
+cargo run -p future-meta-daemon -- compact-seed \
+  --db path/to/review-copy.sqlite --out /tmp/future-meta-compacted.sqlite
+gzip -c /tmp/future-meta-compacted.sqlite > public/ops/future-meta.sqlite.gz
 ```
 
-> [!WARNING]
-> 初始全量历史抓取请求较多，建议在本地稳定网络或代理环境中手动执行。GitHub Actions
-> 不从零构建历史库，也不会导出、替换 seed 或部署 Pages；发布只来自审阅副本。
+`verify-collected` 验证采集关联并报告观测覆盖，不等同于自上市日起严格完整。
+发布还需准备相同截止日的官方输入 bootstrap；本地导出不会自动部署。
 
 ## 部署
 
@@ -394,14 +385,14 @@ cargo test -p future-meta --features download --test client_archive
 
 ## 常见问题
 
-**为什么不让 client 直接请求 9qihuo？**
+**为什么 client 只下载 artifact？**
 
-源站可能限频、返回 503 或出现反爬 HTML。client 直接依赖源站会不稳定，也无法查询任意历史时间点。当前设计由 daemon 维护历史，client 只查询已校验 artifact。
+采集和证据校验集中在维护端完成。客户端读取经过摘要校验的固定快照，才能在本地查询历史并固定回测输入，不依赖交易所网站的实时响应。
 
-**为什么 latest 更新解析 HTML，而不是下载全合约 CSV？**
+**新合约缺少参数或元数据怎么办？**
 
-总页的 Excel 按钮是浏览器端 `tableToExcel('heyuetbl', ...)` 从 HTML 表格生成，目前没有稳定的全合约 CSV 下载端点。日更继续解析该总表；单品种 CSV 不再作为历史事实源。
+日更保留缺口报告并失败，待补充官方原件后重跑。不能从旧 SQLite、其他合约或品种默认值补齐，也不能删除缺失合约来制造完整覆盖。
 
-**如果新增合约没有静态元数据怎么办？**
+**成功下载是否表示数据已更新到今天？**
 
-latest HTML 不一定提供上市日、到期日、每手数量、最小跳动等静态元数据。daemon 只会从已有 seed 补齐；seed 不认识的新合约会等下一次本地全量 seed。
+不表示。应查看 `coverage.json` 的观测截止日与未知区间；manifest 构建时间、最后一次参数变化时间和实际观测截止日分别表示不同含义。
