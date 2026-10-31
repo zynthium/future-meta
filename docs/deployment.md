@@ -4,13 +4,15 @@
 
 ## 验证与上线状态
 
-0.6.0 将发布与维护输入统一迁到 GitHub Pages。[首发 workflow 41185460063](https://github.com/zynthium/future-meta/actions/runs/41185460063) 已通过完整测试、迁移包校验及官方 Pages actions 部署，全程未访问交易所。
+[分发拆分 workflow 41195519499](https://github.com/zynthium/future-meta/actions/runs/41195519499) 已通过完整测试、数据 Release 上传与公开读回校验、Pages 部署及版本清理。该运行使用 `republish_current=true`，官方采集步骤 skipped，全程只恢复已有发布数据。
 
-从新生产地址读回的 archive 大小、SHA-256 与 manifest 完全一致；SQLite seed 与原先已验收维护库逐字节一致，完整性 `ok`，保留 1,469,432 条观测、7,036 个合约、7,447 个规格版本。单包 bootstrap 的 519 份官方原件、截止日及整体 SHA 均通过校验；0.6.0 客户端以全新缓存完成默认下载并查询成功。
+当前客户端数据附件见 [data-20261031T110854Z-b4fb0dcd0469](https://github.com/zynthium/future-meta/releases/tag/data-20261031T110854Z-b4fb0dcd0469)。生产 manifest 指向固定版本 Release URL，附件大小与 SHA 一致；Pages 的 `latest.fmeta.zst` 和旧 `artifacts/` 文件已不再提供。
+
+SDK Latest 保持 v0.6.0；客户端 crate 与锁文件相对该 tag 无改动。实际运行原 SDK，空缓存下载及已有旧缓存替换两种情况均成功，缓存 SHA 与数据 Release 匹配。下载的维护 SQLite 与原先已验收 seed 逐字节一致、完整性 `ok`；519 份官方原件、截止日、整体及逐文件 SHA 保持一致，观测仍截至 2026-10-30。
 
 覆盖边界继续保留：12 个合约没有日观测，461 个合约保留既有 2027 假期假设标签，待复核公告 `citics:826232` 未被清空。
 
-原云项目及仓库内两项旧云 secrets 已删除，旧托管地址、跳转和分片协议不再提供；一次性迁移 workflow 与临时 Release 已清理。生产只保留 GitHub Release、Pages 和正式更新 workflow。
+此前的 [GitHub 托管迁移验收](https://github.com/zynthium/future-meta/actions/runs/41185460063) 已完成；原云项目、旧云 secrets 和一次性迁移工具均已删除。当前仅使用 Release 数据附件与 Pages 索引/维护输入。
 
 ## 当前 GitHub Pages 部署
 
