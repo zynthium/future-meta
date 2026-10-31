@@ -8,7 +8,7 @@ use crate::error::FutureMetaError;
 use crate::model::Manifest;
 use crate::query::FutureMeta;
 
-const DEFAULT_MANIFEST_URL: &str = "https://future-meta.pages.dev/manifest.json";
+const DEFAULT_MANIFEST_URL: &str = "https://zynthium.github.io/future-meta/manifest.json";
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Download and cache configuration for loading published future-meta archives.
@@ -173,6 +173,14 @@ async fn write_cache_file(path: &Path, bytes: &[u8]) -> Result<(), FutureMetaErr
 #[cfg(test)]
 mod tests {
     use super::artifact_cache_path;
+
+    #[test]
+    fn default_manifest_uses_github_pages() {
+        assert_eq!(
+            super::DownloadConfig::default().manifest_url,
+            "https://zynthium.github.io/future-meta/manifest.json"
+        );
+    }
 
     #[test]
     fn artifact_cache_path_accepts_plain_file_name() {

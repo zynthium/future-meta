@@ -1,0 +1,64 @@
+name: bootstrap-github-pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_release:
+        description: Temporary release containing the reviewed site bundle
+        required: true
+        type: string
+
+concurrency:
+  group: future-meta-production-official-update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Test migration code without contacting exchanges
+        run: |
+          python -m pip install requests playwright
+          cargo fmt --all -- --check
+          cargo check --workspace --all-targets
+          cargo test --workspace
+          cargo test -p future-meta --features download
+          python -m unittest discover -s tests -p 'test_*official*.py'
+          python -m unittest discover -s tests -p 'test_update_fee_workflow.py'
+      - name: Restore reviewed publication bundle from GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_RELEASE: ${{ inputs.bundle_release }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/pages-bootstrap public
+          gh release download "$BUNDLE_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --pattern github-pages-site.tar.gz --pattern github-pages-site.sha256 \
+            --dir /tmp/pages-bootstrap
+          cd /tmp/pages-bootstrap
+          sha256sum --check github-pages-site.sha256
+          tar -xzf github-pages-site.tar.gz --directory "$GITHUB_WORKSPACE/public"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+      - uses: actions/deploy-pages@v4
+        id: deployment

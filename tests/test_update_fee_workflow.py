@@ -16,7 +16,12 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertNotIn('seed-history', self.workflow)
 
     def test_verified_update_gates_deploy_and_holidays_skip(self):
-        self.assertRegex(self.workflow, r"- name: Deploy to Cloudflare Pages\s+if: steps\.refresh\.outputs\.publish == 'true'")
+        self.assertIn('https://zynthium.github.io/future-meta/ops/', self.workflow)
+        self.assertNotIn('cloudflare', self.workflow.lower())
+        self.assertIn('pages: write', self.workflow)
+        self.assertIn('id-token: write', self.workflow)
+        self.assertIn('actions/upload-pages-artifact@v4', self.workflow)
+        self.assertRegex(self.workflow, r"- name: Deploy to GitHub Pages\s+if: steps\.refresh\.outputs\.publish == 'true'\s+uses: actions/deploy-pages@v4")
         self.assertIn('verify-collected --db "$DB_PATH"', self.workflow)
         self.assertIn('xvfb-run -a python', self.workflow)
         self.assertIn('playwright install --with-deps chrome', self.workflow)

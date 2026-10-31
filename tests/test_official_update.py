@@ -9,7 +9,6 @@ import unittest
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import patch
-from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
@@ -18,25 +17,24 @@ import update_official as update
 
 
 class OfficialUpdateTests(unittest.TestCase):
-    def test_fetch_identifies_manifest_and_parts_to_pages(self):
+    def test_fetch_verifies_one_archive_from_github_pages(self):
         body = b'official archive bytes'
         sha = hashlib.sha256(body).hexdigest()
-        transport = {'schema': 1, 'through': '2026-10-30', 'archive_sha256': sha,
-                     'archive_size': len(body), 'parts': [{'file': 'part-000', 'size': len(body), 'sha256': sha}]}
-        base = 'https://future-meta.pages.dev/ops/'
+        transport = {'schema': 2, 'through': '2026-10-30', 'file': 'official-inputs.tar.gz',
+                     'size': len(body), 'sha256': sha}
+        base = 'https://zynthium.github.io/future-meta/ops/'
         requested = []
 
         def pages(request, timeout):
-            if not hasattr(request, 'get_header') or request.get_header('User-agent') != bundle.USER_AGENT:
-                raise HTTPError(base, 403, 'Forbidden', {}, io.BytesIO(b'error code: 1010'))
+            self.assertEqual(request.get_header('User-agent'), bundle.USER_AGENT)
             requested.append(request.full_url)
             return io.BytesIO(json.dumps(transport).encode() if request.full_url.endswith('official-inputs.json') else body)
 
         with tempfile.TemporaryDirectory() as temp, patch.object(bundle, 'urlopen', side_effect=pages):
             output = Path(temp) / 'official-inputs.json'
             self.assertEqual(bundle.fetch(base + output.name, output), transport)
-            self.assertEqual((output.parent / 'part-000').read_bytes(), body)
-        self.assertEqual(requested, [base + 'official-inputs.json', base + 'part-000'])
+            self.assertEqual((output.parent / 'official-inputs.tar.gz').read_bytes(), body)
+        self.assertEqual(requested, [base + 'official-inputs.json', base + 'official-inputs.tar.gz'])
 
     def test_completed_china_day_before_and_after_daily_publication(self):
         tz = ZoneInfo('Asia/Shanghai')
@@ -84,8 +82,12 @@ class OfficialUpdateTests(unittest.TestCase):
                         entry = tarfile.TarInfo(key)
                         entry.size = len(body)
                         target.addfile(entry, io.BytesIO(body))
+                body = archive.read_bytes()
+                index = root/'inputs.json'
+                index.write_text(json.dumps({'schema': 2, 'through': '2026-10-30', 'file': archive.name,
+                                             'size': len(body), 'sha256': hashlib.sha256(body).hexdigest()}))
                 with self.assertRaises(ValueError):
-                    bundle.restore(archive, root/'out')
+                    bundle.restore(index, root/'out')
                 self.assertFalse((root/'out').exists())
 
     def test_package_roundtrip_rewrites_absolute_raw_paths(self):
@@ -108,24 +110,38 @@ class OfficialUpdateTests(unittest.TestCase):
             self.assertTrue(report['lifecycle_options']['assume_2027_holidays'])
             self.assertNotIn(str(root), (restored/'cffex-product-metadata.tsv').read_text())
             self.assertEqual((restored/raw.name).read_bytes(), body)
+            self.assertEqual(json.loads((root/'bundle.json').read_text())['schema'], 2)
+            self.assertTrue((root/'bundle.tar.gz').is_file())
+            self.assertEqual(list(root.glob('*.part')), [])
 
-    def test_transport_rejects_remote_and_traversal_part_names(self):
+    def test_transport_rejects_remote_and_traversal_archive_names(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'inputs.json'
             for name in ('../secret', 'https://other/part', '%2e%2e%2fsecret', '/part'):
-                path.write_text(json.dumps({'schema': 1, 'parts': [{'file': name, 'size': 1, 'sha256': '0'*64}]}))
+                path.write_text(json.dumps({'schema': 2, 'through': '2026-10-30', 'file': name, 'size': 1, 'sha256': '0'*64}))
                 with self.assertRaises(ValueError):
                     bundle.transport_manifest(path)
 
-    def test_multipart_reassembly_detects_tampered_part(self):
+    def test_restore_detects_archive_tampering_before_extracting(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            (root/'part').write_bytes(b'tampered')
-            manifest = {'schema': 1, 'archive_sha256': hashlib.sha256(b'original').hexdigest(),
-                        'archive_size': 8, 'parts': [{'file': 'part', 'size': 8, 'sha256': hashlib.sha256(b'original').hexdigest()}]}
+            (root/'inputs.tar.gz').write_bytes(b'tampered')
+            manifest = {'schema': 2, 'through': '2026-10-30', 'file': 'inputs.tar.gz',
+                        'size': 8, 'sha256': hashlib.sha256(b'original').hexdigest()}
             (root/'inputs.json').write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
-                bundle.assemble(root/'inputs.json', root/'out.tar.gz')
+                bundle.restore(root/'inputs.json', root/'out')
+            self.assertFalse((root/'out').exists())
+
+    def test_old_split_transport_is_rejected_and_large_archive_metadata_is_valid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)/'inputs.json'
+            path.write_text(json.dumps({'schema': 1, 'parts': [{'file': 'part-000', 'size': 1, 'sha256': '0'*64}]}))
+            with self.assertRaises(ValueError):
+                bundle.transport_manifest(path)
+            current = {'schema': 2, 'through': '2026-10-30', 'file': 'inputs.tar.gz', 'size': 40*1024*1024, 'sha256': '0'*64}
+            path.write_text(json.dumps(current))
+            self.assertEqual(bundle.transport_manifest(path), current)
 
     def test_regeneration_preserves_reviewed_lifecycles_and_adds_new_symbols(self):
         with tempfile.TemporaryDirectory() as temp:

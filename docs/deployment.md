@@ -1,34 +1,31 @@
 # future-meta Deployment
 
-部署架构使用 GitHub Actions 采集官方日参数，Cloudflare Pages 免费层做静态分发和维护输入托管。2026-10-31 已完成正式增量发布及生产域名读回验收，官方历史更新至 2026-10-30。
+部署架构使用 GitHub Actions 采集官方日参数，GitHub Pages 免费层做静态分发和维护输入托管。维护数据已核验至 2026-10-30；新地址上线状态见下文验收记录。
 
 ## 验证与上线状态
 
-大商所 GitHub runner 专项验证在独立验证分支上完成 3/3，记录见 [Actions run 41115763927](https://github.com/zynthium/future-meta/actions/runs/41115763927)。
+0.6.0 将发布与维护输入统一迁到 GitHub Pages。迁移不保留旧托管地址、域名跳转或旧分片传输协议。
+当前源码使用新地址；首次部署及生产读回结果须单独验收。
 
-正式 [Actions run 41176848864](https://github.com/zynthium/future-meta/actions/runs/41176848864) 在源码 `963670d` 上通过完整测试、六所官方采集、2026-10-20 至 2026-10-30 增量合并、导出和 Pages 部署。上期所 2026-10-27 合约元数据的普通 HTTP 重试耗尽后，Chrome 后备取得同一官方文件并通过严格校验。部署记录为 [9ee0d52e](https://9ee0d52e.future-meta.pages.dev)。
+## 当前 GitHub Pages 部署
 
-生产域名 `https://future-meta.pages.dev` 读回验证：schema 4、历史截止 2026-10-30，archive 大小及 SHA-256 与线上 manifest 一致；维护 SQLite 完整性为 `ok`。全部 1,469,432 条观测、7,036 个合约及 7,447 个规格版本与本地审阅数据的业务字段零差异。bootstrap 分片、原件 SHA 和截止日均通过校验，`citics:826232` 待复核公告状态保留。
-
-覆盖报告仍明确记录 12 个合约无观测、461 个合约保留既有的 2027 假期假设标签；这些边界不会被宣称为官方确认的完整覆盖。
-
-## 当前 Cloudflare 部署
-
-- Project name: `future-meta`
-- Production URL: `https://future-meta.pages.dev`
-- Manifest URL: `https://future-meta.pages.dev/manifest.json`
-- Daemon seed URL: `https://future-meta.pages.dev/ops/future-meta.sqlite.gz`
+- Repository: `zynthium/future-meta`
+- Publishing source: GitHub Actions
+- Production URL: `https://zynthium.github.io/future-meta`
+- Manifest URL: `https://zynthium.github.io/future-meta/manifest.json`
+- Daemon seed URL: `https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz`
 
 ## 发布内容
 
-`public/` 会被部署到 Cloudflare Pages：
+`public/` 会被部署到 GitHub Pages：
 
 - `manifest.json`
 - `latest.fmeta.zst`
 - `artifacts/*.fmeta.zst`
 - `ops/future-meta.sqlite.gz`
 - `coverage.json`
-- `ops/official-inputs.json` 及其引用的 gzip 分片
+- `ops/official-inputs.json`
+- `ops/official-inputs.tar.gz`
 
 `ops/future-meta.sqlite.gz` 是 daemon 的 SQLite 历史 seed，只供 GitHub Actions 后续更新使用；client 不下载它。
 
@@ -162,7 +159,7 @@ cargo run -p future-meta-daemon -- audit-coverage \
 
 - `future-meta.sqlite.gz`：通过 `verify-collected` 的官方采集重建维护库。
 - `official-inputs.json`：可移植的官方规格/生命周期/CBI/日历清单及其原始证据；不含 SQLite
-  或旧手续费 CSV。bootstrap 清单包含截止日、每个文件 SHA-256、显式生命周期假设配置。JSON 传输索引引用同一 Pages `ops/` 中不超过 20 MiB 的 gzip 分片，并记录分片及完整 archive 的摘要和大小。
+  或旧手续费 CSV。bootstrap 清单包含截止日、每个文件 SHA-256、显式生命周期假设配置。传输索引 schema 2 引用同一 Pages `ops/` 中的单个 `official-inputs.tar.gz`，记录 SHA-256 与大小。旧分片索引直接拒绝。
 
 本地生成 bootstrap（示例中的假期参数仅复用已授权的 2027 配置）：
 
@@ -192,7 +189,7 @@ python3 scripts/package_official_inputs.py package \
 `update-collected --db SEED --delta DELTA --out NEW` 合并到新维护副本，保留旧历史及公告状态，
 冲突、缺失元数据、已观测且未到期合约在后续交易日缺行都会硬失败；首次观测前的未知区间继续保留。
 随后执行 `verify-collected`、`export`、`compact-seed`，生成新的
-SQLite gzip 和下一次运行所需的 bootstrap。bootstrap 自动切成 20 MiB 分片；维护库 gzip 超过 Pages 25 MiB 上限就中止。
+SQLite gzip 和下一次运行所需的单包 bootstrap。GitHub Pages 站点总量限制为 1 GB；当前完整发布约 52.5 MiB。
 
 既有 `user_assumed_holiday_calendar`、`assumed_lifecycle` 和 `official_only=false` 标签继续保留。
 只有 bootstrap 显式记录既有授权时才启用 `--assume-2027-holidays`；不会自动新增年份假期。
@@ -281,10 +278,12 @@ cargo run -p future-meta-daemon -- compact-seed \
 发布前还需与下载的生产库核对所有表及查询结果，并比较 gzip 后的体积。
 仅改变物理布局时，沿用线上客户端 manifest 与 artifact，更新 `ops/future-meta.sqlite.gz`。
 
-## Required GitHub Secrets
+## GitHub Pages 发布权限
 
-- `CLOUDFLARE_API_TOKEN`: token allowed to deploy Cloudflare Pages.
-- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account id.
+仓库 Settings → Pages 的发布源设为 GitHub Actions。部署使用 `actions/configure-pages@v5`、`actions/upload-pages-artifact@v4` 和 `actions/deploy-pages@v4`。
+发布 job 绑定 `github-pages` environment，使用内置 `GITHUB_TOKEN` 的 `pages: write`、`id-token: write` 权限，无外部云 secrets。
+
+官方更新正常生成新数据时，同一次部署发布客户端文件和维护 seed/bootstrap；没有新数据时不部署。生成的 `public/` 不提交到 Git 历史。
 
 ## 数据安全边界
 
@@ -299,4 +298,4 @@ cargo run -p future-meta-daemon -- compact-seed \
 
 Default manifest URL:
 
-`https://future-meta.pages.dev/manifest.json`
+`https://zynthium.github.io/future-meta/manifest.json`

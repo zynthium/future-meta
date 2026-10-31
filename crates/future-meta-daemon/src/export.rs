@@ -44,7 +44,7 @@ pub fn export_archive(db: &Path, out: &Path) -> Result<()> {
         artifact: "latest.fmeta.zst".to_owned(),
         sha256: sha,
         size: bytes.len() as u64,
-        mirrors: vec!["https://future-meta.pages.dev/latest.fmeta.zst".to_owned()],
+        mirrors: vec!["https://zynthium.github.io/future-meta/latest.fmeta.zst".to_owned()],
     };
     std::fs::write(
         out.join("manifest.json"),

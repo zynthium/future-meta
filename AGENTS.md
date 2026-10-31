@@ -6,13 +6,13 @@
 
 工作区只有两个 crate：
 
-- `crates/future-meta`：客户端库。定义公开模型、压缩二进制 archive 编解码、TqSdk 风格 `symbol` 解析、as-of 查询索引，以及可选 `download` feature 的 Cloudflare artifact 下载缓存。
+- `crates/future-meta`：客户端库。定义公开模型、压缩二进制 archive 编解码、TqSdk 风格 `symbol` 解析、as-of 查询索引，以及可选 `download` feature 的 GitHub Pages artifact 下载缓存。
 - `crates/future-meta-daemon`：维护进程。负责从官方采集输出重建或增量合并 SQLite 历史库、审阅导入官方证据、导出 `manifest.json` 和 `latest.fmeta.zst`。
 
-部署架构是 GitHub Actions 官方参数增量更新，Cloudflare Pages 免费层静态分发。源码配置与线上验收状态应分别核实：
+部署架构是 GitHub Actions 官方参数增量更新，GitHub Pages 免费层静态分发。源码配置与线上验收状态应分别核实：
 
-- 客户端下载 `https://future-meta.pages.dev/manifest.json` 和 `latest.fmeta.zst`。
-- daemon seed 是 `https://future-meta.pages.dev/ops/future-meta.sqlite.gz`，配套官方元数据 bootstrap 索引为 `ops/official-inputs.json`，只给后续维护使用，客户端不下载。
+- 客户端下载 `https://zynthium.github.io/future-meta/manifest.json` 和 `latest.fmeta.zst`。
+- daemon seed 是 `https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz`，配套官方元数据 bootstrap 索引为 `ops/official-inputs.json`，只给后续维护使用，客户端不下载。
 
 ## 数据模型硬约束
 
@@ -41,7 +41,7 @@
 - `scripts/build_lifecycles.py`、`scripts/collect_contract_specs.py`：官方生命周期与规格生成。
 - `scripts/update_official.py`：日历判断、增量采集、重建、合并、验证和打包 orchestration。
 - `scripts/package_official_inputs.py`：可移植官方元数据 bootstrap 的打包与摘要校验恢复。
-- `docs/deployment.md`：Cloudflare Pages 和 GitHub Actions 部署细节。
+- `docs/deployment.md`：GitHub Pages 和 GitHub Actions 部署细节。
 - `.github/workflows/update-fee-data.yml`：工作日夜盘前及节后早盘前，经离线日历门禁的定时更新 workflow。
 - `scripts/update_schedule.py`、`config/update-calendar.json`：不联网的时段准入与已核验官方休市日历。
 
@@ -81,7 +81,7 @@ cargo test -p future-meta --test client_archive
 cargo test -p future-meta symbol::tests
 ```
 
-针对 Cloudflare 已发布 artifact 的在线客户端 smoke test：
+针对 GitHub Pages 已发布 artifact 的在线客户端 smoke test：
 
 ```bash
 cargo run -p future-meta --features download --example online_smoke SHFE.cu2607 2026-06-08T10:48:06Z
@@ -138,27 +138,23 @@ cargo run -p future-meta-daemon -- export --db path/to/new.sqlite --out public
 
 ## 构建与部署
 
-`public/` 是 Cloudflare Pages 的部署目录，包含：
+`public/` 是 GitHub Pages 的部署目录，包含：
 
 - `manifest.json`
 - `latest.fmeta.zst`
 - `artifacts/*.fmeta.zst`
 - `coverage.json`
 - `ops/future-meta.sqlite.gz`
-- `ops/official-inputs.json` 及其引用的 gzip 分片
+- `ops/official-inputs.json` 及其引用的 `official-inputs.tar.gz`
 
-仅在需要时手动部署：
-
-```bash
-wrangler pages deploy public --project-name=future-meta --branch=main --commit-dirty=true
-```
+通过 GitHub Actions 的 `configure-pages`、`upload-pages-artifact`、`deploy-pages` 官方 actions 部署，无需外部云 token。
 
 GitHub Actions 工作流：
 
 - 文件：`.github/workflows/update-fee-data.yml`
 - 候选定时：`45 10 * * 1-5`（北京时间 18:45）、`5 0 * * 1-5`（08:05，仅节后首个早晨准入）。周末不触发。
-- 运行时：Node 24 actions，使用 `actions/checkout@v6`、`cloudflare/wrangler-action@v4` 和 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`。
-- 必需 secrets：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`。
+- 运行时：Node 24 actions，使用 `actions/checkout@v6`、`actions/upload-pages-artifact@v4`、`actions/deploy-pages@v4`。
+- 发布权限：内置 `GITHUB_TOKEN` 的 `pages: write` 和 `id-token: write`，环境名 `github-pages`。
 
 工作流顺序：
 
@@ -172,10 +168,10 @@ GitHub Actions 工作流：
 
 官方访问准入为 18:30–20:00、08:00–08:20，更新 job 最长 30 分钟。门禁日历缺少年份时报错停止，不继承生命周期的假期假设。
 
-bootstrap 使用不超过 20 MiB 的分片；维护库 gzip 超过 Pages 25 MiB 限制时失败。
-新流程的源码配置不代表 bootstrap 已上线或工作流已经验收，发布状态必须读回确认。
+bootstrap 仅接受 schema 2 单包传输索引；归档与 SQLite seed 截止日必须一致。Pages 站点总量限制为 1 GB，当前约 52.5 MiB。
+发布状态必须通过 Actions 完成状态和生产域名读回确认。
 
-除非用户明确要求，不要把本项目切到 Workers、R2 或 D1。当前已接受的架构是 Cloudflare Pages 免费层静态 artifact 分发。
+当前架构为 GitHub Pages 静态分发；旧云托管地址和分片协议不提供兼容入口。
 
 ## 代码风格
 
@@ -217,13 +213,13 @@ gh workflow run update-fee-data.yml --ref main
 gh run watch <run-id> --exit-status
 ```
 
-然后验证 Cloudflare：
+然后验证 GitHub Pages：
 
 ```bash
-curl -L -s https://future-meta.pages.dev/manifest.json
-curl -L -s https://future-meta.pages.dev/coverage.json
-curl -L -s https://future-meta.pages.dev/ops/official-inputs.json
-curl -L -s -I https://future-meta.pages.dev/ops/future-meta.sqlite.gz
+curl -L -s https://zynthium.github.io/future-meta/manifest.json
+curl -L -s https://zynthium.github.io/future-meta/coverage.json
+curl -L -s https://zynthium.github.io/future-meta/ops/official-inputs.json
+curl -L -s -I https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz
 ```
 
 ## 生成物与密钥
@@ -239,7 +235,7 @@ curl -L -s -I https://future-meta.pages.dev/ops/future-meta.sqlite.gz
 - `.codex/`
 - `.mcp.json`
 
-不要把 Cloudflare token、GitHub token、代理凭据或源站 cookie 写入已跟踪文件。
+不要把 GitHub token、代理凭据或源站 cookie 写入已跟踪文件。
 
 ## 故障排查
 

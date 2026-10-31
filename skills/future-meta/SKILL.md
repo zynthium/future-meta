@@ -35,11 +35,11 @@ description: 指导 Rust 客户端使用 future-meta 查询中国期货历史手
 
 ## 安装和加载
 
-在线自动下载推荐启用 `download` feature。以下依赖使用 0.5.0 tag；读取 schema 4 需要先升级客户端：
+在线自动下载推荐启用 `download` feature。以下依赖跟随当前主分支；0.6.0 使用 GitHub Pages 分发：
 
 ```toml
 [dependencies]
-future-meta = { git = "https://github.com/zynthium/future-meta", tag = "v0.5.0", features = ["download"] }
+future-meta = { git = "https://github.com/zynthium/future-meta", features = ["download"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 time = "0.3"
 ```
@@ -66,10 +66,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 要点：
 
-- 默认 manifest 是 `https://future-meta.pages.dev/manifest.json`。
+- 默认 manifest 是 `https://zynthium.github.io/future-meta/manifest.json`。
 - `load_or_fetch` 会下载并缓存已发布 artifact；archive 加载后，查询都在本地内存完成。
-- 客户端版本为 0.5.0，导出格式为 schema 4；共享字典与按合约变更序列只改变传输编码，不删除手续费、保证金或合约规格历史。
-- 0.5.0 解码器兼容 schema 1/2/3/4；0.4.0 不能读取 schema 4。线上格式以 manifest 为准，不因本地代码更新就假定已经发布；GitHub tag 依赖也不表示已发布到 crates.io。
+- 客户端版本为 0.6.0，导出格式为 schema 4；共享字典与按合约变更序列只改变传输编码，不删除手续费、保证金或合约规格历史。
+- 默认托管地址已切到 GitHub Pages，旧地址停止服务。线上格式以 manifest 为准；Git 依赖不表示已发布到 crates.io。
 - 可用 `FUTURE_META_CACHE_DIR` 指定缓存目录。
 - 客户端不应该把上游网站当作实时查询 API。
 
@@ -218,7 +218,7 @@ println!(
 
 - `Manifest.generated_at` / `data_version` 是构建或缓存版本信息，不是源数据最新日期。
 - 当前导出器的 `history_end` / `fee_effective_from` 是最后一个已批准参数版本的起点；最后一次变化可能早于最新观测。
-- 从 `https://future-meta.pages.dev/coverage.json` 读取 `observed_from` / `observed_through`，判断采集观测范围。
+- 从 `https://zynthium.github.io/future-meta/coverage.json` 读取 `observed_from` / `observed_through`，判断采集观测范围。
 - `unobserved_prefixes` 列出合约首条观测前的空档，`contracts_without_observations` 统计无日记录合约；
   合约存在静态元数据，不表示任意历史日期都有手续费或保证金值。查询不到时保留未知，不回填旧值或零。
 - `assumed_expiry_symbols` 是采用用户日历假设的到期日数量；推算日期不等于交易所确认日期。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect only the missing official trading interval and prepare Pages output."""
+"""Collect only the missing official trading interval and prepare GitHub Pages output."""
 import argparse
 import csv
 import json
@@ -210,8 +210,6 @@ def update(args):
                 shutil.copyfileobj(source, target)
             package(evidence, meta / "contracts_meta_provenance.json", through.isoformat(),
                     ops / "official-inputs.json", assumed)
-            if (ops / "future-meta.sqlite.gz").stat().st_size > 25 * 1024 * 1024:
-                raise ValueError("Seed exceeds Cloudflare Pages 25 MiB file limit")
             status["publish"] = True
     return finish(status, diagnostics, args.github_output)
 

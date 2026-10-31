@@ -113,6 +113,6 @@ Linux 需安装 `requests`、Playwright Chrome 并通过 `xvfb-run -a` 执行，
 `package_official_inputs.py package` 根据官方清单与元数据来源账本验证原件 SHA，重写相对
 `raw_path` 并打包。包中保留产品规格清单、生命周期清单、CBI 索引、官方日历及原件，
 不含业务 SQLite、旧参数 CSV、凭据。`restore --archive FILE --out EMPTY_DIR` 校验逐文件 SHA
-和安全路径后恢复。包和维护库必须有同一 `through`。JSON 索引列出同目录 20 MiB 分片的名称、SHA、大小和整体摘要，每个发布文件均低于 Pages 的 25 MiB 限制。
+和安全路径后恢复。包和维护库必须有同一 `through`。传输索引 schema 2 指向同目录的单个 `official-inputs.tar.gz`，记录文件名、SHA 和大小；旧分片索引不再接受。
 显式假期配置写入 bootstrap，日更只继承该配置，不自行引入新假期假设。详细运行与部署边界见
 [部署说明](../docs/deployment.md#github-定时更新)。

@@ -8,12 +8,10 @@ import json
 import re
 import tarfile
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-PART_SIZE = 20 * 1024 * 1024
-USER_AGENT = "future-meta-daemon/0.5 (+https://github.com/zynthium/future-meta)"
+USER_AGENT = "future-meta-daemon (+https://github.com/zynthium/future-meta)"
 MANIFEST_PATTERNS = ("*-product-spec-*.tsv", "cffex-product-metadata.tsv",
                      "*-contract-base-info-*.tsv", "*-lifecycle-*.tsv", "cffex-calendar-*.tsv")
 GFEX_CALENDAR = "f58f1b90262132b875cb47fa52163b044b87e63b15bfd78c401169c734685a26.json"
@@ -121,62 +119,45 @@ def package(evidence_dir, provenance, through, out, assume_2027_holidays=False):
                 "files": {name: digest(body) for name, body in sorted(files.items())}}
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(prefix="official-inputs-") as temporary:
-        archive_path = Path(temporary) / "inputs.tar.gz"
-        with tarfile.open(archive_path, "w:gz", compresslevel=9) as archive:
-            for name, body in [("bootstrap.json", json.dumps(manifest, sort_keys=True).encode()), *sorted(files.items())]:
-                info = tarfile.TarInfo(name)
-                info.size = len(body)
-                info.mode = 0o644
-                archive.addfile(info, io.BytesIO(body))
-        archive_sha = hashlib.sha256()
-        parts = []
-        with archive_path.open("rb") as source:
-            while body := source.read(PART_SIZE):
-                archive_sha.update(body)
-                name = f"{out.stem}-{len(parts):03d}.tar.gz.part"
-                (out.parent / name).write_bytes(body)
-                parts.append({"file": name, "sha256": digest(body), "size": len(body)})
-        transport = {"schema": 1, "through": through, "archive_sha256": archive_sha.hexdigest(),
-                     "archive_size": archive_path.stat().st_size, "parts": parts}
-        out.write_text(json.dumps(transport, sort_keys=True, indent=2))
+    archive_path = out.with_suffix(".tar.gz")
+    with tarfile.open(archive_path, "w:gz", compresslevel=9) as archive:
+        for name, body in [("bootstrap.json", json.dumps(manifest, sort_keys=True).encode()), *sorted(files.items())]:
+            info = tarfile.TarInfo(name)
+            info.size = len(body)
+            info.mode = 0o644
+            archive.addfile(info, io.BytesIO(body))
+    with archive_path.open("rb") as source:
+        sha = hashlib.file_digest(source, "sha256").hexdigest()
+    transport = {"schema": 2, "through": through, "file": archive_path.name,
+                 "sha256": sha, "size": archive_path.stat().st_size}
+    out.write_text(json.dumps(transport, sort_keys=True, indent=2))
     return manifest
 
 
 def transport_manifest(path):
     transport = json.loads(Path(path).read_text())
-    if transport.get("schema") != 1 or not transport.get("parts"):
+    if transport.get("schema") != 2:
         raise ValueError("Invalid official inputs transport manifest")
-    seen = set()
-    for part in transport["parts"]:
-        name = part["file"]
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name) or name in seen:
-            raise ValueError("Unsafe bootstrap part filename")
-        if not re.fullmatch(r"[0-9a-f]{64}", part["sha256"]) or not 0 < part["size"] <= PART_SIZE:
-            raise ValueError("Invalid bootstrap part size/hash")
-        seen.add(name)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.tar\.gz", transport.get("file", "")):
+        raise ValueError("Unsafe bootstrap archive filename")
+    if not re.fullmatch(r"[0-9a-f]{64}", transport.get("sha256", "")) or type(transport.get("size")) is not int or transport["size"] <= 0:
+        raise ValueError("Invalid bootstrap archive size/hash")
     return transport
 
 
-def assemble(manifest_path, out):
+def verified_archive(manifest_path):
     manifest_path = Path(manifest_path)
     transport = transport_manifest(manifest_path)
-    total, sha = 0, hashlib.sha256()
-    with Path(out).open("wb") as target:
-        for part in transport["parts"]:
-            body = (manifest_path.parent / part["file"]).read_bytes()
-            if len(body) != part["size"] or digest(body) != part["sha256"]:
-                raise ValueError(f"Bootstrap part checksum mismatch: {part['file']}")
-            target.write(body)
-            total += len(body)
-            sha.update(body)
-    if total != transport["archive_size"] or sha.hexdigest() != transport["archive_sha256"]:
+    archive_path = manifest_path.parent / transport["file"]
+    with archive_path.open("rb") as source:
+        sha = hashlib.file_digest(source, "sha256").hexdigest()
+    if archive_path.stat().st_size != transport["size"] or sha != transport["sha256"]:
         raise ValueError("Bootstrap archive checksum mismatch")
-    return transport
+    return transport, archive_path
 
 
 def fetch(url, out):
-    """Download parts strictly relative to the same Pages ops manifest URL."""
+    """Download one verified archive beside its GitHub Pages ops manifest."""
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.username or parsed.password:
         raise ValueError("Official bootstrap URL must use HTTPS without credentials")
@@ -185,32 +166,17 @@ def fetch(url, out):
     with urlopen(Request(url, headers={"User-Agent": USER_AGENT}), timeout=60) as response:
         out.write_bytes(response.read())
     transport = transport_manifest(out)
-    for part in transport["parts"]:
-        part_url = urljoin(url, part["file"])
-        destination = urlparse(part_url)
-        if (destination.scheme, destination.netloc, str(Path(destination.path).parent)) != (parsed.scheme, parsed.netloc, str(Path(parsed.path).parent)):
-            raise ValueError("Bootstrap part escaped Pages ops location")
-        with urlopen(Request(part_url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:
-            body = response.read(PART_SIZE + 1)
-        if len(body) != part["size"] or digest(body) != part["sha256"]:
-            raise ValueError(f"Downloaded bootstrap part checksum mismatch: {part['file']}")
-        (out.parent / part["file"]).write_bytes(body)
-    with TemporaryDirectory(prefix="official-inputs-check-") as temporary:
-        assemble(out, Path(temporary) / "inputs.tar.gz")
+    archive_url = urljoin(url, transport["file"])
+    with urlopen(Request(archive_url, headers={"User-Agent": USER_AGENT}), timeout=120) as response:
+        body = response.read(transport["size"] + 1)
+    if len(body) != transport["size"] or digest(body) != transport["sha256"]:
+        raise ValueError("Downloaded bootstrap archive checksum mismatch")
+    (out.parent / transport["file"]).write_bytes(body)
     return transport
 
 
-def restore(archive_path, destination):
-    archive_path = Path(archive_path)
-    if archive_path.suffix == ".json":
-        with TemporaryDirectory(prefix="official-inputs-restore-") as temporary:
-            joined = Path(temporary) / "inputs.tar.gz"
-            transport = assemble(archive_path, joined)
-            manifest = restore(joined, destination)
-            if transport["through"] != manifest["through"]:
-                raise ValueError("Bootstrap transport and archive dates differ")
-            return manifest
-
+def restore(manifest_path, destination):
+    transport, archive_path = verified_archive(manifest_path)
     destination = Path(destination)
     if destination.exists() and any(destination.iterdir()):
         raise FileExistsError(f"Bootstrap destination must be empty: {destination}")
@@ -224,6 +190,8 @@ def restore(archive_path, destination):
         manifest = json.loads(archive.extractfile("bootstrap.json").read())
         if manifest.get("schema") != 1 or set(names) != set(manifest["files"]) | {"bootstrap.json"}:
             raise ValueError("Invalid bootstrap file inventory")
+        if transport.get("through") != manifest.get("through") or not manifest.get("through"):
+            raise ValueError("Bootstrap transport and archive dates differ")
         for name, sha in manifest["files"].items():
             if digest(archive.extractfile(name).read()) != sha:
                 raise ValueError(f"Bootstrap hash mismatch: {name}")

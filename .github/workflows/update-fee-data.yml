@@ -15,8 +15,8 @@ concurrency:
 
 env:
   DB_PATH: data/future-meta.sqlite
-  SEED_URL: https://future-meta.pages.dev/ops/future-meta.sqlite.gz
-  INPUTS_URL: https://future-meta.pages.dev/ops/official-inputs.json
+  SEED_URL: https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz
+  INPUTS_URL: https://zynthium.github.io/future-meta/ops/official-inputs.json
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -45,6 +45,11 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -102,10 +107,15 @@ jobs:
             public/ops/official-inputs*
             data/restored-coverage.json
             public/coverage.json
-      - name: Deploy to Cloudflare Pages
+      - name: Configure GitHub Pages
         if: steps.refresh.outputs.publish == 'true'
-        uses: cloudflare/wrangler-action@v4
+        uses: actions/configure-pages@v5
+      - name: Upload GitHub Pages artifact
+        if: steps.refresh.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy public --project-name=future-meta --branch=main --commit-dirty=true
+          path: public
+      - name: Deploy to GitHub Pages
+        if: steps.refresh.outputs.publish == 'true'
+        uses: actions/deploy-pages@v4
+        id: deployment

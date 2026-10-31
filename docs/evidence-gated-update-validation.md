@@ -6,7 +6,7 @@
 
 ## 安全边界
 
-- 不修改 `data/future-meta.sqlite`、`public/`、Cloudflare Pages 或 GitHub Actions。
+- 不修改 `data/future-meta.sqlite`、`public/`、线上静态托管或 GitHub Actions。
 - 每次验证都从基线数据库创建新的临时副本；临时目录在验证结束后可删除。
 - `scan-announcements` 只会在临时副本写入公告正文、快照、候选和源状态，绝不写 `fee_versions`。
 - 回放期间不得执行 `apply-verified-official`、`export`，也不得部署；官方应用仅在独立审阅副本中人工确认后另行验证。
