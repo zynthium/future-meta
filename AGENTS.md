@@ -1,259 +1,116 @@
 # AGENTS.md
 
-## 项目概览
+## 项目与分发
 
-`future-meta` 是一个 Rust 2024 工作区，用于维护中国期货合约手续费历史，并给程序提供本地高性能 as-of 查询 API。
+`future-meta` 是 Rust 2024 工作区，提供中国期货手续费、保证金和规格历史的本地 as-of 查询。
 
-工作区只有两个 crate：
+- `crates/future-meta`：公开模型、schema 4 archive 编解码、symbol、查询及可选 `download` 缓存。
+- `crates/future-meta-daemon`：基于 archive 的业务历史增量；保留本地 SQLite 重建、证据审阅和导出工具。
+- 自动更新只使用上一版客户端 archive、轻量检查点和小规则配置，不使用线上 SQLite 或原件 bootstrap。
+- 客户端文件作为不可变 `data-*` Release 附件；固定索引为 `https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json`。
+- 独立 `data` 分支只存 `manifest.json` 与 `update-state.json`。数据 Release 使用 `--latest=false`，不改变 SDK Latest。
+- 不再使用 Pages。历史证据与维护 SQLite 只在本地保存，不重新引入线上维护包或兼容旧托管地址。
 
-- `crates/future-meta`：客户端库。定义公开模型、压缩二进制 archive 编解码、TqSdk 风格 `symbol` 解析、as-of 查询索引，以及可选 `download` feature 的 Release artifact 下载缓存。
-- `crates/future-meta-daemon`：维护进程。负责从官方采集输出重建或增量合并 SQLite 历史库、审阅导入官方证据、导出 `manifest.json` 和 `latest.fmeta.zst`。
+## 数据硬约束
 
-部署架构是 GitHub Actions 官方增量更新、Release 分发客户端 archive、Pages 托管 manifest 和维护输入。源码配置与线上验收状态应分别核实：
+- 合约标识只用 TqSdk 风格具体 futures symbol，例如 `SHFE.cu2701`、`CZCE.SR701`。`KQ.m@...`、`KQ.i@...` 不返回手续费或规格。
+- 不把可派生的品种/交易所名称、展示价格、每手保证金、每跳盈亏等字段写入客户端 archive。
+- 手续费和保证金只接受六所官方参数。日期错误、反爬页、空表、不完整交易日或元数据必须失败，不能以旧值冒充当日数据。
+- archive 是已批准业务历史基线；保留合约 ID 和既有版本，仅在业务变化时追加/关闭区间。
+- 缺失交易日必须按顺序补齐，不能只比较最新截面而漏掉中间变化与恢复。
+- 新合约使用明确适用的官方规则，不能借用邻近合约或品种默认值。未知费率与零值严格区分。
+- 规格、生命周期及已授权假期假设必须保留标签。新原件/目录变化无法解释时停止，先在本地审阅小规则配置。
+- 中金所可在核对官方目录及现有快照 SHA 后延用有效参数；历史同日期原文修订不得忽略。
+- 原件正文与完整逐日观测不属于在线检查点。CI 原件只作本次临时输入，不作为长期 artifact 上传。
 
-- 客户端读取 `https://zynthium.github.io/future-meta/manifest.json`，再下载其中固定版本 Release 附件。
-- daemon seed 是 `https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz`，配套官方元数据 bootstrap 索引为 `ops/official-inputs.json`，只给后续维护使用，客户端不下载。
+## 更新时间语义
 
-## 数据模型硬约束
+`update-state.json` 区分：
 
-- 合约唯一标识只使用 TqSdk 风格 `symbol`，例如 `SHFE.cu2607`、`CZCE.SR903`、`KQ.m@SHFE.cu`。
-- 不要把品种代码、品种名称、合约代码、合约名称、交易所代码、交易所名称等可由 `symbol` 或上下文派生的字段持久化进客户端 archive。
-- 不要存储或发布源站展示用派生字段，例如价格、涨跌停、每手保证金、每跳盈亏、开平合计手续费、手续费折算金额。
-- 手续费和保证金只接受六所官方逐日参数及保留原件；初始历史由官方采集输出从零重建，不从旧 SQLite 或第三方数据补值。
-- 生命周期与规格需要独立的官方来源账本。用户明确授权的日历假设必须保留标签，不能冒称交易所确认日期。
-- GitHub Actions 只补维护库截止日后的官方交易日；维护库与 bootstrap 必须有相同截止日。参数未发布、请求失败或元数据不完整均失败，不以旧值冒充当日数据。
-- 公告扫描保留发现与人工审计队列，不作为官方日参数日更的候选门槛。旧第三方抓取和更新 CLI 已移除；遗留来源记录仅供历史审计。
+- `last_attempt`：最近开始/结束、结果、时段和 run URL；硬终止可能留 `running`。
+- `last_success_at`：最近完整检查成功，无业务变化也推进。
+- `checked_through`：六所完整核验到的交易日，原子推进。
+- `archive_sha256` 和当前/上一版 Release：检查点对应的业务基线。
+- `exceptions` / `source_versions`：必要未知、假设和当前来源版本。
 
-## 仓库结构
+无业务变化时 archive 字节、SHA、生成时间、manifest 和数据 Release 不变，只更新状态。失败只记录尝试，不推进成功检查点。`manifest.history_end` 不是核验截止日。
 
-- `Cargo.toml`：工作区成员、共享依赖和 lint 配置。
-- `crates/future-meta/src/model.rs`：archive 和 manifest 的公开数据结构。
-- `crates/future-meta/src/archive.rs`：`bincode` + `zstd` archive 编解码和 SHA-256 helper。
-- `crates/future-meta/src/query.rs`：`FutureMeta` as-of 查询索引。
-- `crates/future-meta/src/symbol.rs`：TqSdk 风格 symbol 解析和 normalization。
-- `crates/future-meta/src/download.rs`：可选下载/cache API，只在 `download` feature 下编译。
-- `crates/future-meta-daemon/src/model.rs`：daemon 内部共享的参数行与静态元数据模型。
-- `crates/future-meta-daemon/src/db.rs`：SQLite schema、版本维护及历史审计兼容。
-- `crates/future-meta-daemon/src/rebuild.rs`：官方采集输出的新库重建及来源关联。
-- `crates/future-meta-daemon/src/update_collected.rs`：短区间官方采集库向维护副本的增量合并。
-- `crates/future-meta-daemon/src/export.rs`：从 SQLite 导出 Pages artifacts。
-- `scripts/collect_settle_params.py`：六所官方结算参数采集。
-- `scripts/build_lifecycles.py`、`scripts/collect_contract_specs.py`：官方生命周期与规格生成。
-- `scripts/update_official.py`：日历判断、增量采集、重建、合并、验证和打包 orchestration。
-- `scripts/package_official_inputs.py`：可移植官方元数据 bootstrap 的打包与摘要校验恢复。
-- `scripts/publish_data.py`：先上传并校验数据 Release，再准备 Pages 目录；线上读回匹配后清理旧数据版本。
-- `docs/deployment.md`：GitHub Pages 和 GitHub Actions 部署细节。
-- `.github/workflows/update-fee-data.yml`：工作日夜盘前及节后早盘前，经离线日历门禁的定时更新 workflow。
-- `scripts/update_schedule.py`、`config/update-calendar.json`：不联网的时段准入与已核验官方休市日历。
+## 入口与文件
 
-## 环境与依赖
+- `crates/future-meta-daemon/src/archive_update.rs`：完整六所批次校验及 archive 版本合并。
+- `scripts/update_official.py`：时段复核、状态、采集、合并与发布。
+- `scripts/incremental_inputs.py`：日期、规格、生命周期及官方采集适配。
+- `scripts/catalog_guard.py`：现行合约入口/规则检查，不能用旧附件仍可访问证明没有新规则。
+- `scripts/official_access.py`：HTTP 重定向及浏览器逐请求截止控制。
+- `scripts/data_branch.py`：同一 commit 读取索引/状态，Git API 非强制提交。
+- `scripts/publish_data.py`：不可变附件发布、公开 SHA 验证和退役数据清理。
+- `scripts/collect_settle_params.py`：六所官方采集，可供独立本地历史采集。
+- `config/official-rules.json`：已批准且有适用范围的轻量规则及来源。
+- `config/update-calendar.json`：已核验官方准入日历。
+- `.github/workflows/update-fee-data.yml`：生产更新。
 
-客户端和 daemon 日常构建只需要稳定版 Rust。官方采集与日更脚本需要 Python、`requests` 和 Playwright Chrome；Linux 大商所浏览器使用 `xvfb-run`，详见 `scripts/README.md`。
+本地历史工具和约束见 `scripts/README.md`、`docs/official-rebuild.md`、`docs/official-evidence.md`。更新与分发见 `docs/deployment.md`。
 
-```bash
-cargo metadata --no-deps --format-version 1
-cargo build --workspace
-```
+## 交易所访问
 
-客户端下载 API 受 `download` feature 控制：
+- cron 仅工作日 18:45、08:05 北京时间。18:45 用于夜盘前；08:05 仅法定休市后首个早晨。
+- 离线门禁跳过周末、普通早晨、调休工作周末、休市和节前无夜盘；程序在运行时再次检查。
+- 只在 18:30–20:00、08:00–08:20 内开始官方请求。同一时段最多一轮，重复触发跳过。
+- 串行采集、缓存去重、复用大商所浏览器。HTTP 最多三次，等待 2 秒、8 秒；CBI 两次 HTTP 加一次 Chrome。
+- 每次 HTTP 重定向和浏览器网络请求复核截止；不得通过手动日更绕过窗口。
+- 当前准入日历只涵盖 2026，缺少年份停止；生命周期假设不能当成采集日历。
+- 实际采集包含多份官方文件和浏览器资源，不能把一轮更新说成一个 HTTP 请求。
 
-```bash
-cargo build -p future-meta --features download
-```
-
-## 日常开发命令
-
-除非特别说明，所有命令都从仓库根目录执行。
-
-常用本地检查：
+## 常用检查
 
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo test --workspace
 cargo test -p future-meta --features download
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+python3 -m unittest discover -s tests
 ```
 
-定向测试：
+Python 官方采集测试需 `requests`、`playwright`；Linux 在线大商所需要 Chrome 与 `xvfb-run`。普通 Rust 构建不依赖它们。
+
+定向验证：
 
 ```bash
+cargo test -p future-meta-daemon --test archive_incremental
 cargo test -p future-meta-daemon --test daemon_pipeline
-cargo test -p future-meta --test client_archive
-cargo test -p future-meta symbol::tests
-```
-
-针对 GitHub Pages 已发布 artifact 的在线客户端 smoke test：
-
-```bash
-cargo run -p future-meta --features download --example online_smoke SHFE.cu2607 2026-06-08T10:48:06Z
-```
-
-## Daemon 命令
-
-检查已有 SQLite seed：
-
-```bash
-cargo run -p future-meta-daemon -- inspect --db data/future-meta.sqlite
-```
-
-从官方采集输出创建新库：
-
-```bash
-cargo run -p future-meta-daemon -- rebuild-collected \
-  --metadata-dir path/to/metadata --settle-dir path/to/settle_params \
-  --settlement-sources path/to/evidence/settlement_sources.json \
-  --out path/to/new.sqlite
-```
-
-完整的采集、生命周期和规格准备顺序见 `scripts/README.md` 与 `docs/official-rebuild.md`。
-输入不包含旧 SQLite，输出文件必须不存在。
-
-把已验证的短区间重建库合并到新维护副本：
-
-```bash
-cargo run -p future-meta-daemon -- update-collected \
-  --db path/to/seed.sqlite --delta path/to/delta.sqlite --out path/to/new.sqlite
-```
-
-执行完整官方日更，不部署：
-
-```bash
-python3 scripts/update_official.py \
-  --db data/future-meta.sqlite --inputs data/official-inputs.json \
-  --work-dir /tmp/future-meta-official-update --public-dir /tmp/future-meta-pages
-```
-
-每次使用新的 work-dir。Linux 下前置 `xvfb-run -a`。输入维护库只读，
-配套 bootstrap 的打包、恢复与截止日要求见 `docs/deployment.md`。
-
-验证并导出官方采集库：
-
-```bash
-cargo run -p future-meta-daemon -- verify-collected \
-  --db path/to/new.sqlite --out public/coverage.json
-cargo run -p future-meta-daemon -- export --db path/to/new.sqlite --out public
-```
-
-`verify-collected` 验证原件关联并报告观测覆盖，不证明自上市日起完整。严格历史审阅
-另用 `audit-coverage --strict`；人工官方证据导入保留独立流程，见 `docs/official-evidence.md`。
-
-## 构建与部署
-
-`public/` 是本地导出暂存目录，包含 archive 和未填写下载 URL 的 manifest；不能直接部署。`publish_data.py prepare` 会真实发布数据 Release，仅在获发布授权后执行。
-
-实际 GitHub Pages 部署目录为 `data/pages-site/`，仅包含：
-
-- `manifest.json`
-- `coverage.json`
-- `ops/future-meta.sqlite.gz`
-- `ops/official-inputs.json` 及其引用的 `official-inputs.tar.gz`
-- `ops/publication.json`：当前/上一版数据 Release 记录，用于准确重跑和清理。
-
-通过 GitHub Actions 的 `configure-pages`、`upload-pages-artifact`、`deploy-pages` 官方 actions 部署，无需外部云 token。
-
-GitHub Actions 工作流：
-
-- 文件：`.github/workflows/update-fee-data.yml`
-- 候选定时：`45 10 * * 1-5`（北京时间 18:45）、`5 0 * * 1-5`（08:05，仅节后首个早晨准入）。周末不触发。
-- 运行时：Node 24 actions，使用 `actions/checkout@v6`、`actions/upload-pages-artifact@v4`、`actions/deploy-pages@v4`。
-- 发布权限：内置 `GITHUB_TOKEN` 的 `contents: write`、`pages: write`、`id-token: write`；环境名 `github-pages`，checkout 不持久化凭据。
-
-工作流顺序：
-
-1. admission job 离线检查官方休市日历及时段；非更新窗口跳过整个更新 job。
-2. 运行 Rust 和官方日更脚本检查。
-3. 恢复 Pages 中截止日一致的 SQLite seed 与官方输入 bootstrap，并验证摘要及采集关联。
-4. 以 `--scheduled` 复核实际时段；复用已校验官方月历，仅缺失月份联网，串行采集缺失六所参数与新日期合约基础信息。
-5. 严格生成生命周期和规格，构建短区间库，合并到新维护副本。
-6. 验证、导出、整理维护库空间，生成同截止日的新 seed 和 bootstrap；无新交易日时不部署。
-7. 上传并校验客户端数据 Release，设置 `--latest=false`，再部署 `data/pages-site/` 的 manifest 和维护输入。
-8. 验证线上 manifest/发布记录一致后，仅保留当前与被替换的一版数据 Release。SDK Release 不参与此清理。
-
-手动 `republish_current=true` 只恢复线上输入并重新导出，跳过采集器；普通定时和手动运行仍受离线准入及 `--scheduled` 门禁约束。
-
-官方访问准入为 18:30–20:00、08:00–08:20，更新 job 最长 30 分钟。门禁日历缺少年份时报错停止，不继承生命周期的假期假设。
-
-bootstrap 仅接受 schema 2 单包传输索引；归档与 SQLite seed 截止日必须一致。Pages 站点总量限制为 1 GB，当前约 52.5 MiB。
-发布状态必须通过 Actions 完成状态和生产域名读回确认。
-
-当前架构为 Release 客户端数据附件与 Pages 静态索引/维护输入；旧云托管地址和分片协议不提供兼容入口。SDK 与每日数据独立，发布侧变更不要求更新客户端。
-
-## 代码风格
-
-- Rust edition 为 2024。
-- 工作区 lint 禁止 `unsafe_code`。
-- Clippy `all` 和 `pedantic` 配置为 warning。新增代码应保持 `cargo clippy --workspace --all-targets --all-features` 下干净。
-- 优先使用与现有 crate 边界一致的小模块和显式逻辑。不要把只属于 daemon 的抓取或 SQLite 逻辑移动到客户端 crate。
-- 保持 `FutureMeta` 查询 API 的定位：archive 加载后，查询应是低分配的本地读取。
-- 解析源站数据或 URL 时优先使用结构化 parser，例如 `csv`、`scraper`、`reqwest::Url`，不要做脆弱的临时字符串切分。
-- archive 兼容性必须谨慎处理。修改 `SCHEMA_VERSION`、公开模型字段或 archive 编码方式时，需要补测试和迁移说明。
-
-## 测试要求
-
-合并代码改动前，至少运行：
-
-```bash
-cargo fmt --all -- --check
-cargo test --workspace
-cargo test -p future-meta --features download
-cargo check --workspace --all-targets
-```
-
-涉及 parser、updater、DB 或 export 的改动，还要运行：
-
-```bash
-cargo test -p future-meta-daemon --test daemon_pipeline
-```
-
-涉及 download/cache 或 as-of 查询的改动，还要运行：
-
-```bash
 cargo test -p future-meta --features download --test client_archive
 ```
 
-涉及 GitHub Actions 或部署的改动，在获得运行及发布授权后触发并观察 workflow。该工作流可能部署 Pages，不能把普通代码检查当作生产发布授权：
+SDK smoke test：
 
 ```bash
-gh workflow run update-fee-data.yml --ref main
+cargo run -p future-meta --features download --example online_smoke \
+  SHFE.cu2701 2026-10-30T10:00:00+08:00
+```
+
+旧 v0.6.0 可通过 `DownloadConfig.manifest_url` 一次性改配使用新入口，不需升级；旧源码 tag 不改写。
+
+## 更新和发布授权
+
+`update_official.py` 会真实写数据分支，并可能创建 Release，须已有更新/发布授权。无交易所访问的线上验证也通过同一入口：
+
+```bash
+gh workflow run update-fee-data.yml --ref main -f republish_current=true
 gh run watch <run-id> --exit-status
 ```
 
-然后验证 GitHub Pages：
+此模式下载并验证现有 archive 与公开索引，并写入内容不变的 Git 提交实测发布权限；不启动采集器、不重新生成 archive、不推进交易所检查点。源码检查不等于生产成功，必须观察 Actions 完成并读回固定入口。
 
-```bash
-curl -L -s https://zynthium.github.io/future-meta/manifest.json
-curl -L -s https://zynthium.github.io/future-meta/coverage.json
-curl -L -s https://zynthium.github.io/future-meta/ops/official-inputs.json
-curl -L -s -I https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz
-```
+GitHub raw 存在 CDN 延迟。先验证附件，再原子切换索引/检查点；固定 URL 读回通过后才清理记录为已退役的受管数据版本。保留当前、上一版及未完成发布的上传，不触碰 SDK Release。不能按创建时间猜上一版。
 
-## 生成物与密钥
+## 风格、生成物与协作
 
-除非用户明确要求，不要提交本地或生成数据。
-
-已忽略的生成路径包括：
-
-- `target/`
-- `data/`
-- `public/`
-- `.env`
-- `.codex/`
-- `.mcp.json`
-
-不要把 GitHub token、代理凭据或源站 cookie 写入已跟踪文件。
-
-## 故障排查
-
-- workflow 失败时先用 `gh run view <run-id> --log-failed`，再查看上传的 diagnostics、原始输入、缺口和覆盖报告。
-- 官方请求错误、反爬响应或参数尚未发布不能当作休市。DCE 浏览器在 Linux 上需要 Chrome 与 `xvfb-run`；修复运行环境后从干净 work-dir 重跑。
-- seed 与 bootstrap 截止日不一致或摘要校验失败时，恢复同一发布的配套输入，不跳过校验。
-- 新合约缺少生命周期或规格时补充官方原件，不能从旧 SQLite、相邻合约或品种默认值补齐，也不能跳过缺失合约。
-- 首条观测前的空档继续公开为未知；`valid_to=None` 仅表示没有已知后继版本，不能据此声称观测截止日之后已获核验。
-- `scan-announcements` 的人工待复核状态与官方日参数更新分开处理；旧二十四小时候选门槛和第三方可用性不再阻断日更。
-
-## 提交与协作规则
-
-- 只 stage 与当前任务相关的文件。
-- 除非任务明确要求发布 artifact，不要把生成的 `data/` 和 `public/` 文件放进 commit。
-- 使用简洁的 conventional commit 风格提交信息，例如 `fix: retry source body read timeouts` 或 `chore: run fee update workflow on node 24 actions`。
-- 如果改动触及部署或更新行为，最终报告必须包含实际运行过的命令和 GitHub Actions run URL。
+- Rust 2024、禁止 unsafe，遵循现有 crate 边界。抓取与维护逻辑留在 daemon/Python。
+- 解析优先结构化 parser。保持 archive 加载后的低分配本地查询定位。
+- schema 4 和公开客户端模型变更必须有测试及迁移说明。
+- `data/`、`public/`、`target/`、`.env`、`.codex/`、`.mcp.json` 不提交；不得删除本地历史证据作为清理代码的副作用。
+- `config/official-rules.json` 是经审阅的小配置，允许随规则更新提交；大 archive 和原件不进入源码分支。
+- 只 stage 当前任务文件，保留无关脏工作；使用简洁 conventional commit。
+- 不提交 token、Cookie、代理凭据或密钥。发布只使用内置 `GITHUB_TOKEN` 的 `contents: write`，checkout 不持久化凭据。
+- 涉及更新/分发的最终报告包含实际验证命令和 Actions run URL；没有合法窗口的真实采集不能冒称已验证。

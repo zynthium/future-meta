@@ -61,21 +61,14 @@ class OfficialScheduleTests(unittest.TestCase):
                                 check=True, capture_output=True, text=True)
         self.assertFalse(json.loads(result.stdout)['should_update'])
 
-    def test_runtime_recheck_skips_before_reading_seed_or_bootstrap(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            args = type('Args', (), dict(db=root/'missing', inputs=root/'missing', work_dir=root/'work',
-                                        public_dir=root/'public', through=None, github_output=root/'output', scheduled=True))()
-            with patch.object(update, 'scheduled_decision', return_value={'should_update': False, 'reason': 'weekend'}), \
-                    patch.object(update, 'seed_through') as seed, patch.object(update, 'restore') as restore, \
-                    patch.object(update, 'refresh_calendar') as calendar, patch.object(update, 'run') as run:
-                result = update.update(args)
-            self.assertFalse(result['publish'])
-            self.assertEqual(args.github_output.read_text(), 'publish=false\n')
-            seed.assert_not_called()
-            restore.assert_not_called()
-            calendar.assert_not_called()
-            run.assert_not_called()
+    def test_runtime_recheck_skips_before_reading_branch_or_collecting(self):
+        args=type('Args',(),{'republish_current':False})()
+        with patch.object(update,'scheduled_decision',return_value={'should_update':False,'reason':'weekend'}), \
+                patch.object(update.branch,'read') as read, patch.object(update,'restore_archive') as restore:
+            result=update.update(args)
+        self.assertFalse(result['publish'])
+        read.assert_not_called()
+        restore.assert_not_called()
 
 
 if __name__ == '__main__':

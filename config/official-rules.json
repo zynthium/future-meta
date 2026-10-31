@@ -1,0 +1,2926 @@
+{
+  "schema": 1,
+  "approved_through": "2026-10-30",
+  "specifications": [
+    {
+      "exchange": "CFFEX",
+      "product": "IC",
+      "full_symbol": "",
+      "valid_from": "2015-04-16T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 200.0,
+      "tick_size": 0.2,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/zz500.html",
+      "source_sha256": "69c76cab18da850d26cf197dd3838ab52cdd47b09672148c9ab572fb69f60ddf"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "IF",
+      "full_symbol": "",
+      "valid_from": "2010-04-16T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 300.0,
+      "tick_size": 0.2,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/hs300.html",
+      "source_sha256": "4de40649110c2c93ddc44c3d1a05b00bb13400c141edb6e0df12b47a29fcef68"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "IH",
+      "full_symbol": "",
+      "valid_from": "2015-04-16T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 300.0,
+      "tick_size": 0.2,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/sz50gzqh.html",
+      "source_sha256": "e926d78cb86fbf35cbe17f1530e31b929bb34b2edd6e494e720ec68ad456bc59"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "IM",
+      "full_symbol": "",
+      "valid_from": "2022-07-22T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 200.0,
+      "tick_size": 0.2,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/zz1000.html",
+      "source_sha256": "cf996b053a3a696b8f45611b0dd79ff6bb4c498dfe191193c20a6591d39919c9"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "T",
+      "full_symbol": "",
+      "valid_from": "2015-03-20T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 10000.0,
+      "tick_size": 0.005,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/10t.html",
+      "source_sha256": "ff48387288fbc3dda99f9b831eb8a493d982486cedd1745ea636dec4dcfdc3a0"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "TF",
+      "full_symbol": "",
+      "valid_from": "2013-09-06T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 10000.0,
+      "tick_size": 0.005,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/5tf.html",
+      "source_sha256": "2c10b5532928ebce5c03ff3744a68cea5a04306b3aab03247ee73301b5ea0989"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "TL",
+      "full_symbol": "",
+      "valid_from": "2023-04-21T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 10000.0,
+      "tick_size": 0.01,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/30tl.html",
+      "source_sha256": "e00ab23e957d2b6fb0e57595db0c59ded012b1bfe83eea583b9b4b920c508686"
+    },
+    {
+      "exchange": "CFFEX",
+      "product": "TS",
+      "full_symbol": "",
+      "valid_from": "2023-11-06T00:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 20000.0,
+      "tick_size": 0.002,
+      "valid_from_phase": "settlement",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2023-11-07",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.cffex.com.cn/cn/jystz/20231020/34772.html",
+      "source_sha256": "a4b00f321dce528b31cb807431ae02dd86d4ba2538b76faa2497b58d135afe20"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "AP",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2018/05/07/1526089633541564-1526089633598074.pdf",
+      "source_sha256": "9d56e715d0220073a572842a0a573793a6fb8f082b2e40f019b76b4eab0aec53"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "CF",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/12/24/1355402644332702-1355402644334150.pdf",
+      "source_sha256": "08eb68d1f3e05c8ace0d56386c1e7542cca69d6b6f0ce2c237e8e9f179f2e84c"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "CJ",
+      "full_symbol": "",
+      "valid_from": "2018-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2019/04/24/1545643298687500-1545643298714344.pdf",
+      "source_sha256": "ee944f4d6615bb8f2927252d8ba6e36e71937c303f61698191460d6069b360db"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "CY",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2017/08/14/1501757002074520-1501757002076765.pdf",
+      "source_sha256": "fbc9a4a82a1ad240e6754f0ff38313278817634c6954689875853ba5b4993be4"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "FG",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/11/28/1349588556736465-1349588556738184.pdf",
+      "source_sha256": "d712548d5284e25a7ec7b14de1676272549d066b40638eb88fa821c2ba0e8400"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "JR",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2013/11/11/1383304257919452-1383304257921892.pdf",
+      "source_sha256": "3416a6008899bb2696a2ceef4e9a07700bb8578cd14f9b199943e55c2c663654"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "LR",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2014/07/07/1404477843910981-1404477843912845.pdf",
+      "source_sha256": "44680a6b81b5c78e7d7780c78ef360339899b0f47352274483027d654cb79b14"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "MA",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2014/06/13/1402482218812025-1402482218815763.pdf",
+      "source_sha256": "7b2bb1f7570d36d302c682ca4161535efd2beca94b36c81a65f67c045f0c6e36"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "OI",
+      "full_symbol": "",
+      "valid_from": "2018-05-16",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2018/05/07/1526089634152762-1526089634208871.pdf",
+      "source_sha256": "2823125e4e847c34865f13f2060d763d40003094c643f26211e648c64c2e3278"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "PF",
+      "full_symbol": "",
+      "valid_from": "2020-10-12",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2020/10/19/1597089064495905-1597089064568118.pdf",
+      "source_sha256": "524ad1f3252c1ff45808912f215b1365368f44037ff7bcf4d73cd78dfd45afe5"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "PK",
+      "full_symbol": "",
+      "valid_from": "2021-02-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/uploadfile/2021/01/25/20210125193319518.docx",
+      "source_sha256": "53878828cf142a2ba64110ba6939ab07f64d5dfb3934b1f82e245cec0eca7dda"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "PL",
+      "full_symbol": "",
+      "valid_from": "2025-07-22",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/uploadfile/2025/07/08/20250708185851907.docx",
+      "source_sha256": "bc2a8432367ee88a83767852b6877c5cb919e6e0ae23d345b9a14d29a697e0ae"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "PM",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 50.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/02/01/1327799397413286-1327799397415033.pdf",
+      "source_sha256": "142591340a52ad31de3b83daaa0db95540b86020af63a848dc787b03df6dcd65"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "PR",
+      "full_symbol": "",
+      "valid_from": "2024-08-30",
+      "valid_to": "",
+      "lot_size": 15.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/uploadfile/2024/08/16/20240816174226526.docx",
+      "source_sha256": "0769a569388724a4f6115e896c397e7499ccd79f2ec7f796110cd4fec019bf26"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "PX",
+      "full_symbol": "",
+      "valid_from": "2023-09-15",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/uploadfile/2023/09/08/20230908183616249.docx",
+      "source_sha256": "23b649bc48ccdcf9e60359ac7f2b3e22fc2b384db638547b5496114771d9663b"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "RI",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/07/11/1340962525895641-1340962526154737.pdf",
+      "source_sha256": "4bfcdaecf63c28a15a7693975c31fadf2a29b5ae7d5694a30e7ffab10ded4a84"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "RM",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/12/26/1356346927273732-1356346927586026.pdf",
+      "source_sha256": "cb8714361fc4159743e04413d3ebd20d4c773243ded9e507d181884ff6b7a729"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "RS",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/12/26/1356346927273732-1356346927586026.pdf",
+      "source_sha256": "cb8714361fc4159743e04413d3ebd20d4c773243ded9e507d181884ff6b7a729"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "SA",
+      "full_symbol": "",
+      "valid_from": "2019-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2019/12/16/1572880470270343-1572880470314473.pdf",
+      "source_sha256": "e14e1e3ea0d7ee65ff2922d34fd067edd825df952c6d366a955cef3ad0bc5896"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "SF",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2014/08/04/1406722921514143-1406897774336086.pdf",
+      "source_sha256": "ceea913ad213a39c739e105aa151462bb6e25c8c231fd04f82beba8ac6c0a117"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "SH",
+      "full_symbol": "",
+      "valid_from": "2023-09-15",
+      "valid_to": "",
+      "lot_size": 30.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/uploadfile/2023/09/08/20230908182945148.docx",
+      "source_sha256": "641e4f014f4cf0d3ce03e010c6502143fb2e809f636e61fd3361fd6d6bcf4cb9"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "SM",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2014/08/04/1406722921514143-1406897774336086.pdf",
+      "source_sha256": "ceea913ad213a39c739e105aa151462bb6e25c8c231fd04f82beba8ac6c0a117"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "SR",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2018/06/07/1527573618760693-1527573618804933.pdf",
+      "source_sha256": "e82b258b4298cbfee409ab0914f1d2436653d09c81bbf6a5f53afbd9b2a0e173"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "TA",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2017/09/07/1501757043311986-1501757043313448.pdf",
+      "source_sha256": "301bf385860876edf166423efe2c18cdd188d64a9b2bf5b34e021ec2522238d2"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "UR",
+      "full_symbol": "",
+      "valid_from": "2019-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/uploadfile/2019/08/02/20190802192701668.docx",
+      "source_sha256": "3d09f2aa6db76e566c69d5e92e4875ca20df40a70417b59d8da278281ce57390"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "WH",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2012/07/11/1340962525895641-1340962526154737.pdf",
+      "source_sha256": "4bfcdaecf63c28a15a7693975c31fadf2a29b5ae7d5694a30e7ffab10ded4a84"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "ZC",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 100.0,
+      "tick_size": 0.2,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/rootfiles/2015/05/08/1425547808690959-1425547808761440.pdf",
+      "source_sha256": "492ed3d98b777e652e49a3a40eade3e0d33eb75fc8f6d19a48854664c7bb1066"
+    },
+    {
+      "exchange": "DCE",
+      "product": "a",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "b",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "bb",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 500.0,
+      "tick_size": 0.05,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "bz",
+      "full_symbol": "",
+      "valid_from": "2025-07-08",
+      "valid_to": "",
+      "lot_size": 30.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2025-07-08",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/8637672/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%A4%A7%E8%BF%9E%E5%95%86%E5%93%81%E4%BA%A4%E6%98%93%E6%89%80%E7%BA%AF%E8%8B%AF%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc",
+      "source_sha256": "29c1a0df321bfd7d1ee24afd642e326a1f654716fe76f0389b55a02cca90884f"
+    },
+    {
+      "exchange": "DCE",
+      "product": "c",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "cs",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "eb",
+      "full_symbol": "",
+      "valid_from": "2018-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/09/2019092019585849981.docx",
+      "source_sha256": "b516ce26c76f3612adbd67aa57ed92963f0bdffdd3607e3574136bc5f129af98"
+    },
+    {
+      "exchange": "DCE",
+      "product": "eg",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "fb",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 500.0,
+      "tick_size": 0.05,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "2019-12",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "fb",
+      "full_symbol": "",
+      "valid_from": "2019-12-02",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 0.5,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2019-12-02",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "2020-01",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/10/2019101416095486912.docx",
+      "source_sha256": "13ae5d9d2a761de096ce189a9777bb4e0ef8d47f0cbf9bbf2c40309d4cb195cc"
+    },
+    {
+      "exchange": "DCE",
+      "product": "i",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 100.0,
+      "tick_size": 0.5,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "j",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 100.0,
+      "tick_size": 0.5,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "jd",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "jm",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 60.0,
+      "tick_size": 0.5,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "l",
+      "full_symbol": "",
+      "valid_from": "2021-10-29T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2021-11-01",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/6293982/2021101915433481492.docx",
+      "source_sha256": "c17a1aedc548deaee20dcca3b689028feb52417063b57fc435bae2801268c2e8"
+    },
+    {
+      "exchange": "DCE",
+      "product": "lg",
+      "full_symbol": "",
+      "valid_from": "2024-11-18",
+      "valid_to": "",
+      "lot_size": 90.0,
+      "tick_size": 0.5,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2024-11-18",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/8617136/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%A4%A7%E8%BF%9E%E5%95%86%E5%93%81%E4%BA%A4%E6%98%93%E6%89%80%E5%8E%9F%E6%9C%A8%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc",
+      "source_sha256": "dfe2647f6ef3aac59e41406a828a7aac27b1cc211f826e7a6ccc9bf09343b275"
+    },
+    {
+      "exchange": "DCE",
+      "product": "lh",
+      "full_symbol": "",
+      "valid_from": "2021-01-08",
+      "valid_to": "",
+      "lot_size": 16.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2021-01-08",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2020/12/2020123116522353950.doc",
+      "source_sha256": "eab8bd2529b99a4c591247c954ce92af3601ee6598d4912363a49990f2f668bd"
+    },
+    {
+      "exchange": "DCE",
+      "product": "m",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "p",
+      "full_symbol": "",
+      "valid_from": "2026-04-09T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2026-04-10",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/content/clientDf.do?id=8004933",
+      "source_sha256": "b4cd4207c09d8e9ec3ccd6d2c85d30f68f386155f9794831fcdc8de77660ff76"
+    },
+    {
+      "exchange": "DCE",
+      "product": "pg",
+      "full_symbol": "",
+      "valid_from": "2020-03-30",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2020-03-30",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2020/03/2020032019593940757.docx",
+      "source_sha256": "206b12c6419487582027a7f9bacada36074c443d0c9384d8753f0c3f7999c1ca"
+    },
+    {
+      "exchange": "DCE",
+      "product": "pp",
+      "full_symbol": "",
+      "valid_from": "2010-01-01",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "source_sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "product": "rr",
+      "full_symbol": "",
+      "valid_from": "2018-01-01",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/08/2019081316110295155.docx",
+      "source_sha256": "e837ff6754701a36b8fa1830216bd7c00b9b0b08f292aacd932a510c71acfe2d"
+    },
+    {
+      "exchange": "DCE",
+      "product": "v",
+      "full_symbol": "",
+      "valid_from": "2021-10-29T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2021-11-01",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/6293982/2021101915434622297.docx",
+      "source_sha256": "9b36de8ca63577e1a2cf36f0d4bd7db7b0f7647e5bb4cb27139202a71d09cb0a"
+    },
+    {
+      "exchange": "DCE",
+      "product": "y",
+      "full_symbol": "",
+      "valid_from": "2026-04-09T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "",
+      "valid_from_trade_date": "2026-04-10",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/content/clientDf.do?id=8004932",
+      "source_sha256": "481de05b440cc369e61ebcc98d524963f1819892d68eb8b2857c642c4fbfb90c"
+    },
+    {
+      "exchange": "GFEX",
+      "product": "si",
+      "full_symbol": "",
+      "valid_from": "2022-12-22",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2022-12-22",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.gfex.com.cn/gfex/tzts/202212/d24b8c94d69b4f40b4a1c347778cb4b3/files/%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E5%B7%A5%E4%B8%9A%E7%A1%85%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc",
+      "source_sha256": "4822979a4bac246633ca99687ff28edf253b8f3442265cd5428c914aa4759f36"
+    },
+    {
+      "exchange": "GFEX",
+      "product": "lc",
+      "full_symbol": "",
+      "valid_from": "2024-12-17",
+      "valid_to": "",
+      "lot_size": 1.0,
+      "tick_size": 20.0,
+      "valid_from_phase": "settlement",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2024-12-18",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.gfex.com.cn/gfex/tzts/202412/d11fe67af24946bb85cb88573f50f4b6/files/2.%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E7%A2%B3%E9%85%B8%E9%94%82%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20241206092506222.docx",
+      "source_sha256": "10bccf173fb5ec1b9c716eff4168d7d0da642407a7efc6afaa9edc5134ca6901"
+    },
+    {
+      "exchange": "GFEX",
+      "product": "ps",
+      "full_symbol": "",
+      "valid_from": "2024-12-26",
+      "valid_to": "",
+      "lot_size": 3.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2024-12-26",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.gfex.com.cn/gfex/tzts/202412/300e60ec93de4aa1a3bb992a471f5bf0/files/1.%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E5%A4%9A%E6%99%B6%E7%A1%85%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20241213191818710.docx",
+      "source_sha256": "c36a502e46694d49886e98d352e18b2e480e48b495c9921b575d368d783aa0c7"
+    },
+    {
+      "exchange": "GFEX",
+      "product": "pt",
+      "full_symbol": "",
+      "valid_from": "2025-11-27",
+      "valid_to": "",
+      "lot_size": 1000.0,
+      "tick_size": 0.05,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2025-11-27",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.gfex.com.cn/gfex/tzts/202508/d5ccac1795874b4ea00a6bb97c115949/files/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E9%93%82%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.docx",
+      "source_sha256": "ab25ed74be9149aa158e7e971866736a3a8ad702b52a5272455b3fc7a9b79258"
+    },
+    {
+      "exchange": "GFEX",
+      "product": "pd",
+      "full_symbol": "",
+      "valid_from": "2025-11-27",
+      "valid_to": "",
+      "lot_size": 1000.0,
+      "tick_size": 0.05,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2025-11-27",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "http://www.gfex.com.cn/gfex/tzts/202508/734ea461693a4f8ba4af5caaca609f5e/files/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E9%92%AF%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20251107150649629.docx",
+      "source_sha256": "70bdd29a56cabdadc3b08e38230b2ede80a17e82619adc67c2a9c7a76aa9ce5b"
+    },
+    {
+      "exchange": "INE",
+      "product": "sc",
+      "full_symbol": "",
+      "valid_from": "2018-04-27",
+      "valid_to": "",
+      "lot_size": 1000.0,
+      "tick_size": 0.1,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.ine.cn/products/futures/energyandchemical/sc_f/standard_sc_f/202312/t20231205_802540.html",
+      "source_sha256": "ff941de49bc2f8264597da46627716677afd7d384953a504ad6b76d822703eb8"
+    },
+    {
+      "exchange": "INE",
+      "product": "nr",
+      "full_symbol": "",
+      "valid_from": "2019-08-06",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.ine.cn/products/futures/energyandchemical/nr_f/standard_nr_f/202312/t20231205_802542.html",
+      "source_sha256": "4c55f4c7a3a09bcbcae8b8a69b8d43776b2a91f3f6511088ba5e32143d93ae31"
+    },
+    {
+      "exchange": "INE",
+      "product": "lu",
+      "full_symbol": "",
+      "valid_from": "2020-06-18",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.ine.cn/products/futures/energyandchemical/lu_f/standard_lu_f/202312/t20231205_802541.html",
+      "source_sha256": "ffb1b58215be550a3af169a0b374cbb4b70ceec76454fb48ac9da29fe37b4adc"
+    },
+    {
+      "exchange": "INE",
+      "product": "bc",
+      "full_symbol": "",
+      "valid_from": "2020-11-16",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 10.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.ine.cn/products/futures/metal/nonferrousmetal/bc_f/standard_bc_f/202312/t20231205_802543.html",
+      "source_sha256": "8bc06cfcdf00db324843c5d92251f514564ffb2f20e5600e77956503c82eb645"
+    },
+    {
+      "exchange": "INE",
+      "product": "ec",
+      "full_symbol": "",
+      "valid_from": "2026-05-11",
+      "valid_to": "",
+      "lot_size": 50.0,
+      "tick_size": 0.5,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.ine.cn/products/futures/index_f/ec_f/standard_ec_f/202605/t20260511_831625.html",
+      "source_sha256": "44da899463a95d0a389073d9223f858470b0f1b2a27aaca70fcba436a114f0a1"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "ad",
+      "full_symbol": "",
+      "valid_from": "2025-06-09",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ad_f/standard_ad_f/202506/t20250605_827954.html",
+      "source_sha256": "598ceb7a0e8175d24e77270d38672e9eab85ebc7a21fce3516bde9bef5d4f3bf"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "ag",
+      "full_symbol": "",
+      "valid_from": "2023-04-02",
+      "valid_to": "",
+      "lot_size": 15.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/ag_f/standard_ag_f/202312/t20231205_327323.html",
+      "source_sha256": "9e79f9bc79dd218b28960bdc3a231ee071c775e8e6271bfb990de8749ff624c5"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "al",
+      "full_symbol": "",
+      "valid_from": "2024-07-12",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/al_f/standard_al_f/202312/t20231205_330052.html",
+      "source_sha256": "56902e513459bd406b764909d21f531c96ff34d8b9997d33ebdd029f3eed0462"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "ao",
+      "full_symbol": "",
+      "valid_from": "2023-06-16",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ao_f/standard_ao_f/202312/t20231205_330053.html",
+      "source_sha256": "2ae402e2c3e08ed679cc5bfb7aa6859f8abc9970b089eaf25a5062edf0d4d023"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "au",
+      "full_symbol": "",
+      "valid_from": "2020-08-31",
+      "valid_to": "",
+      "lot_size": 1000.0,
+      "tick_size": 0.02,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/au_f/standard_au_f/202312/t20231205_316957.html",
+      "source_sha256": "3bb91e4647e54281b2d4b9d9bf4cfb7d55b3fa0bbeee606827e82051d9d819e6"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "br",
+      "full_symbol": "",
+      "valid_from": "2023-07-26",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/energyandchemical/br_f/standard_br_f/202312/t20231205_327333.html",
+      "source_sha256": "10dd1a406b7333850d258c9becc2db769a52c77f0253ba07e6aeab86407c81e2"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "bu",
+      "full_symbol": "",
+      "valid_from": "2024-12-27",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/energyandchemical/bu_f/standard_bu_f/202312/t20231205_327332.html",
+      "source_sha256": "602b44dbaf9af36f7f7255762629ba070a61cc3458d92e22320a8f8647494b9a"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "cu",
+      "full_symbol": "",
+      "valid_from": "2023-04-02",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 10.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/upload/20230117/1673948701354.doc",
+      "source_sha256": "1995517312f18529b737e109c6a04b899c472a5cb04032a383405c2d001a0624"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "fu",
+      "full_symbol": "",
+      "valid_from": "2024-11-13",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/energyandchemical/fu_f/standard_fu/202312/t20231205_327331.html",
+      "source_sha256": "ea06d731855c1cdda14000cf421e19d5001aa08f9b1862999ab8e7d8d3d3f7f2"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "hc",
+      "full_symbol": "",
+      "valid_from": "2025-10-31",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/hc_f/standard_hc_f/202312/t20231205_327326.html",
+      "source_sha256": "f7c26ff1764f953be5265716685c5a34a64728859ba6d3c3296b3587a77bab9b"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "ni",
+      "full_symbol": "",
+      "valid_from": "2025-10-31",
+      "valid_to": "",
+      "lot_size": 1.0,
+      "tick_size": 10.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ni_f/standard_ni_f/202312/t20231205_313864.html",
+      "source_sha256": "771436a762c65d892193e3af714c4053b4a73fb8e4186b9ce96dcbaeb130e283"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "op",
+      "full_symbol": "",
+      "valid_from": "2025-09-08",
+      "valid_to": "",
+      "lot_size": 40.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/energyandchemical/op_f/standard_op_f/202509/t20250908_828905.html",
+      "source_sha256": "d80fa4e91375924c56461c2485f8dfb7fe59b6d676d75d0ba09cb306c08d4329"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "pb",
+      "full_symbol": "",
+      "valid_from": "2024-04-12",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/pb_f/standard_pb_f/202312/t20231205_309039.html",
+      "source_sha256": "bc2e8292df0fe20a4fe36c8fcc1d378ddee2bc55cfc26fa194d049f1d30df620"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "rb",
+      "full_symbol": "",
+      "valid_from": "2024-09-24",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/rb_f/standard_rb_f/202312/t20231205_327324.html",
+      "source_sha256": "8542d9f60ff7d081de9314c32762f496141d265c4f690467e994ea49cf9c332e"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "ru",
+      "full_symbol": "",
+      "valid_from": "2024-11-13",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/energyandchemical/ru_f/standard_ru_f/202312/t20231205_327334.html",
+      "source_sha256": "2c7529ea4f649b398281de86c9647b7a839483ddf41e125ea6a921b4fce14dcb"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "sn",
+      "full_symbol": "",
+      "valid_from": "2023-04-02",
+      "valid_to": "",
+      "lot_size": 1.0,
+      "tick_size": 10.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/upload/20230117/1673948701354.doc",
+      "source_sha256": "1995517312f18529b737e109c6a04b899c472a5cb04032a383405c2d001a0624"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "sp",
+      "full_symbol": "",
+      "valid_from": "2024-11-13",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 2.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/energyandchemical/sp_f/standard_sp_f/202312/t20231205_327335.html",
+      "source_sha256": "c3aa1a02e77ed1ead7bc380182ce8026dcacee55ed5300840c4f66547bbfc3e4"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "ss",
+      "full_symbol": "",
+      "valid_from": "2025-10-31",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/ss_f/standard_ss_f/202312/t20231205_327327.html",
+      "source_sha256": "f61288c25903961a54a665bc12d015b6ea307af72c231e051b2b178a3c2d5fae"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "wr",
+      "full_symbol": "",
+      "valid_from": "2024-09-24",
+      "valid_to": "",
+      "lot_size": 10.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/wr_f/standard_wr_f/202312/t20231205_327325.html",
+      "source_sha256": "6faaf6fead7a87a5174364bd40eaeb7e0dc2245ea2d3a63a0ddd1f125d996d41"
+    },
+    {
+      "exchange": "SHFE",
+      "product": "zn",
+      "full_symbol": "",
+      "valid_from": "2023-04-02",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 5.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.shfe.cn/upload/20230117/1673948701354.doc",
+      "source_sha256": "1995517312f18529b737e109c6a04b899c472a5cb04032a383405c2d001a0624"
+    }
+  ],
+  "sources": [
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/zz500.html",
+      "sha256": "69c76cab18da850d26cf197dd3838ab52cdd47b09672148c9ab572fb69f60ddf"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/hs300.html",
+      "sha256": "4de40649110c2c93ddc44c3d1a05b00bb13400c141edb6e0df12b47a29fcef68"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/sz50gzqh.html",
+      "sha256": "e926d78cb86fbf35cbe17f1530e31b929bb34b2edd6e494e720ec68ad456bc59"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/zz1000.html",
+      "sha256": "cf996b053a3a696b8f45611b0dd79ff6bb4c498dfe191193c20a6591d39919c9"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/10t.html",
+      "sha256": "ff48387288fbc3dda99f9b831eb8a493d982486cedd1745ea636dec4dcfdc3a0"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/5tf.html",
+      "sha256": "2c10b5532928ebce5c03ff3744a68cea5a04306b3aab03247ee73301b5ea0989"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/30tl.html",
+      "sha256": "e00ab23e957d2b6fb0e57595db0c59ded012b1bfe83eea583b9b4b920c508686"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/jystz/20231020/34772.html",
+      "sha256": "a4b00f321dce528b31cb807431ae02dd86d4ba2538b76faa2497b58d135afe20"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2018/05/07/1526089633541564-1526089633598074.pdf",
+      "sha256": "9d56e715d0220073a572842a0a573793a6fb8f082b2e40f019b76b4eab0aec53"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2012/12/24/1355402644332702-1355402644334150.pdf",
+      "sha256": "08eb68d1f3e05c8ace0d56386c1e7542cca69d6b6f0ce2c237e8e9f179f2e84c"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2019/04/24/1545643298687500-1545643298714344.pdf",
+      "sha256": "ee944f4d6615bb8f2927252d8ba6e36e71937c303f61698191460d6069b360db"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2017/08/14/1501757002074520-1501757002076765.pdf",
+      "sha256": "fbc9a4a82a1ad240e6754f0ff38313278817634c6954689875853ba5b4993be4"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2012/11/28/1349588556736465-1349588556738184.pdf",
+      "sha256": "d712548d5284e25a7ec7b14de1676272549d066b40638eb88fa821c2ba0e8400"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2013/11/11/1383304257919452-1383304257921892.pdf",
+      "sha256": "3416a6008899bb2696a2ceef4e9a07700bb8578cd14f9b199943e55c2c663654"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2014/07/07/1404477843910981-1404477843912845.pdf",
+      "sha256": "44680a6b81b5c78e7d7780c78ef360339899b0f47352274483027d654cb79b14"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2014/06/13/1402482218812025-1402482218815763.pdf",
+      "sha256": "7b2bb1f7570d36d302c682ca4161535efd2beca94b36c81a65f67c045f0c6e36"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2018/05/07/1526089634152762-1526089634208871.pdf",
+      "sha256": "2823125e4e847c34865f13f2060d763d40003094c643f26211e648c64c2e3278"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2020/10/19/1597089064495905-1597089064568118.pdf",
+      "sha256": "524ad1f3252c1ff45808912f215b1365368f44037ff7bcf4d73cd78dfd45afe5"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/uploadfile/2021/01/25/20210125193319518.docx",
+      "sha256": "53878828cf142a2ba64110ba6939ab07f64d5dfb3934b1f82e245cec0eca7dda"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/uploadfile/2025/07/08/20250708185851907.docx",
+      "sha256": "bc2a8432367ee88a83767852b6877c5cb919e6e0ae23d345b9a14d29a697e0ae"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2012/02/01/1327799397413286-1327799397415033.pdf",
+      "sha256": "142591340a52ad31de3b83daaa0db95540b86020af63a848dc787b03df6dcd65"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/uploadfile/2024/08/16/20240816174226526.docx",
+      "sha256": "0769a569388724a4f6115e896c397e7499ccd79f2ec7f796110cd4fec019bf26"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/uploadfile/2023/09/08/20230908183616249.docx",
+      "sha256": "23b649bc48ccdcf9e60359ac7f2b3e22fc2b384db638547b5496114771d9663b"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2012/07/11/1340962525895641-1340962526154737.pdf",
+      "sha256": "4bfcdaecf63c28a15a7693975c31fadf2a29b5ae7d5694a30e7ffab10ded4a84"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2012/12/26/1356346927273732-1356346927586026.pdf",
+      "sha256": "cb8714361fc4159743e04413d3ebd20d4c773243ded9e507d181884ff6b7a729"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2019/12/16/1572880470270343-1572880470314473.pdf",
+      "sha256": "e14e1e3ea0d7ee65ff2922d34fd067edd825df952c6d366a955cef3ad0bc5896"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2014/08/04/1406722921514143-1406897774336086.pdf",
+      "sha256": "ceea913ad213a39c739e105aa151462bb6e25c8c231fd04f82beba8ac6c0a117"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/uploadfile/2023/09/08/20230908182945148.docx",
+      "sha256": "641e4f014f4cf0d3ce03e010c6502143fb2e809f636e61fd3361fd6d6bcf4cb9"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2018/06/07/1527573618760693-1527573618804933.pdf",
+      "sha256": "e82b258b4298cbfee409ab0914f1d2436653d09c81bbf6a5f53afbd9b2a0e173"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2017/09/07/1501757043311986-1501757043313448.pdf",
+      "sha256": "301bf385860876edf166423efe2c18cdd188d64a9b2bf5b34e021ec2522238d2"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/uploadfile/2019/08/02/20190802192701668.docx",
+      "sha256": "3d09f2aa6db76e566c69d5e92e4875ca20df40a70417b59d8da278281ce57390"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/rootfiles/2015/05/08/1425547808690959-1425547808761440.pdf",
+      "sha256": "492ed3d98b777e652e49a3a40eade3e0d33eb75fc8f6d19a48854664c7bb1066"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+      "sha256": "5208f742354efb5b4a5edc83bfb2ba815636cfd1e9de9890d34db79c5a15d6f9"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/8637672/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%A4%A7%E8%BF%9E%E5%95%86%E5%93%81%E4%BA%A4%E6%98%93%E6%89%80%E7%BA%AF%E8%8B%AF%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc",
+      "sha256": "29c1a0df321bfd7d1ee24afd642e326a1f654716fe76f0389b55a02cca90884f"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/09/2019092019585849981.docx",
+      "sha256": "b516ce26c76f3612adbd67aa57ed92963f0bdffdd3607e3574136bc5f129af98"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/10/2019101416095486912.docx",
+      "sha256": "13ae5d9d2a761de096ce189a9777bb4e0ef8d47f0cbf9bbf2c40309d4cb195cc"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/6293982/2021101915433481492.docx",
+      "sha256": "c17a1aedc548deaee20dcca3b689028feb52417063b57fc435bae2801268c2e8"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/8617136/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%A4%A7%E8%BF%9E%E5%95%86%E5%93%81%E4%BA%A4%E6%98%93%E6%89%80%E5%8E%9F%E6%9C%A8%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc",
+      "sha256": "dfe2647f6ef3aac59e41406a828a7aac27b1cc211f826e7a6ccc9bf09343b275"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2020/12/2020123116522353950.doc",
+      "sha256": "eab8bd2529b99a4c591247c954ce92af3601ee6598d4912363a49990f2f668bd"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/content/clientDf.do?id=8004933",
+      "sha256": "b4cd4207c09d8e9ec3ccd6d2c85d30f68f386155f9794831fcdc8de77660ff76"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2020/03/2020032019593940757.docx",
+      "sha256": "206b12c6419487582027a7f9bacada36074c443d0c9384d8753f0c3f7999c1ca"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/08/2019081316110295155.docx",
+      "sha256": "e837ff6754701a36b8fa1830216bd7c00b9b0b08f292aacd932a510c71acfe2d"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/6293982/2021101915434622297.docx",
+      "sha256": "9b36de8ca63577e1a2cf36f0d4bd7db7b0f7647e5bb4cb27139202a71d09cb0a"
+    },
+    {
+      "exchange": "DCE",
+      "url": "http://www.dce.com.cn/dce/content/clientDf.do?id=8004932",
+      "sha256": "481de05b440cc369e61ebcc98d524963f1819892d68eb8b2857c642c4fbfb90c"
+    },
+    {
+      "exchange": "GFEX",
+      "url": "http://www.gfex.com.cn/gfex/tzts/202212/d24b8c94d69b4f40b4a1c347778cb4b3/files/%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E5%B7%A5%E4%B8%9A%E7%A1%85%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc",
+      "sha256": "4822979a4bac246633ca99687ff28edf253b8f3442265cd5428c914aa4759f36"
+    },
+    {
+      "exchange": "GFEX",
+      "url": "http://www.gfex.com.cn/gfex/tzts/202412/d11fe67af24946bb85cb88573f50f4b6/files/2.%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E7%A2%B3%E9%85%B8%E9%94%82%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20241206092506222.docx",
+      "sha256": "10bccf173fb5ec1b9c716eff4168d7d0da642407a7efc6afaa9edc5134ca6901"
+    },
+    {
+      "exchange": "GFEX",
+      "url": "http://www.gfex.com.cn/gfex/tzts/202412/300e60ec93de4aa1a3bb992a471f5bf0/files/1.%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E5%A4%9A%E6%99%B6%E7%A1%85%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20241213191818710.docx",
+      "sha256": "c36a502e46694d49886e98d352e18b2e480e48b495c9921b575d368d783aa0c7"
+    },
+    {
+      "exchange": "GFEX",
+      "url": "http://www.gfex.com.cn/gfex/tzts/202508/d5ccac1795874b4ea00a6bb97c115949/files/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E9%93%82%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.docx",
+      "sha256": "ab25ed74be9149aa158e7e971866736a3a8ad702b52a5272455b3fc7a9b79258"
+    },
+    {
+      "exchange": "GFEX",
+      "url": "http://www.gfex.com.cn/gfex/tzts/202508/734ea461693a4f8ba4af5caaca609f5e/files/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E9%92%AF%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20251107150649629.docx",
+      "sha256": "70bdd29a56cabdadc3b08e38230b2ede80a17e82619adc67c2a9c7a76aa9ce5b"
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/energyandchemical/sc_f/standard_sc_f/202312/t20231205_802540.html",
+      "sha256": "ff941de49bc2f8264597da46627716677afd7d384953a504ad6b76d822703eb8"
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/energyandchemical/nr_f/standard_nr_f/202312/t20231205_802542.html",
+      "sha256": "4c55f4c7a3a09bcbcae8b8a69b8d43776b2a91f3f6511088ba5e32143d93ae31"
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/energyandchemical/lu_f/standard_lu_f/202312/t20231205_802541.html",
+      "sha256": "ffb1b58215be550a3af169a0b374cbb4b70ceec76454fb48ac9da29fe37b4adc"
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/metal/nonferrousmetal/bc_f/standard_bc_f/202312/t20231205_802543.html",
+      "sha256": "8bc06cfcdf00db324843c5d92251f514564ffb2f20e5600e77956503c82eb645"
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/index_f/ec_f/standard_ec_f/202605/t20260511_831625.html",
+      "sha256": "44da899463a95d0a389073d9223f858470b0f1b2a27aaca70fcba436a114f0a1"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ad_f/standard_ad_f/202506/t20250605_827954.html",
+      "sha256": "598ceb7a0e8175d24e77270d38672e9eab85ebc7a21fce3516bde9bef5d4f3bf"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/ag_f/standard_ag_f/202312/t20231205_327323.html",
+      "sha256": "9e79f9bc79dd218b28960bdc3a231ee071c775e8e6271bfb990de8749ff624c5"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/al_f/standard_al_f/202312/t20231205_330052.html",
+      "sha256": "56902e513459bd406b764909d21f531c96ff34d8b9997d33ebdd029f3eed0462"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ao_f/standard_ao_f/202312/t20231205_330053.html",
+      "sha256": "2ae402e2c3e08ed679cc5bfb7aa6859f8abc9970b089eaf25a5062edf0d4d023"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/au_f/standard_au_f/202312/t20231205_316957.html",
+      "sha256": "3bb91e4647e54281b2d4b9d9bf4cfb7d55b3fa0bbeee606827e82051d9d819e6"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/energyandchemical/br_f/standard_br_f/202312/t20231205_327333.html",
+      "sha256": "10dd1a406b7333850d258c9becc2db769a52c77f0253ba07e6aeab86407c81e2"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/energyandchemical/bu_f/standard_bu_f/202312/t20231205_327332.html",
+      "sha256": "602b44dbaf9af36f7f7255762629ba070a61cc3458d92e22320a8f8647494b9a"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/upload/20230117/1673948701354.doc",
+      "sha256": "1995517312f18529b737e109c6a04b899c472a5cb04032a383405c2d001a0624"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/energyandchemical/fu_f/standard_fu/202312/t20231205_327331.html",
+      "sha256": "ea06d731855c1cdda14000cf421e19d5001aa08f9b1862999ab8e7d8d3d3f7f2"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/hc_f/standard_hc_f/202312/t20231205_327326.html",
+      "sha256": "f7c26ff1764f953be5265716685c5a34a64728859ba6d3c3296b3587a77bab9b"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ni_f/standard_ni_f/202312/t20231205_313864.html",
+      "sha256": "771436a762c65d892193e3af714c4053b4a73fb8e4186b9ce96dcbaeb130e283"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/energyandchemical/op_f/standard_op_f/202509/t20250908_828905.html",
+      "sha256": "d80fa4e91375924c56461c2485f8dfb7fe59b6d676d75d0ba09cb306c08d4329"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/nonferrousmetal/pb_f/standard_pb_f/202312/t20231205_309039.html",
+      "sha256": "bc2e8292df0fe20a4fe36c8fcc1d378ddee2bc55cfc26fa194d049f1d30df620"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/rb_f/standard_rb_f/202312/t20231205_327324.html",
+      "sha256": "8542d9f60ff7d081de9314c32762f496141d265c4f690467e994ea49cf9c332e"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/energyandchemical/ru_f/standard_ru_f/202312/t20231205_327334.html",
+      "sha256": "2c7529ea4f649b398281de86c9647b7a839483ddf41e125ea6a921b4fce14dcb"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/energyandchemical/sp_f/standard_sp_f/202312/t20231205_327335.html",
+      "sha256": "c3aa1a02e77ed1ead7bc380182ce8026dcacee55ed5300840c4f66547bbfc3e4"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/ss_f/standard_ss_f/202312/t20231205_327327.html",
+      "sha256": "f61288c25903961a54a665bc12d015b6ea307af72c231e051b2b178a3c2d5fae"
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/wr_f/standard_wr_f/202312/t20231205_327325.html",
+      "sha256": "6faaf6fead7a87a5174364bd40eaeb7e0dc2245ea2d3a63a0ddd1f125d996d41"
+    }
+  ],
+  "lifecycle_calendars": {
+    "2017": {
+      "closed_weekdays": [
+        "2017-01-02",
+        "2017-01-27",
+        "2017-01-30",
+        "2017-01-31",
+        "2017-02-01",
+        "2017-02-02",
+        "2017-04-03",
+        "2017-04-04",
+        "2017-05-01",
+        "2017-05-29",
+        "2017-05-30",
+        "2017-10-02",
+        "2017-10-03",
+        "2017-10-04",
+        "2017-10-05",
+        "2017-10-06",
+        "2018-01-01"
+      ],
+      "assumption": null
+    },
+    "2018": {
+      "closed_weekdays": [
+        "2018-01-01",
+        "2018-02-15",
+        "2018-02-16",
+        "2018-02-19",
+        "2018-02-20",
+        "2018-02-21",
+        "2018-04-05",
+        "2018-04-06",
+        "2018-04-30",
+        "2018-05-01",
+        "2018-06-18",
+        "2018-09-24",
+        "2018-10-01",
+        "2018-10-02",
+        "2018-10-03",
+        "2018-10-04",
+        "2018-10-05",
+        "2018-12-31",
+        "2019-01-01"
+      ],
+      "assumption": null
+    },
+    "2019": {
+      "closed_weekdays": [
+        "2018-12-31",
+        "2019-01-01",
+        "2019-02-04",
+        "2019-02-05",
+        "2019-02-06",
+        "2019-02-07",
+        "2019-02-08",
+        "2019-04-05",
+        "2019-05-01",
+        "2019-05-02",
+        "2019-05-03",
+        "2019-06-07",
+        "2019-09-13",
+        "2019-10-01",
+        "2019-10-02",
+        "2019-10-03",
+        "2019-10-04",
+        "2019-10-07",
+        "2020-01-01",
+        "2020-01-24",
+        "2020-01-27",
+        "2020-01-28",
+        "2020-01-29",
+        "2020-01-30",
+        "2020-01-31"
+      ],
+      "assumption": null
+    },
+    "2020": {
+      "closed_weekdays": [
+        "2020-01-01",
+        "2020-01-24",
+        "2020-01-27",
+        "2020-01-28",
+        "2020-01-29",
+        "2020-01-30",
+        "2020-01-31",
+        "2020-04-06",
+        "2020-05-01",
+        "2020-05-04",
+        "2020-05-05",
+        "2020-06-25",
+        "2020-06-26",
+        "2020-10-01",
+        "2020-10-02",
+        "2020-10-05",
+        "2020-10-06",
+        "2020-10-07",
+        "2020-10-08",
+        "2021-01-01"
+      ],
+      "assumption": null
+    },
+    "2021": {
+      "closed_weekdays": [
+        "2021-01-01",
+        "2021-02-11",
+        "2021-02-12",
+        "2021-02-15",
+        "2021-02-16",
+        "2021-02-17",
+        "2021-04-05",
+        "2021-05-03",
+        "2021-05-04",
+        "2021-05-05",
+        "2021-06-14",
+        "2021-09-20",
+        "2021-09-21",
+        "2021-10-01",
+        "2021-10-04",
+        "2021-10-05",
+        "2021-10-06",
+        "2021-10-07",
+        "2022-01-03",
+        "2022-01-31"
+      ],
+      "assumption": null
+    },
+    "2022": {
+      "closed_weekdays": [
+        "2022-01-03",
+        "2022-01-31",
+        "2022-02-01",
+        "2022-02-02",
+        "2022-02-03",
+        "2022-02-04",
+        "2022-04-04",
+        "2022-04-05",
+        "2022-05-02",
+        "2022-05-03",
+        "2022-05-04",
+        "2022-06-03",
+        "2022-09-12",
+        "2022-10-03",
+        "2022-10-04",
+        "2022-10-05",
+        "2022-10-06",
+        "2022-10-07",
+        "2023-01-02",
+        "2023-01-23",
+        "2023-01-24",
+        "2023-01-25",
+        "2023-01-26",
+        "2023-01-27"
+      ],
+      "assumption": null
+    },
+    "2023": {
+      "closed_weekdays": [
+        "2023-01-02",
+        "2023-01-23",
+        "2023-01-24",
+        "2023-01-25",
+        "2023-01-26",
+        "2023-01-27",
+        "2023-04-05",
+        "2023-05-01",
+        "2023-05-02",
+        "2023-05-03",
+        "2023-06-22",
+        "2023-06-23",
+        "2023-09-29",
+        "2023-10-02",
+        "2023-10-03",
+        "2023-10-04",
+        "2023-10-05",
+        "2023-10-06",
+        "2024-01-01"
+      ],
+      "assumption": null
+    },
+    "2024": {
+      "closed_weekdays": [
+        "2024-01-01",
+        "2024-02-09",
+        "2024-02-12",
+        "2024-02-13",
+        "2024-02-14",
+        "2024-02-15",
+        "2024-02-16",
+        "2024-04-04",
+        "2024-04-05",
+        "2024-05-01",
+        "2024-05-02",
+        "2024-05-03",
+        "2024-06-10",
+        "2024-09-16",
+        "2024-09-17",
+        "2024-10-01",
+        "2024-10-02",
+        "2024-10-03",
+        "2024-10-04",
+        "2024-10-07",
+        "2025-01-01",
+        "2025-01-28",
+        "2025-01-29",
+        "2025-01-30",
+        "2025-01-31"
+      ],
+      "assumption": null
+    },
+    "2025": {
+      "closed_weekdays": [
+        "2025-01-01",
+        "2025-01-28",
+        "2025-01-29",
+        "2025-01-30",
+        "2025-01-31",
+        "2025-02-03",
+        "2025-02-04",
+        "2025-04-04",
+        "2025-05-01",
+        "2025-05-02",
+        "2025-05-05",
+        "2025-06-02",
+        "2025-10-01",
+        "2025-10-02",
+        "2025-10-03",
+        "2025-10-06",
+        "2025-10-07",
+        "2025-10-08",
+        "2026-01-01",
+        "2026-01-02"
+      ],
+      "assumption": null
+    },
+    "2026": {
+      "closed_weekdays": [
+        "2026-01-01",
+        "2026-01-02",
+        "2026-02-16",
+        "2026-02-17",
+        "2026-02-18",
+        "2026-02-19",
+        "2026-02-20",
+        "2026-02-23",
+        "2026-04-06",
+        "2026-05-01",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-06-19",
+        "2026-09-25",
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-05",
+        "2026-10-06",
+        "2026-10-07"
+      ],
+      "assumption": null
+    },
+    "2027": {
+      "closed_weekdays": [
+        "2027-01-01",
+        "2027-01-02",
+        "2027-01-03",
+        "2027-02-04",
+        "2027-02-05",
+        "2027-02-06",
+        "2027-02-07",
+        "2027-02-08",
+        "2027-02-09",
+        "2027-02-10",
+        "2027-02-11",
+        "2027-02-12",
+        "2027-04-03",
+        "2027-04-04",
+        "2027-04-05",
+        "2027-05-01",
+        "2027-05-02",
+        "2027-05-03",
+        "2027-05-04",
+        "2027-05-05",
+        "2027-06-09",
+        "2027-09-15",
+        "2027-10-01",
+        "2027-10-02",
+        "2027-10-03",
+        "2027-10-04",
+        "2027-10-05",
+        "2027-10-06",
+        "2027-10-07"
+      ],
+      "assumption": {
+        "source": "user_provided_holiday_assumptions",
+        "year": 2027,
+        "closed_date_ranges": [
+          [
+            "2027-01-01",
+            "2027-01-03"
+          ],
+          [
+            "2027-02-04",
+            "2027-02-12"
+          ],
+          [
+            "2027-04-03",
+            "2027-04-05"
+          ],
+          [
+            "2027-05-01",
+            "2027-05-05"
+          ],
+          [
+            "2027-06-09",
+            "2027-06-09"
+          ],
+          [
+            "2027-09-15",
+            "2027-09-15"
+          ],
+          [
+            "2027-10-01",
+            "2027-10-07"
+          ]
+        ],
+        "weekends_closed": true
+      }
+    }
+  },
+  "catalogs": [
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/10t.html",
+      "product": "T",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/10t.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/30tl.html",
+      "product": "TL",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/30tl.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/5tf.html",
+      "product": "TF",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/5tf.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/hs300.html",
+      "product": "IF",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/hs300.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/2ts.html",
+      "product": "TS",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/jystz/20231020/34772.html"
+      ],
+      "mode": "treasury",
+      "lot_size": 20000.0,
+      "tick_size": 0.002
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/sz50gzqh.html",
+      "product": "IH",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/sz50gzqh.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/zz1000.html",
+      "product": "IM",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/zz1000.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CFFEX",
+      "url": "http://www.cffex.com.cn/cn/zz500.html",
+      "product": "IC",
+      "approved_documents": [
+        "http://www.cffex.com.cn/cn/zz500.html"
+      ],
+      "mode": "document"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/bl/bzhy/qhhy/H077002009001001index_1.htm",
+      "product": "FG",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/11/28/1349588556736465-1349588556738184.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/bt/bzhy/qhhy/H077002004001001index_1.htm",
+      "product": "SR",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2018/06/07/1527573618760693-1527573618804933.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/bxqhqq/bzhy/qhhy/H077002030002001index_1.htm",
+      "product": "PL",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/uploadfile/2025/07/08/20250708185851907.docx"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/cjqh/bzhy/qhhy/H077002024002001index_1.htm",
+      "product": "SA",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2019/12/16/1572880470270343-1572880470314473.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/czp/bzhy/qhhy/H077002011001001index_1.htm",
+      "product": "RM",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/12/26/1356346927273732-1356346927586026.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/czy/bzhy/qhhy/H077002006001001index_1.htm",
+      "product": "OI",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2018/05/07/1526089634152762-1526089634208871.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/dejbqhqq/bzhy/qhhy/H077002027002001index_1.htm",
+      "product": "PX",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/uploadfile/2023/09/08/20230908183616249.docx"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/dlm/bzhy/qhhy/H077002012001001index_1.htm",
+      "product": "ZC",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2015/05/08/1425547808690959-1425547808761440.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/dxqh/bzhy/qhhy/H077002025002001index_1.htm",
+      "product": "PF",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2020/10/19/1597089064495905-1597089064568118.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/gt/bzhy/qhhy/H077002017001001index_1.htm",
+      "product": "SF",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2014/08/04/1406722921514143-1406897774336086.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/hsqh/bzhy/qhhy/H077002026002001index_1.htm",
+      "product": "PK",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/uploadfile/2021/01/25/20210125193319518.docx"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/hzqh/bzhy/qhhy/H077002022002001index_1.htm",
+      "product": "CJ",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2019/04/24/1545643298687500-1545643298714344.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/jc/bzhy/qhhy/H077002008001001index_1.htm",
+      "product": "MA",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2014/06/13/1402482218812025-1402482218815763.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/jd/bzhy/qhhy/H077002013001001index_1.htm",
+      "product": "JR",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2013/11/11/1383304257919452-1383304257921892.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/meng/bzhy/qhhy/H077002020001001index_1.htm",
+      "product": "SM",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2014/08/04/1406722921514143-1406897774336086.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/mh/bzhy/qhhy/H077002003001001index_1.htm",
+      "product": "CF",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/12/24/1355402644332702-1355402644334150.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/miansha/bzhy/qhhy/H077002019001001index_1.htm",
+      "product": "CY",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2017/08/14/1501757002074520-1501757002076765.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/nsqh/bzhy/qhhy/H077002023002001index_1.htm",
+      "product": "UR",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/uploadfile/2019/08/02/20190802192701668.docx"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/pg/bzhy/qhhy/H077002021001001index_1.htm",
+      "product": "AP",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2018/05/07/1526089633541564-1526089633598074.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/pm/bzhy/qhhy/H077002002001001index_1.htm",
+      "product": "PM",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/02/01/1327799397413286-1327799397415033.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/ppqh/bzhy/qhhy/H077002029002001index_1.htm",
+      "product": "PR",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/uploadfile/2024/08/16/20240816174226526.docx"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/pta/bzhy/qhhy/H077002005001001index_1.htm",
+      "product": "TA",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2017/09/07/1501757043311986-1501757043313448.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/qm/bzhy/qhhy/H077002001001001index_1.htm",
+      "product": "WH",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/07/11/1340962525895641-1340962526154737.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/sjqhqq/bzhy/qhhy/H077002028002001index_1.htm",
+      "product": "SH",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/uploadfile/2023/09/08/20230908182945148.docx"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/wxd/bzhy/qhhy/H077002014001001index_1.htm",
+      "product": "LR",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2014/07/07/1404477843910981-1404477843912845.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/ycz/bzhy/qhhy/H077002010001001index_1.htm",
+      "product": "RS",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/12/26/1356346927273732-1356346927586026.pdf"
+      ]
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/sspz/zxd/bzhy/qhhy/H077002007001001index_1.htm",
+      "product": "RI",
+      "approved_documents": [
+        "https://www.czce.com.cn/cn/rootfiles/2012/07/11/1340962525895641-1340962526154737.pdf"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/290.html",
+      "product": "a",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2092.html",
+      "product": "b",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2000157.html",
+      "product": "bb",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/7000027.html",
+      "product": "bz",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/8637672/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%A4%A7%E8%BF%9E%E5%95%86%E5%93%81%E4%BA%A4%E6%98%93%E6%89%80%E7%BA%AF%E8%8B%AF%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/272.html",
+      "product": "c",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/306.html",
+      "product": "cs",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2329.html",
+      "product": "eb",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/09/2019092019585849981.docx"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2123.html",
+      "product": "eg",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2000156.html",
+      "product": "fb",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc",
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/10/2019101416095486912.docx"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2191.html",
+      "product": "i",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2000158.html",
+      "product": "j",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2263.html",
+      "product": "jd",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2000159.html",
+      "product": "jm",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/7000120.html",
+      "product": "l",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/6293982/2021101915433481492.docx"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2290.html",
+      "product": "lg",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/8617136/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%A4%A7%E8%BF%9E%E5%95%86%E5%93%81%E4%BA%A4%E6%98%93%E6%89%80%E5%8E%9F%E6%9C%A8%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2279.html",
+      "product": "lh",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2020/12/2020123116522353950.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2220.html",
+      "product": "m",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2242.html",
+      "product": "p",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/content/clientDf.do?id=8004933"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2090.html",
+      "product": "pg",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2020/03/2020032019593940757.docx"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/7000133.html",
+      "product": "pp",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2018/12/2018122816370239623.doc"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2000155.html",
+      "product": "rr",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/2019/08/2019081316110295155.docx"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/7000127.html",
+      "product": "v",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/his/eportal/fileDir/dalianshangpin/resource/cms/article/486013/6293982/2021101915434622297.docx"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "url": "https://www.dce.com.cn/dce/channel/list/2233.html",
+      "product": "y",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/content/clientDf.do?id=8004932"
+      ]
+    },
+    {
+      "exchange": "GFEX",
+      "url": "https://www.gfex.com.cn/gfex/djg/sspz.shtml",
+      "product": "ps",
+      "approved_documents": [
+        "http://www.gfex.com.cn/gfex/tzts/202412/300e60ec93de4aa1a3bb992a471f5bf0/files/1.%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E5%A4%9A%E6%99%B6%E7%A1%85%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20241213191818710.docx"
+      ]
+    },
+    {
+      "exchange": "GFEX",
+      "url": "https://www.gfex.com.cn/gfex/gyeg/sspz.shtml",
+      "product": "si",
+      "approved_documents": [
+        "http://www.gfex.com.cn/gfex/tzts/202212/d24b8c94d69b4f40b4a1c347778cb4b3/files/%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E5%B7%A5%E4%B8%9A%E7%A1%85%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.doc"
+      ]
+    },
+    {
+      "exchange": "GFEX",
+      "url": "https://www.gfex.com.cn/gfex/sspzb/sspz.shtml",
+      "product": "pt",
+      "approved_documents": [
+        "http://www.gfex.com.cn/gfex/tzts/202508/d5ccac1795874b4ea00a6bb97c115949/files/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E9%93%82%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6.docx"
+      ]
+    },
+    {
+      "exchange": "GFEX",
+      "url": "https://www.gfex.com.cn/gfex/sspzp/sspz.shtml",
+      "product": "pd",
+      "approved_documents": [
+        "http://www.gfex.com.cn/gfex/tzts/202508/734ea461693a4f8ba4af5caaca609f5e/files/%E9%99%84%E4%BB%B61%EF%BC%9A%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E9%92%AF%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20251107150649629.docx"
+      ]
+    },
+    {
+      "exchange": "GFEX",
+      "url": "https://www.gfex.com.cn/gfex/tsl/sspz.shtml",
+      "product": "lc",
+      "approved_documents": [
+        "http://www.gfex.com.cn/gfex/tzts/202412/d11fe67af24946bb85cb88573f50f4b6/files/2.%E5%B9%BF%E5%B7%9E%E6%9C%9F%E8%B4%A7%E4%BA%A4%E6%98%93%E6%89%80%E7%A2%B3%E9%85%B8%E9%94%82%E6%9C%9F%E8%B4%A7%E5%90%88%E7%BA%A6-20241206092506222.docx"
+      ]
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/metal/nonferrousmetal/bc_f/standard_bc_f/",
+      "product": "bc",
+      "approved_documents": [
+        "https://www.ine.cn/products/futures/metal/nonferrousmetal/bc_f/standard_bc_f/202312/t20231205_802543.html"
+      ]
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/index_f/ec_f/standard_ec_f/",
+      "product": "ec",
+      "approved_documents": [
+        "https://www.ine.cn/products/futures/index_f/ec_f/standard_ec_f/202605/t20260511_831625.html"
+      ]
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/energyandchemical/lu_f/standard_lu_f/",
+      "product": "lu",
+      "approved_documents": [
+        "https://www.ine.cn/products/futures/energyandchemical/lu_f/standard_lu_f/202312/t20231205_802541.html"
+      ]
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/energyandchemical/nr_f/standard_nr_f/",
+      "product": "nr",
+      "approved_documents": [
+        "https://www.ine.cn/products/futures/energyandchemical/nr_f/standard_nr_f/202312/t20231205_802542.html"
+      ]
+    },
+    {
+      "exchange": "INE",
+      "url": "https://www.ine.cn/products/futures/energyandchemical/sc_f/standard_sc_f/",
+      "product": "sc",
+      "approved_documents": [
+        "https://www.ine.cn/products/futures/energyandchemical/sc_f/standard_sc_f/202312/t20231205_802540.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/ad_f/standard_ad_f/",
+      "product": "ad",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ad_f/standard_ad_f/202506/t20250605_827954.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/ferrousandpreciousmetal/ag_f/standard_ag_f/",
+      "product": "ag",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/ag_f/standard_ag_f/202312/t20231205_327323.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/al_f/standard_al_f/",
+      "product": "al",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/nonferrousmetal/al_f/standard_al_f/202312/t20231205_330052.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/ao_f/standard_ao_f/",
+      "product": "ao",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ao_f/standard_ao_f/202312/t20231205_330053.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/ferrousandpreciousmetal/au_f/standard_au_f/",
+      "product": "au",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/au_f/standard_au_f/202312/t20231205_316957.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/energyandchemical/br_f/standard_br_f/",
+      "product": "br",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/energyandchemical/br_f/standard_br_f/202312/t20231205_327333.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/energyandchemical/bu_f/standard_bu_f/",
+      "product": "bu",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/energyandchemical/bu_f/standard_bu_f/202312/t20231205_327332.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/cu_f/",
+      "product": "cu",
+      "approved_documents": [
+        "https://www.shfe.cn/upload/20230117/1673948701354.doc"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/energyandchemical/fu_f/standard_fu/",
+      "product": "fu",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/energyandchemical/fu_f/standard_fu/202312/t20231205_327331.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/ferrousandpreciousmetal/hc_f/standard_hc_f/",
+      "product": "hc",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/hc_f/standard_hc_f/202312/t20231205_327326.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/ni_f/standard_ni_f/",
+      "product": "ni",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/nonferrousmetal/ni_f/standard_ni_f/202312/t20231205_313864.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/energyandchemical/op_f/standard_op_f/",
+      "product": "op",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/energyandchemical/op_f/standard_op_f/202509/t20250908_828905.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/pb_f/standard_pb_f/",
+      "product": "pb",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/nonferrousmetal/pb_f/standard_pb_f/202312/t20231205_309039.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/ferrousandpreciousmetal/rb_f/standard_rb_f/",
+      "product": "rb",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/rb_f/standard_rb_f/202312/t20231205_327324.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/energyandchemical/ru_f/standard_ru_f/",
+      "product": "ru",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/energyandchemical/ru_f/standard_ru_f/202312/t20231205_327334.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/sn_f/",
+      "product": "sn",
+      "approved_documents": [
+        "https://www.shfe.cn/upload/20230117/1673948701354.doc"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/energyandchemical/sp_f/standard_sp_f/",
+      "product": "sp",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/energyandchemical/sp_f/standard_sp_f/202312/t20231205_327335.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/ferrousandpreciousmetal/ss_f/standard_ss_f/",
+      "product": "ss",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/ss_f/standard_ss_f/202312/t20231205_327327.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/ferrousandpreciousmetal/wr_f/standard_wr_f/",
+      "product": "wr",
+      "approved_documents": [
+        "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/wr_f/standard_wr_f/202312/t20231205_327325.html"
+      ]
+    },
+    {
+      "exchange": "SHFE",
+      "url": "https://www.shfe.com.cn/products/futures/metal/nonferrousmetal/zn_f/",
+      "product": "zn",
+      "approved_documents": [
+        "https://www.shfe.cn/upload/20230117/1673948701354.doc"
+      ]
+    }
+  ]
+}

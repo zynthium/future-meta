@@ -90,30 +90,19 @@ python3 scripts/collect_contract_specs.py   --offline   --evidence-dir data/offi
 完整新库导入入口为 daemon 的 `rebuild-collected`，会导入多空保证金与日内开仓费并按变化生成版本，见 [官方数据重建说明](../docs/official-rebuild.md)。旧的单所手续费审阅导入命令不等同于这一完整重建入口。
 
 
-## 官方日更与可移植输入
+## 基于 archive 的官方日更
 
-`update_official.py` 只采集维护库截止日后的官方交易日，使用独立日历证据判断周末/休市。
-没有新交易日时不发布。六所参数与新日期 CBI 原件全部成功后，严格构建元数据和短区间
-重建库，调用 `update-collected` 合并历史，验证、导出、整理空间，并准备下一轮 bootstrap。
-输入 SQLite 不写入；使用新的 `--work-dir` 保存原件、候选元数据和诊断。
-`public/` 是导出暂存，archive 的下载 URL 尚未填写。`publish_data.py prepare` 会真实发布独立数据 Release，公开读回校验后准备 `data/pages-site/`；该目录仅包含 manifest、coverage 和维护 `ops/`。部署成功且线上内容匹配后，`cleanup` 只保留当前与被替换的数据版本，不删除 SDK Release。
-定时 workflow 先运行纯离线 `update_schedule.py`，再以 `update_official.py --scheduled` 复核实际时间；
-周末、休市日、普通早晨和节前无夜盘均不访问交易所。已保留月历复用 SHA 校验原件，定时补采串行执行。
-门禁时间、年度官方日历维护及节后补跑的数据范围见 [访问评估](../docs/update-access-and-hosting.md)。
+`update_official.py` 从同一数据分支 commit 读取 manifest 和检查点，下载上一版客户端 archive，串行补齐所有缺失交易日。`incremental_inputs.py` 使用小规则配置、官方现行合约目录及新日期 CBI 生成完整参数；`update-archive` 验证并追加业务变化，不使用 SQLite 或 bootstrap。
 
 ```bash
-python3 scripts/update_official.py --db data/future-meta.sqlite \
-  --inputs data/official-inputs.json --work-dir /tmp/official-daily \
-  --public-dir /tmp/official-public
+xvfb-run -a python3 scripts/update_official.py \
+  --repo zynthium/future-meta --work-dir /tmp/official-daily
 ```
 
-Linux 需安装 `requests`、Playwright Chrome 并通过 `xvfb-run -a` 执行，以支持大商所浏览器。
-`--through YYYY-MM-DD` 可显式限制截止日；默认中国时间 18:30 前使用前一天，之后使用当天。
-交易所尚未发布、网络错误、缺少规格/生命周期原件或合并冲突均失败，不将错误当作休市。
+该命令会真实写数据分支和发布数据，必须已有更新/发布授权；工作目录必须不存在。普通运行始终执行离线日历和实际时段门禁，不提供绕过窗口的在线参数。Linux 需要 `requests`、Playwright Chrome 和 `xvfb-run`。
 
-`package_official_inputs.py package` 根据官方清单与元数据来源账本验证原件 SHA，重写相对
-`raw_path` 并打包。包中保留产品规格清单、生命周期清单、CBI 索引、官方日历及原件，
-不含业务 SQLite、旧参数 CSV、凭据。`restore --archive FILE --out EMPTY_DIR` 校验逐文件 SHA
-和安全路径后恢复。包和维护库必须有同一 `through`。传输索引 schema 2 指向同目录的单个 `official-inputs.tar.gz`，记录文件名、SHA 和大小；旧分片索引不再接受。
-显式假期配置写入 bootstrap，日更只继承该配置，不自行引入新假期假设。详细运行与部署边界见
-[部署说明](../docs/deployment.md#github-定时更新)。
+`data_branch.py` 原子更新 manifest 与小状态，记录尝试、成功和六所检查点。`publish_data.py` 上传并核验不可变附件、公开读回及安全清理。无变化保持原 archive 和 manifest。
+
+`catalog_guard.py` 校验现行合约入口，不把旧文档仍可下载当作没有新规则。新文档、历史同日修订、无法解析目录、日期错误或数据缺口均停止，需要本地核对。来源文档按 URL 去重并支持条件请求；官方窗口与重试上限见 [部署说明](../docs/deployment.md)。
+
+`migrate_archive_state.py` 是一次性本地迁移工具：读取有完整 SHA 清单的封存，从已批准业务 archive、审计状态和官方清单提取小状态与规则。它不联网、不发布。原始证据仅在本地保存；CI 临时原件不长期上传。

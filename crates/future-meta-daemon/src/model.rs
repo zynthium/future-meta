@@ -1,10 +1,10 @@
 //! Source-neutral normalized parameters shared by official import paths.
 
 use future_meta::model::{FeeSpec, TradingStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Source row normalized down to fields allowed for history and publishing.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AllowedRow {
     /// TqSdk-style futures contract symbol.
     pub symbol: String,

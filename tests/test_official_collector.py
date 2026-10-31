@@ -14,21 +14,11 @@ import update_official as update
 
 
 class OfficialPostTransportTests(unittest.TestCase):
-    def test_retained_official_month_calendar_avoids_any_http_request(self):
-        body = b'<docs><doc><pubdate>2026-11-02</pubdate><title>normal</title></doc></docs>'
-        sha = hashlib.sha256(body).hexdigest()
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            evidence = root/'evidence'
-            evidence.mkdir()
-            (evidence/(sha+'.xml')).write_bytes(body)
-            url = 'http://www.cffex.com.cn/sj/jyrl/202611/index_6782.xml'
-            (evidence/'cffex-calendar-test.tsv').write_text(
-                f'month\tcanonical_url\tsha256\traw_path\n2026-11\t{url}\t{sha}\t{sha}.xml\n')
-            with patch.object(collector.requests, 'request', side_effect=AssertionError('unexpected exchange access')) as request:
-                self.assertEqual(update.refresh_calendar(evidence, root/'raw', update.date(2026, 11, 2),
-                                                         update.date(2026, 11, 2)), ['2026-11-02'])
-            request.assert_not_called()
+    def test_official_calendar_avoids_any_http_request(self):
+        from incremental_inputs import trading_dates
+        with patch.object(collector.requests,'request',side_effect=AssertionError('unexpected exchange access')) as request:
+            self.assertEqual(trading_dates('2026-11-02','2026-11-02'), ['2026-11-02'])
+        request.assert_not_called()
 
     def test_cbi_browser_after_http_exhaustion_retains_original_bytes(self):
         body = b'{"report_date":"20261030","original":"\\u94dc"}\n'
@@ -94,7 +84,7 @@ class OfficialPostTransportTests(unittest.TestCase):
             with patch.object(collector.requests, 'request', side_effect=responses) as request, patch.object(collector.time, 'sleep') as sleep:
                 self.assertEqual(store.get('GFEX', '2026-10-30', url, form=form), body)
             self.assertEqual(request.call_count, 2)
-            sleep.assert_called_once_with(1.0)
+            sleep.assert_called_once_with(2.0)
             for call in request.call_args_list:
                 self.assertEqual(call.args, ('POST', url))
                 self.assertEqual(call.kwargs['data'], form)
@@ -109,9 +99,9 @@ class OfficialPostTransportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             store = collector.RawStore(Path(temp), None, False)
             with patch.object(collector.requests, 'request', return_value=Mock(status_code=524)) as request, patch.object(collector.time, 'sleep'):
-                with self.assertRaisesRegex(RuntimeError, 'after 5 attempts'):
+                with self.assertRaisesRegex(RuntimeError, 'after 3 attempts'):
                     store.get('GFEX', '2026-10-30', url, form={'trade_date': '20261030'})
-            self.assertEqual(request.call_count, 5)
+            self.assertEqual(request.call_count, 3)
             self.assertFalse((Path(temp)/'gfex/2026-10-30.json').exists())
 
 

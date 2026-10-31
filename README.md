@@ -2,14 +2,14 @@
 
 [![update-fee-data](https://github.com/zynthium/future-meta/actions/workflows/update-fee-data.yml/badge.svg)](https://github.com/zynthium/future-meta/actions/workflows/update-fee-data.yml)
 [![Rust 2024](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
-[![GitHub Pages](https://img.shields.io/badge/GitHub-Pages-222222.svg)](https://zynthium.github.io/future-meta/manifest.json)
+[![Data](https://img.shields.io/badge/GitHub-data-222222.svg)](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)
 
 中国期货手续费历史数据维护与本地 as-of 查询库。
 
-`future-meta` 从交易所官方采集数据重建手续费、保证金和规格历史，维护 SQLite 并导出压缩二进制 artifact。客户端读取 GitHub Pages 的 `manifest.json`，再下载其指向的 Release 附件，在本地完成高性能手续费查询。
+`future-meta` 从交易所官方数据维护手续费、保证金和规格变更历史。日更直接以既有客户端 archive 为基线；客户端读取独立 `data` 分支的 manifest，再下载不可变 Release 附件，在本地完成高性能 as-of 查询。SQLite 和原始证据只供本地诊断。
 
 > [!IMPORTANT]
-> SDK 与数据独立发布：v0.6.0 可通过固定 Pages manifest 获取新的 schema 4 数据 Release，无需随日更升级 SDK。维护 seed 和官方输入只供更新流程读取。线上覆盖以 [manifest](https://zynthium.github.io/future-meta/manifest.json) 和 [覆盖报告](https://zynthium.github.io/future-meta/coverage.json) 为准。
+> SDK 与数据独立发布：v0.6.0 无需升级，但已安装版本需一次性配置新的 [manifest URL](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)。最后尝试、成功时间与完整核验日期见 [更新状态](https://raw.githubusercontent.com/zynthium/future-meta/data/update-state.json)，不以 archive 的生成时间代替检查进度。
 
 ## 功能特性
 
@@ -18,19 +18,19 @@
 - 提供可按历史时间查询的合约乘数、最小变动价位，以及派生的每手每跳价值。
 - 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
 - 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
-- daemon 使用 SQLite 保存历史版本，按手续费或投机保证金变化生成有效期区间，独立保留日内开仓费。
-- 官方日更流程采集六所逐日参数，验证原件、生命周期和规格后生成新的维护库及客户端 artifact；工作日 18:45 夜盘前更新，08:05 仅节后首个早晨补跑；本地官方日历门禁跳过周末、休市和节前无夜盘。线上状态须以实际运行和发布读回为准。
+- 日更对业务字段比较，仅在变化时追加历史版本；无变化保持 archive 原字节。独立保留日内开仓费与未知值。
+- 官方日更流程采集六所逐日参数，验证官方现行规则、生命周期和规格后按需生成客户端 artifact；工作日 18:45 夜盘前更新，08:05 仅节后首个早晨补跑；本地官方日历门禁跳过周末、休市和节前无夜盘。线上状态须以实际运行和发布读回为准。
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    exchange[交易所官方采集输出] --> daemon[future-meta-daemon]
-    daemon --> sqlite[(SQLite 历史 seed)]
-    sqlite --> export[导出 artifact]
-    export --> releases[GitHub Release: 客户端 archive]
-    export --> pages[GitHub Pages: manifest 和维护输入]
-    pages --> client[future-meta client]
+    archive[上一版客户端 archive] --> daemon[future-meta-daemon]
+    exchange[官方缺失交易日数据] --> daemon
+    state[data 分支: manifest 和检查点] --> daemon
+    daemon --> releases[GitHub Release: 不可变 archive]
+    daemon --> state
+    state --> client[future-meta client]
     releases --> client
     client --> app[交易/研究程序]
 ```
@@ -40,11 +40,11 @@ flowchart LR
 | Crate | 作用 |
 | --- | --- |
 | `future-meta` | 公开模型、archive 编解码、下载缓存、TqSdk symbol 解析和 as-of 查询 API |
-| `future-meta-daemon` | 官方采集输出重建与增量合并、证据审阅导入、SQLite 历史维护、客户端 artifact 导出 |
+| `future-meta-daemon` | archive 增量历史维护，以及本地 SQLite 重建、证据审阅与导出工具 |
 
 ## 快速开始
 
-运行在线 smoke test，通过 Pages manifest 下载 Release 附件并查询 `SHFE.cu2607`：
+运行在线 smoke test，通过 data 分支 manifest 下载 Release 附件并查询 `SHFE.cu2607`：
 
 ```bash
 cargo run -p future-meta --features download --example online_smoke SHFE.cu2607 2026-06-08T10:48:06Z
@@ -90,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 默认 manifest 地址是：
 
 ```text
-https://zynthium.github.io/future-meta/manifest.json
+https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json
 ```
 
 可用 `FUTURE_META_CACHE_DIR` 覆盖客户端 artifact 缓存目录。
@@ -301,53 +301,30 @@ cargo run -p future-meta-daemon -- import-ine-parameters \
 或 SHA-256 不合法时，导入在写库前硬失败。成功版本同时保留日参数与平今规则两份
 官方证据，并标记为 `paired_official`。
 
-运行官方日更到独立输出目录（Linux 下大商所浏览器使用 `xvfb-run -a`）：
+## 自动更新与部署
 
-```bash
-python3 scripts/update_official.py \
-  --db data/future-meta.sqlite --inputs data/official-inputs.json \
-  --work-dir /tmp/future-meta-official-update --public-dir /tmp/future-meta-pages
+GitHub Actions 从现有 archive 和小检查点补齐缺失交易日；不下载 SQLite 或原件包。新数据先发布并校验 Release，再以一次提交同时更新 `data` 分支的 manifest 与检查点。无业务变化只更新状态，不重发 archive。规则目录变化、原件修订、缺少元数据或请求失败均停止更新，不推进成功检查点。
+
+固定索引：`https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json`。
+
+已安装的 v0.6.0 一次性设置：
+
+```rust
+let config = DownloadConfig {
+    manifest_url: "https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json".into(),
+    ..Default::default()
+};
 ```
 
-`official-inputs.json` 与维护库必须有相同观测截止日；每次使用新的 work-dir。
-原维护库只读，失败诊断和原始输入保留在工作目录。无新交易日时不发布。
-初始官方采集需要本地完成，GitHub Actions 只做增量；新 bootstrap 的打包与恢复见
-[部署说明](docs/deployment.md)。
+工作流为 `.github/workflows/update-fee-data.yml`，仅需内置 `GITHUB_TOKEN` 的 `contents: write`。无需 Pages。数据 Release 设置 `--latest=false`，SDK Latest 独立保留。
 
-对官方采集维护库验证并导出：
-
-```bash
-cargo run -p future-meta-daemon -- verify-collected \
-  --db path/to/review-copy.sqlite --out public/coverage.json
-cargo run -p future-meta-daemon -- export \
-  --db path/to/review-copy.sqlite --out public
-mkdir -p public/ops
-cargo run -p future-meta-daemon -- compact-seed \
-  --db path/to/review-copy.sqlite --out /tmp/future-meta-compacted.sqlite
-gzip -c /tmp/future-meta-compacted.sqlite > public/ops/future-meta.sqlite.gz
-```
-
-`verify-collected` 验证采集关联并报告观测覆盖，不等同于自上市日起严格完整。
-发布还需准备相同截止日的官方输入 bootstrap；本地导出不会自动部署。
-
-## 部署
-
-客户端数据使用独立 `data-*` Release 附件；Pages 保留稳定入口和维护输入：
-
-- Production URL: `https://zynthium.github.io/future-meta`
-- Manifest: `https://zynthium.github.io/future-meta/manifest.json`
-- Daemon seed: `https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz`
-
-GitHub Actions workflow 位于 `.github/workflows/update-fee-data.yml`。`public/` 是本地导出暂存目录；发布脚本先上传并核验 Release 附件，再将 manifest、coverage 和 `ops/` 整理到 `data/pages-site/`，通过官方 Pages actions 发布。
-发布 job 使用内置 `GITHUB_TOKEN` 的 `contents: write`、`pages: write`、`id-token: write`，无需外部云 secrets。数据 Release 设置 `--latest=false`，SDK 的 Latest 保持独立。
-
-只重新发布已核验数据、不访问交易所：
+只验证当前公开数据，不访问交易所：
 
 ```bash
 gh workflow run update-fee-data.yml --ref main -f republish_current=true
 ```
 
-更多部署细节见 [docs/deployment.md](docs/deployment.md)。
+历史原件与 SQLite 在本地保留；从零重建和证据导入不属于日更链路。访问窗口、状态字段、迁移及诊断见 [部署说明](docs/deployment.md)。
 
 ## 开发
 

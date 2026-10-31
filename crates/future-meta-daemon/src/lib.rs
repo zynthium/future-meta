@@ -1,4 +1,5 @@
 pub mod announcement;
+pub mod archive_update;
 pub mod cffex_metadata;
 pub mod compact;
 mod compact_storage;
@@ -34,6 +35,22 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Decode a client archive for local collection and migration tooling.
+    InspectArchive {
+        #[arg(long)]
+        archive: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Append a complete, normalized official interval to a client archive.
+    UpdateArchive {
+        #[arg(long)]
+        archive: PathBuf,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     UpdateCollected {
         #[arg(long)]
         db: PathBuf,
@@ -273,6 +290,21 @@ enum Command {
 pub fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::InspectArchive { archive, out } => {
+            let decoded = future_meta::archive::decode_archive_bytes(&std::fs::read(archive)?)?;
+            future_meta::FutureMeta::from_archive(decoded.clone())?;
+            std::fs::write(out, serde_json::to_vec(&decoded)?)?;
+            Ok(())
+        }
+        Command::UpdateArchive {
+            archive,
+            input,
+            out,
+        } => {
+            let report = archive_update::update(&archive, &input, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Command::UpdateCollected { db, delta, out } => {
             let report = update_collected::update_collected(&db, &delta, &out)?;
             println!("{}", serde_json::to_string_pretty(&report)?);

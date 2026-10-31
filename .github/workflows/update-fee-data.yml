@@ -2,26 +2,20 @@ name: update-fee-data
 
 on:
   schedule:
-    # Asia/Shanghai weekdays only. Offline calendar admission below decides
-    # whether tonight has a session or today is the first post-holiday morning.
-    - cron: "45 10 * * 1-5" # 18:45
-    - cron: "5 0 * * 1-5"   # 08:05
+    - cron: "45 10 * * 1-5" # Asia/Shanghai 18:45
+    - cron: "5 0 * * 1-5"   # 08:05, first post-holiday morning only
   workflow_dispatch:
     inputs:
       republish_current:
-        description: Re-export and publish the current verified seed without contacting exchanges
+        description: Verify current archive and data-branch publication without exchange access
         type: boolean
         default: false
 
-# A queued older run must restore the latest published seed after its predecessor.
 concurrency:
   group: future-meta-production-official-update
   cancel-in-progress: false
 
 env:
-  DB_PATH: data/future-meta.sqlite
-  SEED_URL: https://zynthium.github.io/future-meta/ops/future-meta.sqlite.gz
-  INPUTS_URL: https://zynthium.github.io/future-meta/ops/official-inputs.json
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -42,19 +36,14 @@ jobs:
       - name: Decide without contacting exchanges
         id: slot
         run: python scripts/update_schedule.py --github-output "$GITHUB_OUTPUT"
+
   update:
     needs: admission
     if: needs.admission.outputs.should_update == 'true' || (github.event_name == 'workflow_dispatch' && inputs.republish_current)
     runs-on: ubuntu-latest
-    # Admission closes at 08:20 / 20:00; a late job cannot run past opening.
     timeout-minutes: 30
     permissions:
       contents: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -64,58 +53,35 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install official collector dependencies
-        run: |
-          python -m pip install requests playwright
-          python -m playwright install --with-deps chrome
+      - name: Install collector test dependencies
+        run: python -m pip install requests playwright
+      - name: Install official browser
+        if: inputs.republish_current != true
+        run: python -m playwright install --with-deps chrome
       - name: Test
         run: |
           cargo fmt --all -- --check
           cargo check --workspace --all-targets
           cargo test --workspace
           cargo test -p future-meta --features download
-          python -m unittest discover -s tests -p 'test_*official*.py'
-          python -m unittest discover -s tests -p 'test_update_fee_workflow.py'
-      - name: Restore matching official seed and metadata inputs
+          python -m unittest discover -s tests
+      - name: Check official metadata and publish atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPUBLISH_CURRENT: ${{ inputs.republish_current && 'true' || 'false' }}
         run: |
           set -euo pipefail
           mkdir -p data
-          curl --fail --location --show-error "$SEED_URL" --output /tmp/future-meta.sqlite.gz
-          python scripts/package_official_inputs.py fetch --url "$INPUTS_URL" --out data/official-inputs.json
-          gzip -dc /tmp/future-meta.sqlite.gz > "$DB_PATH"
-          cargo run -q -p future-meta-daemon -- verify-collected --db "$DB_PATH" --out data/restored-coverage.json
-      - name: Increment official daily history
-        if: inputs.republish_current != true
-        id: refresh
-        run: |
-          set -euo pipefail
-          mkdir -p data/official-update/diagnostics
-          xvfb-run -a python -u scripts/update_official.py \
-            --scheduled \
-            --db "$DB_PATH" --inputs data/official-inputs.json \
-            --work-dir data/official-update --public-dir public \
-            --github-output "$GITHUB_OUTPUT" \
-            2>&1 | tee data/official-update/diagnostics/update.log
-      - name: Stage current verified data without exchange access
-        if: github.event_name == 'workflow_dispatch' && inputs.republish_current
-        id: republish
-        run: |
-          set -euo pipefail
-          cargo run -q -p future-meta-daemon -- export --db "$DB_PATH" --out public
-          mkdir -p public/ops
-          cp data/restored-coverage.json public/coverage.json
-          cp /tmp/future-meta.sqlite.gz public/ops/future-meta.sqlite.gz
-          cp data/official-inputs.json data/official-inputs.tar.gz public/ops/
-          echo 'publish=true' >> "$GITHUB_OUTPUT"
-      - name: Publish and verify client data Release
-        if: steps.refresh.outputs.publish == 'true' || steps.republish.outputs.publish == 'true'
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python scripts/publish_data.py prepare --source public --pages-out data/pages-site \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
-      - name: Retain official update diagnostics
+          args=()
+          runner=(xvfb-run -a python -u)
+          if [[ "$REPUBLISH_CURRENT" == 'true' ]]; then
+            args+=(--republish-current)
+            runner=(python -u)
+          fi
+          "${runner[@]}" scripts/update_official.py \
+            --repo "$GITHUB_REPOSITORY" --work-dir data/official-update \
+            "${args[@]}" 2>&1 | tee data/update.log
+      - name: Retain summary diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -123,33 +89,5 @@ jobs:
           retention-days: 3
           if-no-files-found: warn
           path: |
-            data/official-update/diagnostics/
-            data/official-update/metadata/*gaps.json
-            data/official-update/metadata/*provenance.json
-            data/official-update/metadata/official-cache/
-            data/official-update/official-evidence/*.tsv
-            data/official-inputs*
-            data/official-update/settlement-evidence/
-            data/official-update/raw/
-            public/ops/official-inputs*
-            data/restored-coverage.json
-            public/coverage.json
-            data/pages-site/manifest.json
-            data/pages-site/ops/publication.json
-      - name: Configure GitHub Pages
-        if: steps.release.outputs.ready == 'true'
-        uses: actions/configure-pages@v5
-      - name: Upload GitHub Pages artifact
-        if: steps.release.outputs.ready == 'true'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: data/pages-site
-      - name: Deploy to GitHub Pages
-        if: steps.release.outputs.ready == 'true'
-        uses: actions/deploy-pages@v4
-        id: deployment
-      - name: Retain only current and previous data Releases
-        if: steps.deployment.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python scripts/publish_data.py cleanup --pages-dir data/pages-site --repo "$GITHUB_REPOSITORY"
+            data/update.log
+            data/official-update/publication/update-report.json

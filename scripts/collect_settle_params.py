@@ -108,26 +108,29 @@ def fetch_with_retry(
     method: str = "GET",
     headers: Optional[dict] = None,
     timeout: int = 15,
-    max_retries: int = 5,
+    max_retries: int = 3,
     backoff: float = 1.0,
     data: Optional[dict] = None,
 ) -> requests.Response:
+    from official_access import request, AccessWindowClosed
     hdr = {"User-Agent": USER_AGENT}
     if headers:
         hdr.update(headers)
 
     for attempt in range(1, max_retries + 1):
         try:
-            r = requests.request(method, url, headers=hdr, timeout=timeout, data=data)
+            r = request(method, url, headers=hdr, timeout=timeout, data=data)
             if r.status_code == 200:
                 return r
             else:
                 logger.warning(f"HTTP {r.status_code} on {url} (attempt {attempt}/{max_retries})")
+        except AccessWindowClosed:
+            raise
         except Exception as e:
             logger.warning(f"Request error on {url}: {e} (attempt {attempt}/{max_retries})")
 
         if attempt < max_retries:
-            time.sleep(backoff * (2 ** (attempt - 1)))
+            time.sleep(backoff * (2 if attempt == 1 else 8))
     raise RuntimeError(f"Official request failed after {max_retries} attempts: {url}")
 
 
@@ -912,16 +915,21 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
         browser = playwright.chromium.launch(**options)
         try:
             page = browser.new_page()
+            from official_access import guard_browser, remaining
+            guard_browser(page)
+            remaining()
             page.goto("http://www.dce.com.cn/", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3500)
             page.goto("http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(4000)
             for i, day in enumerate(pending, 1):
+                remaining()
                 if i % 20 == 1 or i == len(pending):
                     logger.info(f"[DCE] Collecting day {i}/{len(pending)}: {day}")
                 params = {"varietyId": "all", "tradeDate": day.replace("-", ""), "tradeType": "1", "lang": "zh"}
                 result = page.evaluate("""async (params) => {
                     const response = await fetch('/dcereport/publicweb/tradepara/futAndOptSettle', {
+                        signal: AbortSignal.timeout(30000),
                         method: 'POST', headers: {'Content-Type': 'application/json', 'clientid': 'web',
                           'access-control-allow-origin-type': '*'}, body: JSON.stringify(params)
                     });

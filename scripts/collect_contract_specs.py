@@ -262,7 +262,9 @@ def fetch_cbi_body(url):
     from collect_settle_params import fetch_with_retry, get_chrome_path
 
     try:
-        return fetch_with_retry(url, timeout=30).content
+        return fetch_with_retry(url, timeout=30, max_retries=2).content
+    except __import__("official_access").AccessWindowClosed:
+        raise
     except RuntimeError:
         logging.warning("CBI HTTP retries exhausted; reading the same official URL with Chrome: %s", url)
 
@@ -277,7 +279,11 @@ def fetch_cbi_body(url):
             options["channel"] = "chrome"
         browser = playwright.chromium.launch(**options)
         try:
-            response = browser.new_page().goto(url, wait_until="load", timeout=30000)
+            from official_access import guard_browser, remaining
+            page = browser.new_page()
+            guard_browser(page)
+            remaining()
+            response = page.goto(url, wait_until="load", timeout=30000)
             if response is None or response.status != 200:
                 raise RuntimeError(f"Official CBI browser request failed: {url}")
             return response.body()

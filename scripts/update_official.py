@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Collect only the missing official trading interval and prepare GitHub Pages output."""
+"""Official missing-day updates from a client archive and a small Git checkpoint."""
+
 import argparse
-import csv
+import hashlib
 import json
-import shutil
-import sqlite3
+import os
 import subprocess
 import sys
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from package_official_inputs import package, restore
+import data_branch as branch
+import publish_data
 from update_schedule import decide as scheduled_decision
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,211 +20,206 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def completed_china_date(now=None):
     now = now or datetime.now(ZoneInfo("Asia/Shanghai"))
-    # Daily production runs at 18:45, after exchange settlement publication.
     return now.date() if now.time() >= time(18, 30) else now.date() - timedelta(days=1)
 
 
-def seed_through(db):
-    with sqlite3.connect(f"file:{Path(db).resolve()}?mode=ro", uri=True) as connection:
-        reports = connection.execute("select report_json from rebuild_summary").fetchall()
-    if len(reports) != 1:
-        raise ValueError("Expected exactly one collected rebuild summary")
-    report = json.loads(reports[0][0])
-    if report.get("source") != "fresh_collector_outputs_no_seed":
-        raise ValueError("Seed is not the official collected database")
-    return date.fromisoformat(report["through"])
-
-
-def run(*args):
-    command = [str(arg) for arg in args]
-    print("+ " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=ROOT, check=True)
+def utcnow():
+    return datetime.now(timezone.utc).isoformat()
 
 
 def daemon(*args):
-    run("cargo", "run", "-q", "-p", "future-meta-daemon", "--", *args)
+    command = [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "future-meta-daemon",
+        "--",
+        *[str(a) for a in args],
+    ]
+    subprocess.run(command, cwd=ROOT, check=True)
 
 
-def pending_announcements(db, out):
-    with sqlite3.connect(f"file:{Path(db).resolve()}?mode=ro", uri=True) as connection:
-        connection.row_factory = sqlite3.Row
-        exists = connection.execute("select 1 from sqlite_master where name='announcement_candidates'").fetchone()
-        rows = [] if not exists else [dict(row) for row in connection.execute(
-            "select c.*, d.title, d.broker_url from announcement_candidates c "
-            "join announcement_documents d using(source,article_id) "
-            "where c.resolved_at is null order by c.detected_at,c.source,c.article_id")]
-    Path(out).write_text(json.dumps({"pending_count": len(rows), "pending": rows}, ensure_ascii=False, indent=2))
-    print(f"Supplementary announcement audit: {len(rows)} pending; official updates do not resolve these candidates", flush=True)
+def restore_archive(manifest, work):
+    path = work / "baseline.fmeta.zst"
+    body = publish_data.download_asset(manifest["mirrors"][0], manifest["size"] + 1)
+    if (
+        len(body) != manifest["size"]
+        or hashlib.sha256(body).hexdigest() != manifest["sha256"]
+    ):
+        raise ValueError("Published archive checksum mismatch")
+    path.write_bytes(body)
+    daemon("inspect-archive", "--archive", path, "--out", work / "baseline.json")
+    return path, json.loads((work / "baseline.json").read_text())
 
 
-def refresh_calendar(evidence, raw, start, through):
-    # Reuse SHA-verified official calendar originals from the bootstrap. Only
-    # missing months need a request; HTTP errors are never evidence of a holiday.
-    from collect_settle_params import RawStore, trading_days
-    store = RawStore(raw, evidence, False)
-    days = trading_days(start.isoformat(), through.isoformat(), store)
-    rows = {}
-    manifests = sorted(evidence.glob("cffex-calendar-*.tsv"))
-    if not manifests:
-        raise ValueError("Bootstrap lacks official CFFEX calendar manifest")
-    # build_lifecycles selects the 2017 manifest first; update that same file.
-    manifest = next((p for p in manifests if p.name == "cffex-calendar-2017-2026.tsv"), manifests[0])
-    with manifest.open(encoding="utf-8", newline="") as handle:
-        for row in csv.DictReader(handle, delimiter="\t"):
-            rows[row["month"]] = row
-    from package_official_inputs import digest
-    for path in (raw / "calendar").glob("*.json"):
-        wrapper = json.loads(path.read_text())
-        body = store.unpack(wrapper)
-        sha = digest(body)
-        (evidence / (sha + ".xml")).write_bytes(body)
-        month = path.stem
-        rows[month] = {"month": month, "canonical_url": wrapper["canonical_url"], "sha256": sha, "raw_path": sha + ".xml"}
-    columns = ["month", "canonical_url", "sha256", "raw_path"]
-    with manifest.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, columns, delimiter="\t", extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows[key] for key in sorted(rows))
-    return days
-
-
-def lifecycle_snapshot(evidence):
-    snapshots = {}
-    for path in evidence.glob("*-lifecycle-*.tsv"):
-        with path.open(encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle, delimiter="\t")
-            snapshots[path.name] = (reader.fieldnames, list(reader))
-    return snapshots
-
-
-def preserve_known_lifecycles(evidence, snapshots):
-    # Existing symbols keep their reviewed dates/provenance. Rules may create
-    # rows only for newly observed contracts; they cannot relabel confirmed
-    # historical expiry dates with a new inference.
-    known = {(row["exchange"], row["symbol"]) for _, rows in snapshots.values() for row in rows}
-    for path in evidence.glob("*-lifecycle-*.tsv"):
-        with path.open(encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle, delimiter="\t")
-            columns, generated = reader.fieldnames, list(reader)
-        previous_columns, previous = snapshots.get(path.name, (columns, []))
-        columns = list(dict.fromkeys(previous_columns + columns))
-        rows = previous + [row for row in generated if (row["exchange"], row["symbol"]) not in known]
-        with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, columns, delimiter="\t")
-            writer.writeheader()
-            writer.writerows(rows)
-    for name, (columns, rows) in snapshots.items():
-        path = evidence / name
-        if not path.exists():
-            with path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, columns, delimiter="\t")
-                writer.writeheader()
-                writer.writerows(rows)
-
-
-def finish(status, diagnostics, github_output):
-    (diagnostics / "update-status.json").write_text(json.dumps(status, indent=2))
-    if github_output:
-        with github_output.open("a") as output:
-            output.write(f"publish={str(status['publish']).lower()}\n")
-    print(json.dumps(status), flush=True)
-    return status
+def cleanup_publication(repository, parent, manifest, state):
+    publish_data.cleanup(repository, parent, manifest, state)
+    if state.get("retired_releases"):
+        state = dict(state, retired_releases=[])
+        parent = branch.commit(
+            repository,
+            parent,
+            manifest,
+            state,
+            "data: finish verified Release retention",
+        )
+        publish_data.verify_live(repository, parent, manifest, state)
+    return parent
 
 
 def update(args):
-    work, public = args.work_dir.resolve(), args.public_dir.resolve()
-    work.mkdir(parents=True, exist_ok=True)
-    diagnostics = work / "diagnostics"
-    diagnostics.mkdir(exist_ok=True)
-    # Recheck after runner setup/queue delays, before touching maintenance data
-    # or importing collectors. The workflow's first gate alone is insufficient.
-    if getattr(args, 'scheduled', False):
-        gate = scheduled_decision()
-        if not gate['should_update']:
-            return finish({'publish': False, 'reason': gate['reason']}, diagnostics, args.github_output)
-    prior = seed_through(args.db)
-    pending_announcements(args.db, diagnostics / "seed-pending-announcements.json")
-    through = args.through or completed_china_date()
-    if through > completed_china_date():
-        raise ValueError("Requested through date has not completed in Asia/Shanghai")
-    bootstrap = restore(args.inputs, work / "official-evidence")
-    if bootstrap["through"] != prior.isoformat():
-        raise ValueError("Official inputs and SQLite seed have different through dates")
-    status = {"publish": False, "from": (prior + timedelta(days=1)).isoformat(), "through": through.isoformat()}
-    if through <= prior:
-        status["reason"] = "seed_already_current"
-    else:
-        evidence, raw = work / "official-evidence", work / "raw"
-        days = refresh_calendar(evidence, raw, prior + timedelta(days=1), through)
-        if not days:
-            status["reason"] = "no_official_trading_days"
-        else:
-            # Persist the last observed trading day; a weekend must not extend
-            # the summary beyond its evidence-backed daily observation range.
-            through = date.fromisoformat(days[-1])
-            status["through"] = through.isoformat()
-            settle, sources, meta = work / "settle_params", work / "settlement-evidence", work / "metadata"
-            meta.mkdir()
-            run(sys.executable, ROOT / "scripts/collect_settle_params.py",
-                "--start-date", status["from"], "--end-date", through,
-                "--output-dir", settle, "--raw-dir", raw, "--evidence-dir", evidence,
-                "--provenance-dir", sources, "--futures-only", "--forward-fill-cffex", "--workers", "1")
-            common = [sys.executable, ROOT / "scripts/collect_contract_specs.py", "--evidence-dir", evidence,
-                      "--settle-dir", settle, "--out", meta / "contracts_meta.csv",
-                      "--versions-out", meta / "contract_spec_versions.csv"]
-            # First acquire dated CBI originals; only the subsequent strict pass
-            # may authorize a rebuilt delta. Candidate gaps remain diagnostic.
-            run(*common, "--allow-incomplete", *[arg for day in days for arg in ("--cbi-date", day)])
-            lifecycle = [sys.executable, ROOT / "scripts/build_lifecycles.py", "--evidence-dir", evidence, "--settle-dir", settle]
-            assumed = bootstrap.get("lifecycle_options", {}).get("assume_2027_holidays", False)
-            if not isinstance(assumed, bool):
-                raise ValueError("Invalid explicit lifecycle assumption setting")
-            if assumed:
-                lifecycle.append("--assume-2027-holidays")
-            existing_lifecycles = lifecycle_snapshot(evidence)
-            run(*lifecycle)
-            preserve_known_lifecycles(evidence, existing_lifecycles)
-            run(*common, "--offline")
-            delta, merged = work / "delta.sqlite", work / "merged.sqlite"
-            daemon("rebuild-collected", "--metadata-dir", meta, "--settle-dir", settle,
-                   "--settlement-sources", sources / "settlement_sources.json", "--out", delta)
-            daemon("update-collected", "--db", args.db.resolve(), "--delta", delta, "--out", merged)
+    republish = args.republish_current
+    gate = None if republish else scheduled_decision()
+    if gate is not None and not gate["should_update"]:
+        return {"publish": False, "reason": gate["reason"]}
+    parent, manifest, old_state = branch.read(args.repo)
+    if republish:
+        args.work_dir.mkdir(parents=True, exist_ok=False)
+        restore_archive(manifest, args.work_dir)
+        parent = branch.commit(
+            args.repo, parent, manifest, old_state, "data: verify publication access"
+        )
+        publish_data.verify_live(args.repo, parent, manifest, old_state)
+        parent = cleanup_publication(args.repo, parent, manifest, old_state)
+        return {
+            "publish": False,
+            "reason": "current_publication_verified",
+            "commit": parent,
+        }
+    evaluated = datetime.fromisoformat(gate["evaluated_at"])
+    slot = f"{evaluated.date().isoformat()}:{gate['slot']}"
+    if old_state.get("last_attempt") and old_state["last_attempt"]["slot"] == slot:
+        return {"publish": False, "reason": "slot_already_attempted"}
+    from incremental_inputs import collect_interval, trading_dates
+
+    prior = next(iter(old_state["checked_through"].values()))
+    start = (datetime.fromisoformat(prior).date() + timedelta(days=1)).isoformat()
+    days = trading_dates(start, completed_china_date(evaluated).isoformat())
+    if not days:
+        return {"publish": False, "reason": "already_checked"}
+    run_id = os.environ.get("GITHUB_RUN_ID", "local-" + utcnow())
+    run_url = (
+        f"https://github.com/{args.repo}/actions/runs/{run_id}"
+        if "GITHUB_RUN_ID" in os.environ
+        else None
+    )
+    started = branch.begin_attempt(old_state, slot, utcnow(), run_url, run_id)
+    parent = branch.commit(
+        args.repo, parent, manifest, started, "data: begin official check"
+    )
+    # Only official transports read this deadline; GitHub publication may finish
+    # after the collection window without contacting an exchange again.
+    deadline = evaluated.replace(
+        hour=20 if gate["slot"] == "evening" else 8,
+        minute=0 if gate["slot"] == "evening" else 20,
+        second=0,
+        microsecond=0,
+    )
+    previous_deadline = os.environ.get("FUTURE_META_ACCESS_DEADLINE")
+    os.environ["FUTURE_META_ACCESS_DEADLINE"] = deadline.isoformat()
+    published = False
+    try:
+        args.work_dir.mkdir(parents=True, exist_ok=False)
+        archive_path, archive = restore_archive(manifest, args.work_dir)
+        rules = json.loads(args.rules.read_text())
+        if rules["schema"] != 1:
+            raise ValueError("Unsupported approved rules schema")
+        snapshots, versions, exceptions = collect_interval(
+            archive, started, rules, days, args.work_dir / "collected"
+        )
+        batch = {
+            "baseline_sha256": manifest["sha256"],
+            "previous_through": prior,
+            "trading_days": days,
+            "generated_at": started["last_attempt"]["started_at"],
+            "snapshots": snapshots,
+        }
+        batch_path = args.work_dir / "batch.json"
+        batch_path.write_text(json.dumps(batch))
+        source = args.work_dir / "publication"
+        daemon(
+            "update-archive",
+            "--archive",
+            archive_path,
+            "--input",
+            batch_path,
+            "--out",
+            source,
+        )
+        report = json.loads((source / "update-report.json").read_text())
+        state = branch.finish_attempt(
+            started,
+            "changed" if report["changed"] else "unchanged",
+            utcnow(),
+            through=days[-1],
+        )
+        state.update(source_versions=versions, exceptions=exceptions)
+        new_commit = publish_data.publish(
+            source if report["changed"] else None,
+            args.repo,
+            os.environ.get("GITHUB_SHA", "main"),
+            parent,
+            manifest,
+            started,
+            state,
+        )
+        published = True
+        actual_commit, actual_manifest, actual_state = branch.read(args.repo)
+        if actual_commit != new_commit:
+            raise ValueError("Data branch changed during public verification")
+        new_commit = cleanup_publication(
+            args.repo, new_commit, actual_manifest, actual_state
+        )
+        return {
+            "publish": bool(report["changed"]),
+            "reason": "changed" if report["changed"] else "unchanged",
+            "commit": new_commit,
+            "checked_through": days[-1],
+        }
+    except Exception as error:
+        if not published:
+            failed = branch.finish_attempt(
+                started,
+                "failed",
+                utcnow(),
+                error=type(error).__name__ + ": " + str(error),
+            )
             try:
-                daemon("scan-announcements", "--db", merged)
-            except subprocess.CalledProcessError as error:
-                # Broker notices are supplementary audit, not parameter sources.
-                # Preserve pending state and make the audit outage explicit.
-                (diagnostics / "announcement-audit-error.json").write_text(json.dumps({
-                    "command": error.cmd, "exit_status": error.returncode,
-                    "official_update_blocked": False}, indent=2))
-                print("Supplementary announcement scan failed; pending candidates remain unresolved", flush=True)
-            pending_announcements(merged, diagnostics / "pending-announcements.json")
-            public.mkdir(parents=True, exist_ok=True)
-            daemon("verify-collected", "--db", merged, "--out", public / "coverage.json")
-            daemon("export", "--db", merged, "--out", public)
-            compact = work / "compacted.sqlite"
-            daemon("compact-seed", "--db", merged, "--out", compact)
-            ops = public / "ops"
-            ops.mkdir(exist_ok=True)
-            import gzip
-            with compact.open("rb") as source, gzip.open(ops / "future-meta.sqlite.gz", "wb", compresslevel=9) as target:
-                shutil.copyfileobj(source, target)
-            package(evidence, meta / "contracts_meta_provenance.json", through.isoformat(),
-                    ops / "official-inputs.json", assumed)
-            status["publish"] = True
-    return finish(status, diagnostics, args.github_output)
+                branch.commit(
+                    args.repo,
+                    parent,
+                    manifest,
+                    failed,
+                    "data: record failed official check",
+                )
+            except Exception as status_error:
+                print(
+                    f"Failed to finalize check status; inspect Actions run: {status_error}",
+                    file=sys.stderr,
+                )
+        raise
+    finally:
+        if previous_deadline is None:
+            os.environ.pop("FUTURE_META_ACCESS_DEADLINE", None)
+        else:
+            os.environ["FUTURE_META_ACCESS_DEADLINE"] = previous_deadline
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, required=True)
-    parser.add_argument("--inputs", type=Path, required=True)
-    parser.add_argument("--work-dir", type=Path, required=True, help="Fresh run directory")
-    parser.add_argument("--public-dir", type=Path, default=Path("public"))
-    parser.add_argument("--through", type=date.fromisoformat)
-    parser.add_argument("--github-output", type=Path)
-    parser.add_argument("--scheduled", action="store_true", help="Enforce offline session/time admission before any collection")
-    update(parser.parse_args())
+    parser.add_argument("--repo", default="zynthium/future-meta")
+    parser.add_argument("--work-dir", type=Path, required=True)
+    parser.add_argument(
+        "--rules", type=Path, default=ROOT / "config/official-rules.json"
+    )
+    parser.add_argument(
+        "--republish-current",
+        action="store_true",
+        help="Verify current public state without exchange access",
+    )
+    args = parser.parse_args()
+    print(json.dumps(update(args)), flush=True)
 
 
 if __name__ == "__main__":
