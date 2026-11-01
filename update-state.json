@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "archive_sha256": "b4fb0dcd04697258dd0862b1f7b4cdadb8aaa89198a6f559c71516a607649413",
+  "archive_sha256": "bc62c3688e85c8ac28718a138ad1478340efcf7e28b89342ef2496c41ea27388",
   "checked_through": {
     "CFFEX": "2026-10-30",
     "CZCE": "2026-10-30",
@@ -11,8 +11,8 @@
   },
   "last_attempt": null,
   "last_success_at": null,
-  "current_release": "data-20261031T110854Z-b4fb0dcd0469",
-  "previous_release": null,
+  "current_release": "data-20261101T035357Z-bc62c3688e85",
+  "previous_release": "data-20261031T110854Z-b4fb0dcd0469",
   "exceptions": {
     "assumed_expiry": {
       "CFFEX.IC2701": "calendar-c81a8f124ba4",
@@ -475,10 +475,21 @@
       "GFEX.si2707": "calendar-c81a8f124ba4",
       "GFEX.si2708": "calendar-c81a8f124ba4",
       "GFEX.si2709": "calendar-c81a8f124ba4",
-      "GFEX.si2710": "calendar-c81a8f124ba4"
+      "GFEX.si2710": "calendar-c81a8f124ba4",
+      "DCE.l2702F": "calendar-c81a8f124ba4",
+      "DCE.l2703F": "calendar-c81a8f124ba4",
+      "DCE.l2704F": "calendar-c81a8f124ba4",
+      "DCE.pp2702F": "calendar-c81a8f124ba4",
+      "DCE.pp2703F": "calendar-c81a8f124ba4",
+      "DCE.pp2704F": "calendar-c81a8f124ba4",
+      "DCE.v2702F": "calendar-c81a8f124ba4",
+      "DCE.v2703F": "calendar-c81a8f124ba4",
+      "DCE.v2704F": "calendar-c81a8f124ba4"
     },
     "assumptions": {
       "calendar-c81a8f124ba4": {
+        "source": "user_provided_holiday_assumptions",
+        "year": 2027,
         "closed_date_ranges": [
           [
             "2027-01-01",
@@ -509,9 +520,7 @@
             "2027-10-07"
           ]
         ],
-        "source": "user_provided_holiday_assumptions",
-        "weekends_closed": true,
-        "year": 2027
+        "weekends_closed": true
       }
     },
     "without_observations": [
@@ -534,6 +543,21 @@
       "date": "2026-10-19",
       "url": "http://www.cffex.com.cn/sj/jscs/202610/19/20261019_1.csv",
       "sha256": "6e5d46e181536f17f130e14ecf745ea0c0d17ce39d2ddad49fc814a60f03b470"
+    },
+    "specifications": {
+      "mode": "approved_rules",
+      "approved_through": "2026-10-30",
+      "rules_sha256": "323bedcf3652b5f61de8c23ddc182ab4b5993b4296e9881bde9f6fb265ac42b7",
+      "live_check_performed": false
+    },
+    "monthly_average_backfill": {
+      "from": "2025-10-29",
+      "through": "2026-10-30",
+      "contracts": 45,
+      "observations": 4176,
+      "fee_versions": 206,
+      "minimum_sdk": "0.7.0",
+      "metadata_verified_at": "2026-11-01T04:03:22.218809+00:00"
     }
   },
   "retired_releases": []
