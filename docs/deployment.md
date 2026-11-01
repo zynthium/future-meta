@@ -21,7 +21,7 @@ let config = future_meta::DownloadConfig {
 let meta = future_meta::load_or_fetch(config).await?;
 ```
 
-源码默认地址已切换。旧 SDK tag 不改写，旧 Pages 地址不提供兼容入口。SHA 变化时 SDK 替换缓存；已有 `FutureMeta` 实例仍须重新加载。
+源码默认地址已切换。旧 SDK tag 不改写，旧 Pages 地址不提供兼容入口。SDK v0.8.0 提供 `DownloadClient::refresh()`：HTTP 304 或 SHA 未变时保留当前 `FutureMeta` 和索引，SHA 变化时校验并替换缓存及实例，此时需重新解析句柄和构建预计算表。`load_or_fetch` 仍用于一次性加载。详见 [客户端 API](client-api.md#periodic-download-refresh)。
 
 `manifest.generated_at` 是当前 archive 的生成时刻。`history_end` 保留业务版本边界的既有语义，不表示最后核验日期。核验进度读取状态文件：
 

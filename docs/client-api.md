@@ -3,6 +3,34 @@
 `future-meta` loads a published fee archive into a local `FutureMeta` query
 client. Queries do not call the network after the archive is loaded.
 
+## Periodic download refresh
+
+Since SDK v0.8.0, the `download` feature provides `DownloadClient` for periodic update checks. Keep one instance across checks.
+Inside an async function:
+
+```rust
+use future_meta::{DownloadClient, DownloadConfig};
+
+let mut client = DownloadClient::load(DownloadConfig::default()).await?;
+let mut handle = client.meta().resolve_contract("SHFE.cu2607")?;
+
+// Run at the application's refresh boundary.
+if client.refresh().await? {
+    handle = client.meta().resolve_contract("SHFE.cu2607")?;
+}
+let contract = client.meta().contract_for_handle(handle)?;
+```
+
+`refresh()` returns `false` for HTTP 304 or an unchanged archive SHA. It preserves
+the current query instance and handles without reading or decoding the disk cache.
+When it returns `true`, resolve handles and rebuild prepared cursors/books for the
+new snapshot. Cloned older snapshots and their handles remain usable together.
+Download, checksum, decode and cache-write failures leave the current in-memory
+snapshot and its manifest validator unchanged. Downloaded bytes are decoded before
+replacing the disk cache. Each refresh still checks the manifest over the network;
+the client reuses its HTTP connection pool and stores the ETag only in memory.
+The existing `load_or_fetch` API remains suitable for one-time loading.
+
 ## Concrete contracts only
 
 Fee and specification records belong only to concrete futures contracts. Pass symbols such as

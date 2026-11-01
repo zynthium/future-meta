@@ -11,7 +11,7 @@ pub mod query;
 pub mod symbol;
 
 #[cfg(feature = "download")]
-pub use crate::download::{DownloadConfig, load_or_fetch};
+pub use crate::download::{DownloadClient, DownloadConfig, load_or_fetch};
 pub use crate::error::{AsOfError, FutureMetaError};
 pub use crate::model::{
     Contract, ContractFee, ContractSpecVersion, FeeArchiveV1, FeeArchiveV2, FeeArchiveV3, FeeSpec,

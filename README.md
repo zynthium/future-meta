@@ -96,6 +96,25 @@ https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json
 
 可用 `FUTURE_META_CACHE_DIR` 覆盖客户端 artifact 缓存目录。
 
+SDK v0.8.0 新增 `DownloadClient`。长驻进程需要定期检查更新时，保留该实例，避免每次检查都解压和重建索引。在 async 函数中使用：
+
+```rust
+use future_meta::{DownloadClient, DownloadConfig};
+
+let mut client = DownloadClient::load(DownloadConfig::default()).await?;
+let mut handle = client.meta().resolve_contract("SHFE.cu2607")?;
+
+// 在后续需要检查更新时调用，不放入每次行情查询的路径。
+if client.refresh().await? {
+    handle = client.meta().resolve_contract("SHFE.cu2607")?;
+}
+let contract = client.meta().contract_for_handle(handle)?;
+```
+
+`refresh()` 在 HTTP 304 或 archive SHA 未变时返回 `false`，复用当前 `FutureMeta`、索引和句柄，不读磁盘缓存；SHA 变化时校验并加载新包后返回 `true`，此时需重新解析句柄及构建预计算表。失败会返回错误并保留当前实例和已有缓存。
+
+该客户端复用 HTTP 连接池及内存中的 ETag，刷新频率由调用方控制，每次刷新仍会发出一次 manifest 检查请求。`load_or_fetch` 继续用于一次性加载。
+
 `Manifest.generated_at` 与 `data_version` 表示 artifact 构建时间；
 `history_end` 与 `fee_effective_from` 表示最后一条已批准手续费的生效时间。两者不同，
 不应把构建时间当作费率最新时间。
