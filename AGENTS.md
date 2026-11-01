@@ -94,9 +94,19 @@ cargo run -p future-meta --features download --example online_smoke \
 
 包含 F 合约的 archive 需要 SDK v0.7.0；v0.6.0 及更早版本会拒绝这些 symbol，必须升级一次。archive wire schema 保持 4，之后每日数据不要求 SDK 升级；不维护旧客户端兼容包，不改写旧 tag。
 
+## 提交与发版判定
+
+完整规则见 `docs/releasing.md`。自动验证、显式发布；提交、推送、SDK Release 和数据更新分别判断。
+
+- “提交”只创建 commit；“提交推送”不创建 SDK 标签或 Release。“提交并发布”按实际交付对象执行：纯文档推送 `main` 后说明无需 SDK 发版；只有用户明确要求文档也创建 SDK Release 时例外执行。一次发布授权不延续为后续任务的发版授权。
+- 文档、AGENTS、技能说明/提示词、测试、格式和行为不变的重构默认不升级 SDK。普通提交不改版本；正式 SDK 发版时才同步更新 SDK `Cargo.toml` 和锁文件。
+- SDK 修复/性能/安全交付升补丁版本；当前 `0.x` 阶段新增 API、合约类型或破坏兼容升次版本，并说明迁移边界。按最新 SDK 标签到待发布提交的累计实际变化判断，不仅看最后一次提交或 commit 类型。
+- 采集器、daemon、规则配置和日历不因自身改动升级 SDK。业务数据变化走独立 `data-*` 发布；无变化只更新状态。
+- `.github/workflows/ci.yml` 对普通 push/PR 做只读离线验证；纯文档走轻量检查。SDK Release 仅由显式推送的 `vX.Y.Z` 标签触发 `release-sdk.yml`，通过版本、main 归属和完整离线检查后发布。数据日更保持独立。
+
 ## 更新和发布授权
 
-`update_official.py` 会真实写数据分支，并可能创建 Release，须已有更新/发布授权。无交易所访问的线上验证也通过同一入口：
+`update_official.py` 会真实写数据分支，并可能创建 Release，须已有数据更新/发布授权。仅数据分发链路、权限或索引流程有实际变化，或用户明确要求线上数据发布验证时，使用无交易所访问的同一入口：
 
 ```bash
 gh workflow run update-fee-data.yml --ref main -f republish_current=true
@@ -104,6 +114,8 @@ gh run watch <run-id> --exit-status
 ```
 
 此模式下载并验证现有 archive 与公开索引，并写入内容不变的 Git 提交实测发布权限；不启动采集器、不重新生成 archive、不推进交易所检查点。源码检查不等于生产成功，必须观察 Actions 完成并读回固定入口。
+
+纯文档、技能同步和普通 SDK 改动使用普通 CI 或 SDK 标签工作流，不触发生产日更/`republish_current` 来代替验证。修改工作流但尚未提交执行时，如实报告本地验证，不能冒称已完成线上验证。
 
 GitHub raw 存在 CDN 延迟。先验证附件，再原子切换索引/检查点；固定 URL 读回通过后才清理记录为已退役的受管数据版本。保留当前、上一版及未完成发布的上传，不触碰 SDK Release。不能按创建时间猜上一版。
 
@@ -116,4 +128,4 @@ GitHub raw 存在 CDN 延迟。先验证附件，再原子切换索引/检查点
 - `config/official-rules.json` 是经审阅的小配置，允许随规则更新提交；大 archive 和原件不进入源码分支。
 - 只 stage 当前任务文件，保留无关脏工作；使用简洁 conventional commit。
 - 不提交 token、Cookie、代理凭据或密钥。发布只使用内置 `GITHUB_TOKEN` 的 `contents: write`，checkout 不持久化凭据。
-- 涉及更新/分发的最终报告包含实际验证命令和 Actions run URL；没有合法窗口的真实采集不能冒称已验证。
+- 已执行 SDK/数据发布或线上数据发布验证的最终报告包含实际验证命令和对应 Actions run URL；仅本地改动不要求制造线上运行。没有合法窗口的真实采集不能冒称已验证。

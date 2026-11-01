@@ -1,5 +1,7 @@
 # GitHub 增量更新与数据发布
 
+代码提交、普通 CI、SDK 版本选择与标签发布见 [提交和发布规则](releasing.md)。本文描述独立的数据日更与线上分发。
+
 ## 分发结构
 
 - 客户端 archive：同仓库不可变 `data-<UTC时间>-<SHA前缀>` Release 附件 `latest.fmeta.zst`。
@@ -80,7 +82,7 @@ python3 scripts/audit_official_rules.py \
 
 ## 验证与故障诊断
 
-普通运行始终执行时段门禁。手动验证当前公开数据，并写入内容不变的 Git 提交以实测内置令牌发布权限；不启动采集器、不重生成 archive，也不推进交易所检查点：
+普通运行始终执行时段门禁。数据分发链路、发布权限或索引流程有实际变化且已有验证授权，或用户明确要求线上数据发布验证时，可手动验证当前公开数据，并写入内容不变的 Git 提交实测内置令牌权限；不启动采集器、不重生成 archive，也不推进交易所检查点。纯文档、技能同步和普通 SDK 改动使用普通 CI/SDK 工作流：
 
 ```bash
 gh workflow run update-fee-data.yml --ref main -f republish_current=true

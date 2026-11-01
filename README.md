@@ -6,6 +6,8 @@
 
 中国期货手续费历史数据维护与本地 as-of 查询库。
 
+提交、验证和发版遵循 [发布规则](docs/releasing.md)：普通提交运行 CI，纯文档不升级 SDK；明确推送 SDK 版本标签后由 Actions 验证并创建 Release，数据日更独立运行。
+
 `future-meta` 从交易所官方数据维护手续费、保证金和规格变更历史。日更直接以既有客户端 archive 为基线；客户端读取独立 `data` 分支的 manifest，再下载不可变 Release 附件，在本地完成高性能 as-of 查询。SQLite 和原始证据只供本地诊断。
 
 > [!IMPORTANT]
