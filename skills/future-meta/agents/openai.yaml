@@ -1,4 +1,4 @@
 interface:
   display_name: "future-meta"
-  short_description: "历史手续费、多空保证金、日内开仓费与合约规格查询和高频客户端接入"
-  default_prompt: "使用 $future-meta 设计 0.5.0 客户端接入：兼容加载 schema 1/2/3/4 artifact，区分本地更新与已发布版本，查询历史手续费、多空保证金、日内开仓费及合约规格，检查覆盖边界，并优化跨日 tick 级热路径。"
+  short_description: "期货元数据按需刷新、历史手续费、多空保证金、日内开仓费与规格查询和高频接入"
+  default_prompt: "使用 $future-meta 接入当前已发布的 Rust SDK：按需刷新 GitHub 数据，查询历史手续费、多空保证金、日内开仓费及合约规格，核对月均价合约、数据核验截止与夜盘交易日边界，并优化 tick 热路径。"
