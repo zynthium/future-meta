@@ -14,6 +14,7 @@
 ## 数据硬约束
 
 - 合约标识只用 TqSdk 风格具体 futures symbol，例如 `SHFE.cu2701`、`CZCE.SR701`。`KQ.m@...`、`KQ.i@...` 不返回手续费或规格。
+- 支持 DCE 的 `l/pp/v` 月均价合约，保留大写 `F` 尾缀。SDK 品种标识沿用 TqSdk 的 `DCE.l/pp/v`，内部规则使用 `l-F/pp-F/v-F`，不得借用普通合约规则或删除尾缀。日更从同一 DCE 响应获取其费率，不增加官网请求。
 - 不把可派生的品种/交易所名称、展示价格、每手保证金、每跳盈亏等字段写入客户端 archive。
 - 手续费和保证金只接受六所官方参数。日期错误、反爬页、空表、不完整交易日或元数据必须失败，不能以旧值冒充当日数据。
 - archive 是已批准业务历史基线；保留合约 ID 和既有版本，仅在业务变化时追加/关闭区间。
@@ -91,7 +92,7 @@ cargo run -p future-meta --features download --example online_smoke \
   SHFE.cu2701 2026-10-30T10:00:00+08:00
 ```
 
-旧 v0.6.0 可通过 `DownloadConfig.manifest_url` 一次性改配使用新入口，不需升级；旧源码 tag 不改写。
+包含 F 合约的 archive 需要 SDK v0.7.0；v0.6.0 及更早版本会拒绝这些 symbol，必须升级一次。archive wire schema 保持 4，之后每日数据不要求 SDK 升级；不维护旧客户端兼容包，不改写旧 tag。
 
 ## 更新和发布授权
 

@@ -39,10 +39,10 @@ def iso_date(value):
 
 
 def specification(rules, symbol, observed):
-    from collect_contract_specs import applies_to_contract, instant
+    from collect_contract_specs import applies_to_contract, instant, symbol_parts
 
     exchange, contract = symbol.split(".")
-    product = re.match(r"[A-Za-z]+", contract)[0]
+    _, _, product = symbol_parts(exchange, contract)
     matching = []
     for rule in rules["specifications"]:
         if rule["exchange"] != exchange or rule["product"] != product:
@@ -131,6 +131,24 @@ def expiry(rules, exchange, product, year, month):
 
 def new_lifecycle(rules, symbol, observed):
     exchange, contract = symbol.split(".")
+    if exchange == "DCE" and contract.endswith("F"):
+        from collect_contract_specs import symbol_parts
+
+        _, _, product = symbol_parts(exchange, contract)
+        approved = rules.get("monthly_average_lifecycles", {}).get(product)
+        if not approved:
+            raise ValueError(f"Missing approved monthly-average lifecycle: {symbol}")
+        digits = re.fullmatch(r"[a-z]+(\d{4})F", contract)[1]
+        year, month = 2000 + int(digits[:2]), int(digits[2:])
+        if f"{year:04d}-{month:02d}" < approved["first_delivery_month"]:
+            raise ValueError(f"Monthly-average contract predates launch: {symbol}")
+        expiry_month = year * 12 + month - 2
+        listing_month = year * 12 + month - 1 - approved["listing_months_before"]
+        expires = month_days(rules, expiry_month // 12, expiry_month % 12 + 1)[-1]
+        listing = max(approved["launch_trade_date"], month_days(rules, listing_month // 12, listing_month % 12 + 1)[0])
+        if not listing <= observed <= expires:
+            raise ValueError(f"Official monthly-average lifecycle conflicts with observation: {symbol} {observed}")
+        return listing, expires, rules["lifecycle_calendars"][expires[:4]].get("assumption")
     product, digits = re.fullmatch(r"([A-Za-z]+)(\d+)", contract).groups()
     year = (
         2000 + int(digits[:2])

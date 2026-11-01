@@ -373,8 +373,10 @@ def validate_records(records: List[dict], exchange: str, day: str,
     result, symbols = [], set()
     for record in records:
         symbol = record["symbol"]
-        if (exchange == "DCE" and symbol.endswith("F")) or (futures_only and exchange == "CFFEX" and record["variety"] in {"IO", "MO", "HO"}):
+        if futures_only and exchange == "CFFEX" and record["variety"] in {"IO", "MO", "HO"}:
             continue
+        if exchange == "DCE" and symbol.endswith("F") and not re.fullmatch(r"(?:l|pp|v)\d{2}(?:0[1-9]|1[0-2])F", symbol):
+            raise ValueError(f"Unsupported monthly-average contract: {symbol}")
         if symbol in symbols:
             raise ValueError(f"Duplicate official contract: {exchange} {day} {symbol}")
         symbols.add(symbol)
@@ -971,7 +973,7 @@ def parse_args():
     parser.add_argument("--offline", action="store_true",
                         help="Read official cache only; missing/invalid raw is a hard failure")
     parser.add_argument("--futures-only", action="store_true",
-                        help="Exclude CFFEX option-month parameters and DCE monthly-average contracts")
+                        help="Exclude CFFEX option-month parameters; DCE monthly-average futures remain included")
     parser.add_argument(
         "--forward-fill-cffex",
         action="store_true",

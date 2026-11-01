@@ -7,6 +7,13 @@ client. Queries do not call the network after the archive is loaded.
 
 Fee and specification records belong only to concrete futures contracts. Pass symbols such as
 `SHFE.cu2607` to `contract`, `resolve_contract`, `contract_spec_*`, and `contract_fee_*`.
+
+SDK 0.7.0 also accepts DCE monthly-average futures such as `DCE.l2611F`,
+`DCE.pp2611F`, and `DCE.v2611F`. Keep the uppercase `F`: their fees, specifications,
+and lifecycles are independent of the ordinary contract with the same month.
+TqSdk underlying symbols remain `DCE.l`, `DCE.pp`, and `DCE.v`; underlying queries
+include both kinds of concrete contract. Schema 4 archives containing these symbols
+require SDK 0.7.0 or later; older SDKs reject the symbols when indexing the archive.
 `KQ.m@...` and `KQ.i@...` are aliases, not contracts; these APIs reject them with
 `UnsupportedSymbolKind` and archives containing them are corrupt. For a product-family view, call
 `underlying_fees_*` with an underlying such as `SHFE.cu`; it returns concrete contracts and excludes

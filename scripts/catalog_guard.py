@@ -79,7 +79,12 @@ def table_signatures(body, product=None):
         and "最小变动价位" in text
         and (
             product is None
-            or re.search(r"(?<![A-Za-z])" + re.escape(product) + r"(?![A-Za-z])", text)
+            or re.search(
+                r"(?<![A-Za-z])" + (
+                    re.escape(product[:-2].upper()) + r"合约月份F"
+                    if product in ("l-F", "pp-F", "v-F") else re.escape(product)
+                ) + r"(?![A-Za-z])", text
+            )
         )
     ]
     # Nested layout tables may contain the real table plus unrelated navigation.

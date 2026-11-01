@@ -9,11 +9,12 @@
 `future-meta` 从交易所官方数据维护手续费、保证金和规格变更历史。日更直接以既有客户端 archive 为基线；客户端读取独立 `data` 分支的 manifest，再下载不可变 Release 附件，在本地完成高性能 as-of 查询。SQLite 和原始证据只供本地诊断。
 
 > [!IMPORTANT]
-> SDK 与数据独立发布：v0.6.0 无需升级，但已安装版本需一次性配置新的 [manifest URL](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)。最后尝试、成功时间与完整核验日期见 [更新状态](https://raw.githubusercontent.com/zynthium/future-meta/data/update-state.json)，不以 archive 的生成时间代替检查进度。
+> SDK 与数据独立发布：包含大商所月均价合约的数据包需要 SDK v0.7.0 或更新版本；升级一次后，每日数据更新不要求升级 SDK。下载使用新的 [manifest URL](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)。最后尝试、成功时间与完整核验日期见 [更新状态](https://raw.githubusercontent.com/zynthium/future-meta/data/update-state.json)，不以 archive 的生成时间代替检查进度。
 
 ## 功能特性
 
 - 手续费和规格只属于具体期货合约，例如 `SHFE.cu2607`、`CZCE.SR903`。
+- 支持大商所 `DCE.l2611F`、`DCE.pp2611F`、`DCE.v2611F` 月均价合约；完整保留 `F` 后缀及独立费率、规格和生命周期。TqSdk 品种标识仍为 `DCE.l`、`DCE.pp`、`DCE.v`，品种查询包含该品种的普通与月均价合约。
 - 支持具体合约、品种下具体合约的 as-of 手续费查询；`KQ.m@...`、`KQ.i@...` 不返回手续费或规格。
 - 提供可按历史时间查询的合约乘数、最小变动价位，以及派生的每手每跳价值。
 - 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
@@ -303,11 +304,11 @@ cargo run -p future-meta-daemon -- import-ine-parameters \
 
 ## 自动更新与部署
 
-GitHub Actions 从现有 archive 和小检查点补齐缺失交易日；不下载 SQLite 或原件包。新数据先发布并校验 Release，再以一次提交同时更新 `data` 分支的 manifest 与检查点。无业务变化只更新状态，不重发 archive。规则目录变化、原件修订、缺少元数据或请求失败均停止更新，不推进成功检查点。
+GitHub Actions 从现有 archive 和小检查点补齐缺失交易日；不下载 SQLite 或原件包。新数据先发布并校验 Release，再以一次提交同时更新 `data` 分支的 manifest 与检查点。无业务变化只更新状态，不重发 archive。缺少日度参数、元数据或请求失败均停止更新，不推进成功检查点；全量规则审阅独立手动执行。
 
 固定索引：`https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json`。
 
-已安装的 v0.6.0 一次性设置：
+SDK v0.7.0 默认使用此入口，也可显式配置：
 
 ```rust
 let config = DownloadConfig {

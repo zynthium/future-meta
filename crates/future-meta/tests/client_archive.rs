@@ -91,6 +91,78 @@ fn current_archive_roundtrips_with_spec_history() {
     assert_eq!(decoded.schema_version, SCHEMA_VERSION);
 }
 
+#[test]
+fn monthly_average_and_regular_contracts_keep_separate_rules_and_query_handles() {
+    let mut archive = FeeArchiveV3::from(sample_archive());
+    archive.contracts[0].symbol = "DCE.l2607".into();
+    let mut monthly = archive.contracts[0].clone();
+    monthly.id = 2;
+    monthly.symbol = "DCE.l2607F".into();
+    archive.contracts.push(monthly);
+    let mut monthly_spec = archive.contract_spec_versions[0].clone();
+    monthly_spec.contract_id = 2;
+    archive.contract_spec_versions.push(monthly_spec);
+    let mut monthly_fee = archive.fee_versions[0].clone();
+    monthly_fee.contract_id = 2;
+    monthly_fee.rule_hash = "monthly-average".into();
+    monthly_fee.open_fee.value = Some(0.3);
+    archive.fee_versions.push(monthly_fee);
+    let bytes = encode_archive_bytes(&archive).unwrap();
+    let decoded = decode_archive_bytes(&bytes).unwrap();
+    assert_eq!(decoded, archive);
+    let meta = FutureMeta::from_archive(decoded).unwrap();
+    assert_ne!(
+        meta.resolve_contract("DCE.l2607").unwrap(),
+        meta.resolve_contract("DCE.l2607F").unwrap()
+    );
+    let at = "2026-06-04T12:00:00+08:00";
+    assert_amount(
+        meta.contract_fee_asof("DCE.l2607", at)
+            .unwrap()
+            .open_fee
+            .value
+            .unwrap(),
+        0.1,
+    );
+    assert_amount(
+        meta.contract_fee_asof("DCE.l2607F", at)
+            .unwrap()
+            .open_fee
+            .value
+            .unwrap(),
+        0.3,
+    );
+    assert_eq!(meta.contract("DCE.l2607F").unwrap().symbol, "DCE.l2607F");
+    assert_amount(
+        meta.contract_spec_asof("DCE.l2607F", at).unwrap().lot_size,
+        5.0,
+    );
+}
+
+#[test]
+fn monthly_average_launch_night_uses_the_explicit_observation_trading_date() {
+    let mut archive = FeeArchiveV3::from(sample_archive());
+    archive.generated_at = "2025-10-29T12:00:00Z".into();
+    archive.history_start = "2025-10-28T00:00:00+08:00".into();
+    archive.history_end = "2025-10-29T00:00:00+08:00".into();
+    archive.contracts[0].symbol = "DCE.l2602F".into();
+    archive.contracts[0].listing_date = Some("20251029".into());
+    archive.contracts[0].expiry_date = Some("20260130".into());
+    archive.contract_spec_versions[0].valid_from = "2025-10-28T21:00:00+08:00".into();
+    archive.fee_versions[0].valid_from = "2025-10-29T00:00:00+08:00".into();
+    let meta = FutureMeta::from_archive(archive).unwrap();
+    assert!(
+        meta.contract_fee_on(
+            "DCE.l2602F",
+            Date::from_calendar_date(2025, Month::October, 29).unwrap()
+        )
+        .is_ok()
+    );
+    assert!(
+        matches!(meta.contract_fee_asof("DCE.l2602F", "2025-10-28T21:00:00+08:00"), Err(FutureMetaError::NoVersionAt(symbol)) if symbol == "DCE.l2602F")
+    );
+}
+
 #[cfg(feature = "download")]
 #[tokio::test]
 async fn load_file_decodes_archive() {

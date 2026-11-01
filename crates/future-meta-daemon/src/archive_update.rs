@@ -20,7 +20,7 @@ use std::{
     path::Path,
 };
 use time::{
-    Date, OffsetDateTime,
+    Date, OffsetDateTime, UtcOffset,
     format_description::{self, well_known::Rfc3339},
 };
 
@@ -141,15 +141,220 @@ pub fn update(archive: &Path, input: &Path, out: &Path) -> Result<Value> {
     } else {
         original
     };
+    stage(&payload, &bytes, out, through, changed)
+}
+
+/// Append reviewed, disjoint contract histories without rewriting the baseline.
+/// This local maintenance operation never collects or publishes data.
+///
+/// # Errors
+/// Rejects a changed baseline, overlapping symbols, invalid supplemental history,
+/// observations after the checkpoint, or an existing destination.
+pub fn extend(
+    archive: &Path,
+    supplement: &Path,
+    expected_sha256: &str,
+    checked_through: &str,
+    out: &Path,
+) -> Result<Value> {
+    ensure!(!out.exists(), "output already exists: {}", out.display());
+    let original = std::fs::read(archive)?;
+    ensure!(
+        sha256_hex(&original) == expected_sha256,
+        "archive/checkpoint SHA mismatch"
+    );
+    let mut payload = decode_archive_bytes(&original)?;
+    let mut additions = decode_archive_bytes(&std::fs::read(supplement)?)?;
+    ensure!(
+        payload.schema_version == SCHEMA_VERSION && additions.schema_version == SCHEMA_VERSION,
+        "extensions require current archive schema"
+    );
+    FutureMeta::from_archive(payload.clone()).context("validate baseline")?;
+    FutureMeta::from_archive(additions.clone()).context("validate supplemental archive")?;
+    ensure!(
+        !additions.contracts.is_empty(),
+        "empty supplemental archive"
+    );
+    let through = day(checked_through)?;
+    validate_supplement(&additions, through)?;
+    let symbols: BTreeSet<_> = payload
+        .contracts
+        .iter()
+        .map(|c| c.symbol.as_str())
+        .collect();
+    let mut next_id = payload.contracts.iter().map(|c| c.id).max().unwrap_or(0);
+    let mut ids = BTreeMap::new();
+    for contract in &mut additions.contracts {
+        ensure!(
+            !symbols.contains(contract.symbol.as_str()),
+            "supplement overlaps existing contract: {}",
+            contract.symbol
+        );
+        let listing = day(contract
+            .listing_date
+            .as_deref()
+            .context("missing supplemental listing")?)?;
+        let expiry = day(contract
+            .expiry_date
+            .as_deref()
+            .context("missing supplemental expiry")?)?;
+        ensure!(
+            listing <= through && listing <= expiry,
+            "supplemental lifecycle outside checkpoint"
+        );
+        next_id = next_id.checked_add(1).context("contract id overflow")?;
+        ids.insert(contract.id, next_id);
+        contract.id = next_id;
+        contract.active = listing <= through && through <= expiry;
+    }
+    for version in &mut additions.fee_versions {
+        version.contract_id = ids[&version.contract_id];
+    }
+    for version in &mut additions.contract_spec_versions {
+        version.contract_id = ids[&version.contract_id];
+    }
+    payload.contracts.extend(additions.contracts);
+    payload.fee_versions.extend(additions.fee_versions);
+    payload
+        .contract_spec_versions
+        .extend(additions.contract_spec_versions);
+    payload.generated_at = OffsetDateTime::now_utc().format(&Rfc3339)?;
+    payload.history_start = payload
+        .fee_versions
+        .iter()
+        .map(|v| v.valid_from.clone())
+        .min()
+        .context("no fee history")?;
+    payload.history_end = payload
+        .fee_versions
+        .iter()
+        .map(|v| v.valid_from.clone())
+        .max()
+        .context("no fee history")?;
+    FutureMeta::from_archive(payload.clone()).context("validate extended archive")?;
+    let bytes = encode_archive_bytes(&payload)?;
+    stage(&payload, &bytes, out, checked_through, true)
+}
+
+fn validate_supplement(archive: &FeeArchiveV3, through: Date) -> Result<()> {
+    for contract in &archive.contracts {
+        let expiry = day(contract.expiry_date.as_deref().context("missing expiry")?)?;
+        let cap = OffsetDateTime::parse(&after_expiry(&expiry.to_string())?, &Rfc3339)?;
+        let exchange = contract.symbol.split_once('.').context("invalid symbol")?.0;
+        let mut intervals = Vec::new();
+        for fee in archive
+            .fee_versions
+            .iter()
+            .filter(|v| v.contract_id == contract.id)
+        {
+            let start = OffsetDateTime::parse(&fee.valid_from, &Rfc3339)?;
+            let observed = start.to_offset(UtcOffset::from_hms(8, 0, 0)?).date();
+            ensure!(observed <= through, "supplemental fee after checkpoint");
+            validate(
+                &AllowedRow {
+                    symbol: contract.symbol.clone(),
+                    listing_date: contract.listing_date.clone(),
+                    expiry_date: contract.expiry_date.clone(),
+                    lot_size: contract.lot_size,
+                    tick_size: contract.tick_size,
+                    buy_margin_rate: fee.buy_margin_rate,
+                    sell_margin_rate: fee.sell_margin_rate,
+                    open_fee: fee.open_fee.clone(),
+                    close_yesterday_fee: fee.close_yesterday_fee.clone(),
+                    close_today_fee: fee.close_today_fee.clone(),
+                    intraday_open_fee: fee.intraday_open_fee.clone(),
+                    trading_status: fee.trading_status.clone(),
+                    is_main_contract: fee.is_main_contract,
+                    source_updated_at: fee.source_updated_at.clone(),
+                },
+                exchange,
+                &observed.to_string(),
+            )?;
+            let end = fee
+                .valid_to
+                .as_deref()
+                .map(|v| OffsetDateTime::parse(v, &Rfc3339))
+                .transpose()?;
+            ensure!(
+                end.is_none_or(|end| start < end && end <= cap),
+                "supplemental fee exceeds lifecycle"
+            );
+            ensure!(
+                expiry > through || end.is_some(),
+                "expired supplemental fee has no cap"
+            );
+            intervals.push((start, end));
+        }
+        ensure!(
+            !intervals.is_empty(),
+            "supplemental contract has no observed fees"
+        );
+        ensure!(
+            intervals
+                .windows(2)
+                .all(|p| p[0].0 < p[1].0 && p[0].1.is_some_and(|end| end <= p[1].0)),
+            "unordered/overlapping supplemental fees"
+        );
+        let mut specs = Vec::new();
+        for spec in archive
+            .contract_spec_versions
+            .iter()
+            .filter(|v| v.contract_id == contract.id)
+        {
+            let start = OffsetDateTime::parse(&spec.valid_from, &Rfc3339)?;
+            let end = OffsetDateTime::parse(
+                spec.valid_to
+                    .as_deref()
+                    .context("uncapped supplemental specification")?,
+                &Rfc3339,
+            )?;
+            ensure!(
+                start < end
+                    && end <= cap
+                    && spec.lot_size.is_finite()
+                    && spec.lot_size > 0.0
+                    && spec.tick_size.is_finite()
+                    && spec.tick_size > 0.0,
+                "invalid supplemental specification"
+            );
+            specs.push((start, end));
+        }
+        let listing = OffsetDateTime::parse(
+            &format!(
+                "{}T00:00:00+08:00",
+                day(contract
+                    .listing_date
+                    .as_deref()
+                    .context("missing listing")?)?
+            ),
+            &Rfc3339,
+        )?;
+        ensure!(
+            specs.first().is_some_and(|v| v.0 <= listing)
+                && specs.last().is_some_and(|v| v.1 == cap)
+                && specs.windows(2).all(|p| p[0].1 == p[1].0),
+            "incomplete supplemental specifications"
+        );
+    }
+    Ok(())
+}
+
+fn stage(
+    payload: &FeeArchiveV3,
+    bytes: &[u8],
+    out: &Path,
+    through: &str,
+    changed: bool,
+) -> Result<Value> {
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION,
         data_version: payload.generated_at.clone(),
         generated_at: payload.generated_at.clone(),
-        history_start: payload.history_start,
+        history_start: payload.history_start.clone(),
         history_end: payload.history_end.clone(),
-        fee_effective_from: Some(payload.history_end),
+        fee_effective_from: Some(payload.history_end.clone()),
         artifact: "latest.fmeta.zst".into(),
-        sha256: sha256_hex(&bytes),
+        sha256: sha256_hex(bytes),
         size: u64::try_from(bytes.len())?,
         mirrors: Vec::new(),
     };

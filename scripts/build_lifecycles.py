@@ -21,6 +21,7 @@ from pathlib import Path
 
 EVIDENCE_DIR = Path("data/official-evidence")
 SETTLE_DIR = Path("data/settle_params")
+RULES_PATH = Path(__file__).resolve().parents[1] / "config/official-rules.json"
 
 # Explicit user assumptions, not an exchange-published holiday schedule.
 ASSUMED_2027_CLOSURES = (
@@ -150,8 +151,6 @@ def load_observations():
             for r in csv.DictReader(f):
                 ex = r["exchange"]
                 sym = r["symbol"]
-                if ex == "DCE" and sym.endswith("F"):
-                    continue
                 if ex == "CFFEX" and re.match(r"^(IO|HO|MO)", sym):
                     continue
                 full = f"{ex}.{sym}"
@@ -530,10 +529,38 @@ def build_dce_lifecycle(observations):
     }
 
     rows = []
+    monthly_rules = None
     for full, ob in sorted(observations.items()):
         if not full.startswith("DCE."):
             continue
         sym = full[4:]
+        if sym.endswith("F"):
+            from incremental_inputs import new_lifecycle, specification
+
+            if monthly_rules is None:
+                monthly_rules = json.loads(RULES_PATH.read_text())
+            rules = monthly_rules
+            spec = specification(rules, full, ob["first"])
+            listing, expires, assumption = new_lifecycle(rules, full, ob["first"])
+            if ob["last"] > expires:
+                raise ValueError(f"Monthly-average observation after expiry: {full}")
+            source = rules["monthly_average_lifecycles"][spec["product"]]
+            rows.append({
+                "exchange": "DCE", "symbol": sym, "report_date": listing,
+                "listing_date": listing, "expiry_date": "",
+                "canonical_url": source["source_url"], "sha256": source["source_sha256"],
+                "raw_path": source["source_sha256"] + ".html",
+                "report_date_kind": "official_listing_notice_and_cycle",
+            })
+            rows.append({
+                "exchange": "DCE", "symbol": sym, "report_date": expires,
+                "listing_date": "", "expiry_date": expires,
+                "canonical_url": spec["source_url"], "sha256": spec["source_sha256"],
+                "raw_path": spec["source_sha256"] + ".html",
+                "report_date_kind": "user_assumed_holiday_calendar" if assumption else "official_statutory_delivery_rule",
+                "calendar_assumption": json.dumps(assumption) if assumption else "",
+            })
+            continue
         m = re.match(r"([a-z]+)(\d{2})(\d{2})", sym)
         if not m:
             continue
@@ -860,15 +887,17 @@ def build_czce_lifecycle(observations):
     print(f"Generated {out_path} with {len(rows)} CZCE event rows")
 
 def main():
-    global EVIDENCE_DIR, SETTLE_DIR, ASSUME_2027_HOLIDAYS, TRADING_DAYS, TRADING_DAYS_SET
+    global EVIDENCE_DIR, SETTLE_DIR, RULES_PATH, ASSUME_2027_HOLIDAYS, TRADING_DAYS, TRADING_DAYS_SET
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, default=EVIDENCE_DIR)
     parser.add_argument("--settle-dir", type=Path, default=SETTLE_DIR)
+    parser.add_argument("--rules", type=Path, default=RULES_PATH)
     parser.add_argument("--assume-2027-holidays", action="store_true",
                         help="Use the user-provided provisional 2027 closures; label inferred expiry dates separately")
     args = parser.parse_args()
     EVIDENCE_DIR = args.evidence_dir
     SETTLE_DIR = args.settle_dir
+    RULES_PATH = args.rules
     TRADING_DAYS = load_trading_days()
     TRADING_DAYS_SET = set(TRADING_DAYS)
     ASSUME_2027_HOLIDAYS = args.assume_2027_holidays
@@ -876,7 +905,7 @@ def main():
         TRADING_DAYS = sorted(set(TRADING_DAYS) | set(assumed_2027_trading_days()))
         TRADING_DAYS_SET = set(TRADING_DAYS)
     obs = load_observations()
-    print(f"Loaded observations for {len(obs)} regular futures contracts")
+    print(f"Loaded observations for {len(obs)} supported futures contracts")
     build_cffex_lifecycle(obs)
     build_gfex_lifecycle(obs)
     build_dce_lifecycle(obs)

@@ -51,6 +51,19 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Add reviewed, previously absent contract histories to an approved archive.
+    ExtendArchive {
+        #[arg(long)]
+        archive: PathBuf,
+        #[arg(long)]
+        supplement: PathBuf,
+        #[arg(long)]
+        baseline_sha256: String,
+        #[arg(long)]
+        checked_through: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
     UpdateCollected {
         #[arg(long)]
         db: PathBuf,
@@ -307,6 +320,23 @@ pub fn run() -> anyhow::Result<()> {
         }
         Command::UpdateCollected { db, delta, out } => {
             let report = update_collected::update_collected(&db, &delta, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Command::ExtendArchive {
+            archive,
+            supplement,
+            baseline_sha256,
+            checked_through,
+            out,
+        } => {
+            let report = archive_update::extend(
+                &archive,
+                &supplement,
+                &baseline_sha256,
+                &checked_through,
+                &out,
+            )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }

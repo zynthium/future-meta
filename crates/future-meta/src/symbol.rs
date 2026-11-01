@@ -104,12 +104,6 @@ pub fn normalize_futures_symbol(exchange: &str, local: &str) -> Result<String, F
             "{exchange}.{local}"
         )));
     }
-    if !local[product_len..].chars().all(|ch| ch.is_ascii_digit()) {
-        return Err(FutureMetaError::InvalidSymbol(format!(
-            "{exchange}.{local}"
-        )));
-    }
-
     let normalized_local = if exchange == "CZCE" {
         normalize_czce_local(local, product_len)?
     } else {
@@ -207,7 +201,13 @@ fn validate_futures_local(exchange: &str, local: &str) -> Result<usize, FutureMe
         )));
     }
 
+    let product = &local[..product_len];
     let suffix = &local[product_len..];
+    let suffix = if exchange == "DCE" && matches!(product, "l" | "pp" | "v") {
+        suffix.strip_suffix('F').unwrap_or(suffix)
+    } else {
+        suffix
+    };
     if !suffix.chars().all(|ch| ch.is_ascii_digit()) {
         return Err(FutureMetaError::InvalidSymbol(format!(
             "{exchange}.{local}"
@@ -216,6 +216,12 @@ fn validate_futures_local(exchange: &str, local: &str) -> Result<usize, FutureMe
 
     let expected_suffix_len = if exchange == "CZCE" { 3 } else { 4 };
     if suffix.len() != expected_suffix_len {
+        return Err(FutureMetaError::InvalidSymbol(format!(
+            "{exchange}.{local}"
+        )));
+    }
+
+    if local.ends_with('F') && !matches!(suffix[2..].parse::<u8>(), Ok(1..=12)) {
         return Err(FutureMetaError::InvalidSymbol(format!(
             "{exchange}.{local}"
         )));
@@ -357,6 +363,41 @@ mod tests {
         assert_eq!(parsed.exchange, "SHFE");
         assert_eq!(parsed.local, "cu2607");
         assert_eq!(parsed.underlying_symbol.as_deref(), Some("SHFE.cu"));
+    }
+
+    #[test]
+    fn preserves_dce_monthly_average_symbols_and_tqsdk_underlyings() {
+        for product in ["l", "pp", "v"] {
+            let symbol = format!("DCE.{product}2611F");
+            let parsed = parse_symbol(&symbol).expect("monthly average parses");
+            assert_eq!(parsed.kind, SymbolKind::Futures);
+            assert_eq!(parsed.underlying_symbol, Some(format!("DCE.{product}")));
+            assert_eq!(
+                normalize_futures_symbol("DCE", &parsed.local).unwrap(),
+                symbol
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unapproved_or_malformed_monthly_average_symbols() {
+        for symbol in [
+            "DCE.m2611F",
+            "SHFE.cu2611F",
+            "DCE.l2611f",
+            "DCE.l261F",
+            "DCE.l2611FF",
+            "DCE.l2600F",
+            "DCE.l2613F",
+            "DCE.l2611F-C-1000",
+        ] {
+            assert!(parse_symbol(symbol).is_err(), "{symbol}");
+            let (exchange, local) = symbol.split_once('.').unwrap();
+            assert!(
+                normalize_futures_symbol(exchange, local).is_err(),
+                "{symbol}"
+            );
+        }
     }
 
     #[test]

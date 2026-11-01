@@ -115,7 +115,7 @@ def applies_to_contract(spec, symbol):
     lower, upper = spec["delivery_month_from"], spec["delivery_month_to"]
     if lower is None and upper is None:
         return True
-    match = re.fullmatch(r"[A-Za-z]+(\d{2})(\d{2})", symbol)
+    match = re.fullmatch(r"[A-Za-z]+(\d{2})(\d{2})F?", symbol)
     if not match:
         raise ValueError(f"delivery-month scope requires an unambiguous YYMM contract: {symbol}; use full_symbol instead")
     month = f"{2000 + int(match[1]):04d}-{match[2]}"
@@ -127,8 +127,11 @@ def symbol_parts(exchange, symbol):
     symbol = symbol.strip()
     if exchange not in DOMAINS:
         raise ValueError(f"unknown exchange: {exchange}")
-    if exchange == "DCE" and re.fullmatch(r"[a-z]+\d{4}F", symbol):
-        return None
+    if exchange == "DCE" and symbol.endswith("F"):
+        match = re.fullmatch(r"(l|pp|v)\d{2}(0[1-9]|1[0-2])F", symbol)
+        if not match:
+            raise ValueError(f"unsupported monthly-average symbol: {exchange}.{symbol}")
+        return exchange, symbol, match[1] + "-F"
     if exchange == "CFFEX" and re.match(r"^(IO|HO|MO)", symbol):
         return None
     pattern = r"([A-Z]+)(\d{3})" if exchange == "CZCE" else (
@@ -194,7 +197,12 @@ def document_table_evidence(body, product):
         for row in table:
             for index, cell in enumerate(row[:-1]):
                 if re.sub(r"\s+", "", cell) in ("交易代码", "合约代码"):
-                    codes.update(code.lower() for code in re.findall(r"[A-Za-z]+", row[index + 1]))
+                    value = re.sub(r"\s+", "", row[index + 1])
+                    monthly = re.fullmatch(r"(L|PP|V)合约月份F", value)
+                    if monthly:
+                        codes.add(monthly[1].lower() + "-f")
+                    else:
+                        codes.update(code.lower() for code in re.findall(r"[A-Za-z]+", value))
         all_codes.update(codes)
         if product.lower() in codes:
             identified.extend(table)
@@ -413,7 +421,7 @@ def load_specs(evidence, manifests, gaps):
             product = row["product"].strip()
             if exchange == "CFFEX" and product in ("IO", "HO", "MO"):
                 continue
-            if not re.fullmatch(r"[A-Za-z]+", product):
+            if not (re.fullmatch(r"[A-Za-z]+", product) or (exchange == "DCE" and product in ("l-F", "pp-F", "v-F"))):
                 raise ValueError(f"{manifest}:{line}: invalid product {product}")
             url = row.get("canonical_url") or row.get("specification_url", "")
             digest = row.get("sha256") or row.get("specification_sha256", "")
@@ -525,7 +533,7 @@ def scan_observations(settle_dir):
                 record["dates"].add(observed)
                 record["source_ids"].add(identity)
     if not records:
-        raise ValueError("no ordinary futures settlement observations found")
+        raise ValueError("no supported futures settlement observations found")
     return records, sources, dict(excluded)
 
 
@@ -693,7 +701,7 @@ def build_contracts_meta(args):
         provenance[full] = {"official_fields": fields, "observations": {"first_date": first, "last_date": last, "source_ids": sorted(observation["source_ids"]) if observation else []},
                             "spec_documents": [s["source"] for s in candidates], "range_scope": scope}
     summary = {"complete": not gaps, "metadata_rows": len(metadata), "specification_rows": len(versions),
-               "ordinary_observed_symbols": len(observations), "gap_counts": dict(Counter(g["kind"] for g in gaps)),
+               "observed_futures_symbols": len(observations), "gap_counts": dict(Counter(g["kind"] for g in gaps)),
                "excluded_settlement_rows": excluded, "offline": args.offline}
     summary["observed_spec_missing_symbols"] = len({g["symbol"] for g in gaps
         if g["kind"] == "missing_official_spec" and g["symbol"] in observations})

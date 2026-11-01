@@ -1514,6 +1514,57 @@
       "delivery_month_to": "",
       "source_url": "https://www.shfe.cn/upload/20230117/1673948701354.doc",
       "source_sha256": "1995517312f18529b737e109c6a04b899c472a5cb04032a383405c2d001a0624"
+    },
+    {
+      "exchange": "DCE",
+      "product": "l-F",
+      "full_symbol": "",
+      "valid_from": "2025-10-28T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2025-10-29",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "2026-02",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/content/2025/jyxyjjqhhyygz/18624144.html",
+      "source_sha256": "aff3cb5746ebb5f4177f185fbc7111f90c2412d1c408877e8d04403930636877"
+    },
+    {
+      "exchange": "DCE",
+      "product": "v-F",
+      "full_symbol": "",
+      "valid_from": "2025-10-28T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2025-10-29",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "2026-02",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/content/2025/jlyxyjjqhhyygz/18624233.html",
+      "source_sha256": "384f3c0fc2c6384aeb5221c4847c5cbfd3b432d05c01a998f53a17c629af32c5"
+    },
+    {
+      "exchange": "DCE",
+      "product": "pp-F",
+      "full_symbol": "",
+      "valid_from": "2025-10-28T21:00:00+08:00",
+      "valid_to": "",
+      "lot_size": 5.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "instant",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "2025-10-29",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "2026-02",
+      "delivery_month_to": "",
+      "source_url": "http://www.dce.com.cn/dce/content/2025/jbxyjjqhhyygz/18624247.html",
+      "source_sha256": "87a648745c926e5eacc3b586eadbe9a947fc8f542027cb5eeee0fffecb455f8c"
     }
   ],
   "sources": [
@@ -1876,6 +1927,22 @@
       "exchange": "SHFE",
       "url": "https://www.shfe.cn/products/futures/metal/ferrousandpreciousmetal/wr_f/standard_wr_f/202312/t20231205_327325.html",
       "sha256": "6faaf6fead7a87a5174364bd40eaeb7e0dc2245ea2d3a63a0ddd1f125d996d41"
+    },
+    {
+      "url": "http://www.dce.com.cn/dce/content/2025/jyxyjjqhhyygz/18624144.html",
+      "sha256": "aff3cb5746ebb5f4177f185fbc7111f90c2412d1c408877e8d04403930636877"
+    },
+    {
+      "url": "http://www.dce.com.cn/dce/content/2025/jlyxyjjqhhyygz/18624233.html",
+      "sha256": "384f3c0fc2c6384aeb5221c4847c5cbfd3b432d05c01a998f53a17c629af32c5"
+    },
+    {
+      "url": "http://www.dce.com.cn/dce/content/2025/jbxyjjqhhyygz/18624247.html",
+      "sha256": "87a648745c926e5eacc3b586eadbe9a947fc8f542027cb5eeee0fffecb455f8c"
+    },
+    {
+      "url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18623631.html",
+      "sha256": "9594a08240078d3f0f25b4ac653eadbee9e4236f4c1bf35569d7912381474c80"
     }
   ],
   "lifecycle_calendars": {
@@ -2921,6 +2988,68 @@
       "approved_documents": [
         "https://www.shfe.cn/upload/20230117/1673948701354.doc"
       ]
+    },
+    {
+      "exchange": "DCE",
+      "product": "l-F",
+      "url": "http://www.dce.com.cn/dce/channel/list/7000120.html",
+      "mode": "table",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/content/2025/jyxyjjqhhyygz/18624144.html"
+      ],
+      "table_sha256": [
+        "af0c4390ac47b73f2acd4456418c518a52ce41a6e4fcf2eeec1e10efc9f0eae1"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "product": "v-F",
+      "url": "http://www.dce.com.cn/dce/channel/list/7000127.html",
+      "mode": "table",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/content/2025/jlyxyjjqhhyygz/18624233.html"
+      ],
+      "table_sha256": [
+        "c5b2008e2bab9ac57d5f465ccffbdbacdc1e08061ebcbfad8e066fa2d6de0cf5"
+      ]
+    },
+    {
+      "exchange": "DCE",
+      "product": "pp-F",
+      "url": "http://www.dce.com.cn/dce/channel/list/7000133.html",
+      "mode": "table",
+      "approved_documents": [
+        "http://www.dce.com.cn/dce/content/2025/jbxyjjqhhyygz/18624247.html"
+      ],
+      "table_sha256": [
+        "1f38976e7c09e78a8321bb89833c9ff1e4791628e870f9048f84b4ab9cbb555b"
+      ]
     }
-  ]
+  ],
+  "monthly_average_lifecycles": {
+    "l-F": {
+      "launch_at": "2025-10-28T21:00:00+08:00",
+      "launch_trade_date": "2025-10-29",
+      "first_delivery_month": "2026-02",
+      "listing_months_before": 6,
+      "source_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18623631.html",
+      "source_sha256": "9594a08240078d3f0f25b4ac653eadbee9e4236f4c1bf35569d7912381474c80"
+    },
+    "v-F": {
+      "launch_at": "2025-10-28T21:00:00+08:00",
+      "launch_trade_date": "2025-10-29",
+      "first_delivery_month": "2026-02",
+      "listing_months_before": 6,
+      "source_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18623631.html",
+      "source_sha256": "9594a08240078d3f0f25b4ac653eadbee9e4236f4c1bf35569d7912381474c80"
+    },
+    "pp-F": {
+      "launch_at": "2025-10-28T21:00:00+08:00",
+      "launch_trade_date": "2025-10-29",
+      "first_delivery_month": "2026-02",
+      "listing_months_before": 6,
+      "source_url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18623631.html",
+      "source_sha256": "9594a08240078d3f0f25b4ac653eadbee9e4236f4c1bf35569d7912381474c80"
+    }
+  }
 }

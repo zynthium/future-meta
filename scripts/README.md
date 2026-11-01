@@ -9,7 +9,7 @@
 - `collect_contract_specs.py`：交易所合约基础信息、产品规格和真实变更依据；输出 `contracts_meta.csv`、`contract_spec_versions.csv`、来源映射和缺口报告。
 - `raw/` 与 `data/official-evidence/`：保留交易所响应原文、官方 URL、请求日期和 SHA-256。可以复用经校验的官方原件，不用旧 SQLite 或未经证实的 CSV 补值。
 
-普通期货使用 TqSdk 风格 symbol。期权和 DCE 月均价 F 合约不属于当前普通期货重建范围。
+期货使用 TqSdk 风格 symbol，包含 DCE 的 `l/pp/v` 月均价 F 合约。`--futures-only` 排除期权月份，不排除月均价期货。内部规格、生命周期规则分别使用 `l-F/pp-F/v-F`，与普通合约分开；不得去掉 F 尾缀后借用普通合约的值。期权不属于当前重建范围。
 
 ## 结算参数采集
 

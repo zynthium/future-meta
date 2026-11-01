@@ -53,6 +53,27 @@ cargo run -p future-meta --example inspect_archive -- data/rebuild-20261018/publ
 
 普通 Rust 构建检查不需要 Python；Python 用于官方在线/离线采集、元数据生成及增量更新。本节 SQLite 流程仅供本地历史重建与诊断。日更由 `scripts/update_official.py` 基于客户端 archive 和轻量检查点编排，不使用维护库，见 [部署说明](deployment.md)。
 
+## 月均价合约的离线历史增补
+
+大商所 `l/pp/v` 的 F 合约使用独立的官方规则：5 吨/手、最小变动价位 1 元/吨，最后交易日为合约月份前一个月的最后交易日。规格来自各自合约原件；挂牌周期与首批合约见[上市通知](http://www.dce.com.cn/dce/content/2025/ywggytz/18623631.html)。内部规则键为 `l-F/pp-F/v-F`，不能匹配普通合约规则。每次日更从同一份 DCE 响应保留这些参数，不新增请求。
+
+首批合约实际从 2025-10-28 21:00 开始交易，归属 2025-10-29 交易日。规格原始瞬间和适用交易日分别保留；手续费从首条官方日度观测 2025-10-29 开始，不推测盘中费率。SDK 时间戳查询采用交易所本地日历日；夜盘调用方须用显式交易日 API 查询所属交易日。
+
+先用保留原文生成新增合约的规格、生命周期、参数及来源账本，再通过 `rebuild-collected` 和 `verify-collected` 构建仅包含新增合约的本地增补 archive。合并时绑定当前线上 archive SHA 和检查点：
+
+```bash
+cargo run -p future-meta-daemon -- extend-archive \
+  --archive data/current/latest.fmeta.zst \
+  --supplement data/supplement/latest.fmeta.zst \
+  --baseline-sha256 <当前manifest中的SHA> \
+  --checked-through <当前checked_through> \
+  --out data/extended-public
+```
+
+`extend-archive` 只处理本地已审阅 archive，不采集、不发布。它拒绝重叠 symbol、错误基线和检查点之后的手续费；只为新增合约分配新 ID，既有合约、手续费和规格版本保持原值。此操作不代表一次新的六所检查，发布时不得推进 `last_success_at` 或 `checked_through`。2027 年生命周期假期假设继续保留标签。
+
+客户端需升级至 SDK v0.7.0；wire schema 仍为 4。旧 SDK 不识别 F symbol，不提供兼容包。
+
 ## 发布校验及覆盖边界
 
 ```sh

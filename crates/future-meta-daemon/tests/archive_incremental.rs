@@ -126,6 +126,85 @@ fn unchanged_preserves_exact_archive_bytes_despite_observation_and_text_changes(
 }
 
 #[test]
+fn extend_remaps_only_new_contract_ids_and_preserves_all_baseline_history() {
+    let original = baseline();
+    let bytes = encode_archive_bytes(&original).unwrap();
+    let mut supplement = original.clone();
+    supplement.contracts.truncate(1);
+    supplement.contract_spec_versions.truncate(1);
+    supplement.fee_versions.truncate(1);
+    supplement.contracts[0].symbol = "DCE.l2611F".into();
+    supplement.contract_spec_versions[0].valid_to = Some("2027-01-01T00:00:00+08:00".into());
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base.fmeta.zst");
+    let extra = dir.path().join("extra.fmeta.zst");
+    std::fs::write(&base, &bytes).unwrap();
+    std::fs::write(&extra, encode_archive_bytes(&supplement).unwrap()).unwrap();
+    let run = |out: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_future-meta-daemon"))
+            .arg("extend-archive")
+            .arg("--archive")
+            .arg(&base)
+            .arg("--supplement")
+            .arg(&extra)
+            .arg("--baseline-sha256")
+            .arg(sha256_hex(&bytes))
+            .args(["--checked-through", "2026-10-30", "--out"])
+            .arg(out)
+            .output()
+            .unwrap()
+    };
+    let out = dir.path().join("out");
+    let result = run(&out);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let merged =
+        decode_archive_bytes(&std::fs::read(out.join("latest.fmeta.zst")).unwrap()).unwrap();
+    assert_eq!(&merged.contracts[..6], original.contracts);
+    assert_eq!(&merged.fee_versions[..6], original.fee_versions);
+    assert_eq!(
+        &merged.contract_spec_versions[..6],
+        original.contract_spec_versions
+    );
+    assert_eq!(merged.contracts[6].id, 7);
+    assert_eq!(merged.contracts[6].symbol, "DCE.l2611F");
+    assert_eq!(merged.fee_versions[6].contract_id, 7);
+    assert_eq!(merged.contract_spec_versions[6].contract_id, 7);
+
+    supplement.contracts[0].symbol = original.contracts[0].symbol.clone();
+    std::fs::write(&extra, encode_archive_bytes(&supplement).unwrap()).unwrap();
+    let rejected = dir.path().join("overlap");
+    assert!(!run(&rejected).status.success());
+    assert!(!rejected.exists());
+    supplement.contracts[0].symbol = "DCE.l2611F".into();
+    supplement.fee_versions[0].valid_from = "2026-11-02T00:00:00+08:00".into();
+    std::fs::write(&extra, encode_archive_bytes(&supplement).unwrap()).unwrap();
+    let rejected = dir.path().join("future");
+    assert!(!run(&rejected).status.success());
+    assert!(!rejected.exists());
+    supplement.fee_versions[0].valid_from = "2026-10-29T00:00:00+08:00".into();
+    supplement.contracts[0].expiry_date = Some("20261030".into());
+    supplement.contract_spec_versions[0].valid_to = Some("2026-10-31T00:00:00+08:00".into());
+    std::fs::write(&extra, encode_archive_bytes(&supplement).unwrap()).unwrap();
+    let rejected = dir.path().join("uncapped-expired");
+    assert!(!run(&rejected).status.success());
+    assert!(!rejected.exists());
+    supplement.contracts[0].expiry_date = Some("20261231".into());
+    supplement.contract_spec_versions[0].valid_to = Some("2027-01-01T00:00:00+08:00".into());
+    let mut earlier = supplement.fee_versions[0].clone();
+    earlier.valid_from = "2026-10-28T00:00:00+08:00".into();
+    earlier.valid_to = Some("2026-10-29T00:00:00+08:00".into());
+    supplement.fee_versions.push(earlier);
+    std::fs::write(&extra, encode_archive_bytes(&supplement).unwrap()).unwrap();
+    let rejected = dir.path().join("unordered-fees");
+    assert!(!run(&rejected).status.success());
+    assert!(!rejected.exists());
+}
+
+#[test]
 fn missed_days_preserve_change_then_reversion() {
     let bytes = encode_archive_bytes(&baseline()).unwrap();
     let mut input = batch(&bytes, &["2026-10-30", "2026-11-02"]);
