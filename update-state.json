@@ -12,8 +12,8 @@
   "last_attempt": {
     "slot": "2026-11-03:user-authorized-backfill-until-2230",
     "started_at": "2026-11-03T14:19:16.971815+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-03T14:21:10.388864+00:00",
+    "status": "failed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/41652417742",
     "run_id": "41652417742",
     "previous_attempt": {
@@ -60,7 +60,8 @@
       "access_deadline": "2026-11-03T22:30:00+08:00",
       "source_commit": "cb0dcc7f27628734f24994749c91751948ba0843",
       "workflow_commit": "64786fbb6727b28911039677b692798d006fe5b8"
-    }
+    },
+    "error": "RuntimeError: Official GET failed after 2 HTTP attempts and 1 Chrome attempt: https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat; HTTP: Official request failed after 2 attempts: https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat; last error: ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer')); Chrome: Page.goto: net::ERR_CONNECTION_RESET at https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat\nCall log:\n  - navigating to \"https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat\", waiting until \"load\"\n"
   },
   "last_success_at": null,
   "current_release": "data-20261101T035357Z-bc62c3688e85",
