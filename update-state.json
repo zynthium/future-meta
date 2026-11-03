@@ -10,13 +10,27 @@
     "SHFE": "2026-10-30"
   },
   "last_attempt": {
-    "slot": "2026-11-03:evening",
-    "started_at": "2026-11-03T11:02:36.422768+00:00",
-    "finished_at": "2026-11-03T11:03:22.252069+00:00",
-    "status": "failed",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/41624123269",
-    "run_id": "41624123269",
-    "error": "RuntimeError: Official request failed after 3 attempts: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261103.dat"
+    "slot": "2026-11-03:user-authorized-backfill-until-2100",
+    "started_at": "2026-11-03T12:32:55.472574+00:00",
+    "finished_at": null,
+    "status": "running",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/41636509721",
+    "run_id": "41636509721",
+    "previous_attempt": {
+      "slot": "2026-11-03:evening",
+      "started_at": "2026-11-03T11:02:36.422768+00:00",
+      "finished_at": "2026-11-03T11:03:22.252069+00:00",
+      "status": "failed",
+      "run_url": "https://github.com/zynthium/future-meta/actions/runs/41624123269",
+      "run_id": "41624123269",
+      "error": "RuntimeError: Official request failed after 3 attempts: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261103.dat"
+    },
+    "authorization": {
+      "kind": "explicit_one_time_user_exception",
+      "access_deadline": "2026-11-03T21:00:00+08:00",
+      "source_commit": "498683b431f3c7aced1c68cbd9d20cf84327125e",
+      "workflow_commit": "94b85ebad58602e913da9c510c6b6cfa37f43192"
+    }
   },
   "last_success_at": null,
   "current_release": "data-20261101T035357Z-bc62c3688e85",
