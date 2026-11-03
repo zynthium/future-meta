@@ -1,19 +1,19 @@
 {
   "schema": 1,
-  "archive_sha256": "bc62c3688e85c8ac28718a138ad1478340efcf7e28b89342ef2496c41ea27388",
+  "archive_sha256": "d2a27e77f654e91c8e829a9ef11a0eaf20658581bc0ada79c53a9fd33225562c",
   "checked_through": {
-    "CFFEX": "2026-10-30",
-    "CZCE": "2026-10-30",
-    "DCE": "2026-10-30",
-    "GFEX": "2026-10-30",
-    "INE": "2026-10-30",
-    "SHFE": "2026-10-30"
+    "CFFEX": "2026-11-03",
+    "CZCE": "2026-11-03",
+    "DCE": "2026-11-03",
+    "GFEX": "2026-11-03",
+    "INE": "2026-11-03",
+    "SHFE": "2026-11-03"
   },
   "last_attempt": {
     "slot": "2026-11-03:user-authorized-backfill-until-234839",
     "started_at": "2026-11-03T15:29:48.593952+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-03T15:32:01.555573+00:00",
+    "status": "changed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/41664370414",
     "run_id": "41664370414",
     "previous_attempt": {
@@ -77,9 +77,9 @@
       "workflow_commit": "5de96751c7ec39c4f671accf246e8c7ff0884f6f"
     }
   },
-  "last_success_at": null,
-  "current_release": "data-20261101T035357Z-bc62c3688e85",
-  "previous_release": "data-20261031T110854Z-b4fb0dcd0469",
+  "last_success_at": "2026-11-03T15:32:01.555573+00:00",
+  "current_release": "data-20261103T152948Z-d2a27e77f654",
+  "previous_release": "data-20261101T035357Z-bc62c3688e85",
   "exceptions": {
     "assumed_expiry": {
       "CFFEX.IC2701": "calendar-c81a8f124ba4",
@@ -551,7 +551,10 @@
       "DCE.pp2704F": "calendar-c81a8f124ba4",
       "DCE.v2702F": "calendar-c81a8f124ba4",
       "DCE.v2703F": "calendar-c81a8f124ba4",
-      "DCE.v2704F": "calendar-c81a8f124ba4"
+      "DCE.v2704F": "calendar-c81a8f124ba4",
+      "DCE.l2705F": "calendar-c81a8f124ba4",
+      "DCE.pp2705F": "calendar-c81a8f124ba4",
+      "DCE.v2705F": "calendar-c81a8f124ba4"
     },
     "assumptions": {
       "calendar-c81a8f124ba4": {
@@ -625,7 +628,18 @@
       "fee_versions": 206,
       "minimum_sdk": "0.7.0",
       "metadata_verified_at": "2026-11-01T04:03:22.218809+00:00"
+    },
+    "contract_base_info": {
+      "report_date": "2026-11-03",
+      "sources": [
+        {
+          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat",
+          "sha256": "71ba90e2836fc004b1b31ea604a213c859ac1be18069946063d48154c85939ae"
+        }
+      ]
     }
   },
-  "retired_releases": []
+  "retired_releases": [
+    "data-20261031T110854Z-b4fb0dcd0469"
+  ]
 }
