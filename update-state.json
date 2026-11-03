@@ -12,10 +12,11 @@
   "last_attempt": {
     "slot": "2026-11-03:evening",
     "started_at": "2026-11-03T11:02:36.422768+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-03T11:03:22.252069+00:00",
+    "status": "failed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/41624123269",
-    "run_id": "41624123269"
+    "run_id": "41624123269",
+    "error": "RuntimeError: Official request failed after 3 attempts: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261103.dat"
   },
   "last_success_at": null,
   "current_release": "data-20261101T035357Z-bc62c3688e85",
