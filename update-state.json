@@ -12,8 +12,8 @@
   "last_attempt": {
     "slot": "2026-11-03:user-authorized-backfill-until-2100",
     "started_at": "2026-11-03T12:32:55.472574+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-03T12:35:55.113840+00:00",
+    "status": "failed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/41636509721",
     "run_id": "41636509721",
     "previous_attempt": {
@@ -30,7 +30,8 @@
       "access_deadline": "2026-11-03T21:00:00+08:00",
       "source_commit": "498683b431f3c7aced1c68cbd9d20cf84327125e",
       "workflow_commit": "94b85ebad58602e913da9c510c6b6cfa37f43192"
-    }
+    },
+    "error": "TimeoutError: Page.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://www.dce.com.cn/\", waiting until \"domcontentloaded\"\n"
   },
   "last_success_at": null,
   "current_release": "data-20261101T035357Z-bc62c3688e85",
