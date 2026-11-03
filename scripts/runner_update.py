@@ -91,7 +91,7 @@ def prepare(args):
         deadline = access_deadline(gate)
     from collection_transport import preferred_runners
 
-    primary, backup = ("ubuntu-latest", "macos-15") if smoke else preferred_runners(state.get("transport_health"))
+    primary, backup = ("ubuntu-latest", "macos-15-intel") if smoke else preferred_runners(state.get("transport_health"))
     args.work_dir.mkdir(parents=True, exist_ok=False)
     run_id = os.environ["GITHUB_RUN_ID"]
     started = branch.begin_attempt(state, slot, update.utcnow(),

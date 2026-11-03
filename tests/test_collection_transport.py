@@ -47,20 +47,20 @@ class CollectionTransportTests(unittest.TestCase):
         response = requests.Response()
         response.status_code = 200
         response._content = b'\x00\xfffixture'
-        with patch.object(context.__class__, '_chrome', return_value=response) as chrome, patch.object(access, 'request') as http, self.activate('backup', 'macos-15') as backup:
+        with patch.object(context.__class__, '_chrome', return_value=response) as chrome, patch.object(access, 'request') as http, self.activate('backup', 'macos-15-intel') as backup:
             self.assertEqual(collector.fetch_with_retry(URL).content, b'\x00\xfffixture')
             chrome.assert_called_once()
             http.assert_not_called()
             self.assertEqual(sum(item['success'] for item in backup.health()['buckets']), 1)
         ledger = json.loads(self.path.read_text())
         self.assertEqual(len(next(iter(ledger['requests'].values()))['attempts']), 3)
-        with patch.object(context.__class__, '_chrome') as chrome, self.activate('backup', 'macos-15'):
+        with patch.object(context.__class__, '_chrome') as chrome, self.activate('backup', 'macos-15-intel'):
             with self.assertRaises(self.transport.TransportUnavailable):
                 collector.fetch_with_retry(URL)
             chrome.assert_not_called()
 
     def test_new_backup_request_uses_only_three_total_attempts(self):
-        with patch.object(access, 'request', side_effect=requests.ConnectionError('reset')) as http, patch.object(self.transport.Context, '_chrome', side_effect=requests.ConnectionError('chrome reset')) as chrome, self.activate('backup', 'macos-15'):
+        with patch.object(access, 'request', side_effect=requests.ConnectionError('reset')) as http, patch.object(self.transport.Context, '_chrome', side_effect=requests.ConnectionError('chrome reset')) as chrome, self.activate('backup', 'macos-15-intel'):
             with self.assertRaises(self.transport.TransportUnavailable):
                 collector.fetch_with_retry(URL, max_retries=99)
         self.assertEqual(http.call_count, 2)
@@ -97,24 +97,24 @@ class CollectionTransportTests(unittest.TestCase):
         self.assertEqual(len(health['buckets']), 1)
         self.assertEqual(health['buckets'][0]['success'], 10)
         self.assertNotIn('example.dat', json.dumps(health))
-        with self.activate('backup', 'macos-15', history=health) as context:
+        with self.activate('backup', 'macos-15-intel', history=health) as context:
             self.assertEqual(context.health(), health)
 
     def test_runner_preference_requires_observations_then_compares_actual_success_rate(self):
         preference = self.transport.preferred_runners
-        self.assertEqual(preference(None), ('ubuntu-latest', 'macos-15'))
+        self.assertEqual(preference(None), ('ubuntu-latest', 'macos-15-intel'))
         history = {'version': 1, 'buckets': [
             {'host': 'shfe.com.cn', 'runner': 'ubuntu-latest', 'client': 'requests', 'success': 1, 'failure': 4, 'duration_seconds': 3},
-            {'host': 'shfe.com.cn', 'runner': 'macos-15', 'client': 'requests', 'success': 4, 'failure': 1, 'duration_seconds': 10},
+            {'host': 'shfe.com.cn', 'runner': 'macos-15-intel', 'client': 'requests', 'success': 4, 'failure': 1, 'duration_seconds': 10},
         ]}
-        self.assertEqual(preference(history), ('macos-15', 'ubuntu-latest'))
+        self.assertEqual(preference(history), ('macos-15-intel', 'ubuntu-latest'))
 
     def test_dce_session_budget_survives_runner_handoff(self):
         with self.activate() as context:
             context.reserve_dce_session()
             with self.assertRaises(self.transport.TransportUnavailable):
                 context.reserve_dce_session()
-        with self.activate('backup', 'macos-15') as context:
+        with self.activate('backup', 'macos-15-intel') as context:
             context.reserve_dce_session()
             with self.assertRaises(self.transport.TransportUnavailable):
                 context.reserve_dce_session()
@@ -130,7 +130,7 @@ class CollectionTransportTests(unittest.TestCase):
     def test_backup_refresh_reuses_validated_raw_cache(self):
         store = collector.RawStore(Path(self.temp.name) / 'raw', None, False)
         store.save('SHFE', '2026-11-03', URL, b'cached')
-        with patch.object(access, 'request') as http, self.activate('backup', 'macos-15'):
+        with patch.object(access, 'request') as http, self.activate('backup', 'macos-15-intel'):
             self.assertEqual(store.get('SHFE', '2026-11-03', URL, refresh=True), b'cached')
             http.assert_not_called()
 
@@ -152,7 +152,7 @@ class CollectionTransportTests(unittest.TestCase):
             {'runner': 'ubuntu-latest', 'client': 'requests', 'outcome': 'running'}]}
         self.path.write_text(json.dumps(ledger))
         for _ in range(2):
-            with self.activate('backup', 'macos-15') as context:
+            with self.activate('backup', 'macos-15-intel') as context:
                 self.assertEqual(sum(item['failure'] for item in context.health()['buckets']), 1)
                 self.assertEqual(len(context.ledger['requests']['fixture']['attempts']), 1)
 

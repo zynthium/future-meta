@@ -165,7 +165,7 @@ class DceStartupTests(unittest.TestCase):
         self.assertEqual(sum(item["failure"] for item in health["buckets"]), 1)
         self.second.new_page.return_value.evaluate.return_value = {
             "status": 200, "body": list(parameters().encode())}
-        with transport.activate(path, "backup", "macos-15"):
+        with transport.activate(path, "backup", "macos-15-intel"):
             self.collect()
         self.assertEqual(self.playwright.chromium.launch.call_count, 2)
         self.assertEqual(len(json.loads(path.read_text())["dce_sessions"]), 2)
@@ -180,7 +180,7 @@ class DceStartupTests(unittest.TestCase):
         self.assertTrue((self.root / "raw/dce/2026-11-02.json").exists())
         self.assertFalse((self.root / "raw/dce/2026-11-03.json").exists())
         self.second.new_page.return_value.evaluate.return_value = raw
-        with transport.activate(path, "backup", "macos-15"):
+        with transport.activate(path, "backup", "macos-15-intel"):
             self.collect(["2026-11-02", "2026-11-03"])
         self.second.new_page.return_value.evaluate.assert_called_once()
         self.assertEqual(self.second.new_page.return_value.evaluate.call_args.args[1]["params"]["tradeDate"], "20261103")

@@ -215,7 +215,7 @@ def main():
         help="Verify current public state without exchange access",
     )
     parser.add_argument("--phase", choices=("prepare", "check", "primary", "backup", "finalize"))
-    parser.add_argument("--runner", choices=("ubuntu-latest", "macos-15"))
+    parser.add_argument("--runner", choices=("ubuntu-latest", "macos-15-intel"))
     parser.add_argument("--offline-smoke", action="store_true", help="Test runner handoff with blocked official transports")
     args = parser.parse_args()
     if args.offline_smoke and (not args.phase or args.republish_current):

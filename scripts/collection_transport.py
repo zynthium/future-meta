@@ -19,7 +19,7 @@ import requests
 
 import official_access
 
-RUNNERS = ('ubuntu-latest', 'macos-15')
+RUNNERS = ('ubuntu-latest', 'macos-15-intel')
 CLIENTS = ('requests', 'curl_cffi', 'chrome')
 HOSTS = ('shfe.com.cn', 'ine.cn', 'dce.com.cn', 'czce.com.cn', 'gfex.com.cn', 'cffex.com.cn')
 _ACTIVE = ContextVar('official_collection_transport', default=None)

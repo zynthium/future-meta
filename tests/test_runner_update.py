@@ -108,7 +108,7 @@ class RunnerUpdateTests(unittest.TestCase):
             backup_dir = Path(self.temp.name) / "another-runner"
             shutil.copytree(self.work, backup_dir)
             self.args.work_dir = backup_dir
-            self.args.phase, self.args.runner = "backup", "macos-15"
+            self.args.phase, self.args.runner = "backup", "macos-15-intel"
             backup = runner.collect(self.args)
             self.assertTrue(backup["complete"], backup)
             result = runner.finalize(self.args)
@@ -150,7 +150,7 @@ class RunnerUpdateTests(unittest.TestCase):
         manifest, state, body = self.smoke_snapshot()
         with patch.object(branch, "read", return_value=("parent", manifest, state)), patch.object(update.publish_data, "download_asset", return_value=body):
             runner.prepare(self.args)
-        self.args.phase, self.args.runner = "backup", "macos-15"
+        self.args.phase, self.args.runner = "backup", "macos-15-intel"
         result = runner.collect(self.args)
         self.assertFalse(result["complete"])
         self.assertIn("primary handoff", result["error"].lower())
@@ -160,7 +160,7 @@ class RunnerUpdateTests(unittest.TestCase):
         manifest, state, body = self.smoke_snapshot()
         with patch.object(branch, "read", return_value=("parent", manifest, state)), patch.object(update.publish_data, "download_asset", return_value=body):
             runner.prepare(self.args)
-        self.args.phase, self.args.runner = "backup", "macos-15"
+        self.args.phase, self.args.runner = "backup", "macos-15-intel"
         with patch.dict(os.environ, {"SAFE_SETUP_RECOVERY": "true"}), patch("runner_smoke.collect", return_value={"offline_smoke": True, "files": 2}):
             result = runner.collect(self.args)
         self.assertTrue(result["complete"], result)
@@ -170,7 +170,7 @@ class RunnerUpdateTests(unittest.TestCase):
         with patch.object(branch, "read", return_value=("parent", manifest, state)), patch.object(update.publish_data, "download_asset", return_value=body):
             runner.prepare(self.args)
         runner.write(self.work / "stage-primary.json", {"needs_backup": True, "complete": False})
-        self.args.phase, self.args.runner = "backup", "macos-15"
+        self.args.phase, self.args.runner = "backup", "macos-15-intel"
         result = runner.collect(self.args)
         self.assertFalse(result["complete"])
         self.assertIn("ledger", result["error"].lower())
@@ -188,7 +188,7 @@ class RunnerUpdateTests(unittest.TestCase):
             "rules_sha256": runner.digest(self.rules.read_bytes()),
             "parent": "started", "manifest": manifest, "started": started,
             "days": ["2026-11-02"], "previous_through": "2026-10-30",
-            "primary_runner": "ubuntu-latest", "backup_runner": "macos-15",
+            "primary_runner": "ubuntu-latest", "backup_runner": "macos-15-intel",
         }
         self.work.mkdir()
         runner.write(self.work / "session.json", session)
