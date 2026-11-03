@@ -117,21 +117,83 @@ def fetch_with_retry(
     if headers:
         hdr.update(headers)
 
+    last_error = "no HTTP attempt"
     for attempt in range(1, max_retries + 1):
         try:
             r = request(method, url, headers=hdr, timeout=timeout, data=data)
             if r.status_code == 200:
                 return r
             else:
+                last_error = f"HTTP {r.status_code}"
                 logger.warning(f"HTTP {r.status_code} on {url} (attempt {attempt}/{max_retries})")
+                r.close()
         except AccessWindowClosed:
             raise
         except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
             logger.warning(f"Request error on {url}: {e} (attempt {attempt}/{max_retries})")
 
         if attempt < max_retries:
             time.sleep(backoff * (2 if attempt == 1 else 8))
-    raise RuntimeError(f"Official request failed after {max_retries} attempts: {url}")
+    raise RuntimeError(f"Official request failed after {max_retries} attempts: {url}; last error: {last_error}")
+
+
+def fetch_with_browser_fallback(url: str, timeout: int = 15) -> bytes:
+    """Read one official GET with two HTTP attempts and one Chrome fallback."""
+    from official_access import AccessWindowClosed, guard_browser, remaining
+
+    RawStore.check_url(url)
+    try:
+        response = fetch_with_retry(url, timeout=timeout, max_retries=2)
+        try:
+            body = response.content
+            logger.info("Official GET succeeded: transport=HTTP status=200 bytes=%s url=%s", len(body), url)
+            return body
+        finally:
+            response.close()
+    except AccessWindowClosed:
+        raise
+    except RuntimeError as error:
+        http_failure = str(error)
+        logger.warning("Official HTTP retries exhausted; reading the same URL with Chrome: %s", url)
+
+    # No browser startup after the window closes, including time spent retrying.
+    remaining()
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as playwright:
+            chrome = get_chrome_path()
+            options = {"headless": True}
+            if chrome:
+                options["executable_path"] = chrome
+            else:
+                options["channel"] = "chrome"
+            remaining()
+            browser = playwright.chromium.launch(**options)
+            try:
+                page = browser.new_page()
+                guard_browser(page)
+                seconds = remaining()
+                timeout_ms = timeout * 1000
+                if seconds is not None:
+                    timeout_ms = max(1, min(timeout_ms, int(seconds * 1000)))
+                response = page.goto(url, wait_until="load", timeout=timeout_ms)
+                status = None if response is None else response.status
+                if status != 200:
+                    raise RuntimeError(f"Official browser request failed: {url} (HTTP {status})")
+                body = response.body()
+                logger.info("Official GET succeeded: transport=Chrome status=200 bytes=%s url=%s", len(body), url)
+                return body
+            finally:
+                browser.close()
+    except AccessWindowClosed:
+        raise
+    except Exception as error:
+        raise RuntimeError(
+            f"Official GET failed after 2 HTTP attempts and 1 Chrome attempt: {url}; "
+            f"HTTP: {http_failure}; Chrome: {error}"
+        ) from error
 
 
 # ----------------------------------------------------------------------
@@ -309,7 +371,8 @@ class RawStore:
 
     def get(self, exchange: str, day: Optional[str], url: str,
             key: Optional[str] = None, margin: bool = False,
-            refresh: bool = False, form: Optional[dict] = None) -> bytes:
+            refresh: bool = False, form: Optional[dict] = None,
+            browser_fallback: bool = False) -> bytes:
         if not refresh or self.offline:
             body = self.cached(exchange, day, url, key, margin)
             if body is not None:
@@ -317,12 +380,15 @@ class RawStore:
         if self.offline:
             raise FileNotFoundError(f"Offline official raw missing: {exchange} {day or key}: {url}")
         self.check_url(url)
-        if form is None:
-            response = fetch_with_retry(url)
+        if form is None and browser_fallback:
+            body = fetch_with_browser_fallback(url)
         else:
-            # Requests data, including trade_date, is retained with the exact response.
-            response = fetch_with_retry(url, method="POST", data=form, timeout=30)
-        body = response.content
+            if form is None:
+                response = fetch_with_retry(url)
+            else:
+                # Requests data, including trade_date, is retained with the exact response.
+                response = fetch_with_retry(url, method="POST", data=form, timeout=30)
+            body = response.content
         save_key = key
         # Do not overwrite the legacy combined INE wrapper while adding its daily raw.
         if margin and (self.root / exchange.lower() / f"{day}.json").exists():
@@ -411,7 +477,7 @@ def fetch_shfe_ine(date_str: str, exchange: str, store: RawStore) -> List[dict]:
         url = f"https://{domain}/data/tradedata/future/dailydata/js{clean_date}.dat"
 
     fees_url = f"https://www.shfe.com.cn/data/busiparamdata/future/Settlement{clean_date}.dat"
-    fee_data = json.loads(store.get("SHFE", date_str, fees_url))
+    fee_data = json.loads(store.get("SHFE", date_str, fees_url, browser_fallback=True))
     data = fee_data if is_shfe else json.loads(store.get("INE", date_str, url, margin=True))
     if str(data.get("report_date", "")).strip() != clean_date:
         raise ValueError(f"Official margin report_date mismatch: {exchange} {date_str}")
@@ -435,8 +501,11 @@ def fetch_shfe_ine(date_str: str, exchange: str, store: RawStore) -> List[dict]:
         fee_item = fees_by_symbol.get(raw_symbol)
         if fee_item is None and exchange == "INE" and ("TRADEFEEUNIT" in item or "TRADEFEERATIO" in item):
             fee_item = item
-        if fee_item is None or (fee_item is not item and str(fee_item.get("TRADINGDAY", "")).strip() != clean_date):
-            raise ValueError(f"Missing or mismatched official fee row: {date_str} {raw_symbol}")
+        # Early INE daily files carry fees and a validated report_date, but no
+        # row date. Settlement rows must always carry their own matching date.
+        fallback_day = clean_date if exchange == "INE" and fee_item is item else ""
+        if fee_item is None or str(fee_item.get("TRADINGDAY", fallback_day)).strip() != clean_date:
+            raise ValueError(f"Missing or mismatched official fee row date: {date_str} {raw_symbol}")
 
         spec_long = clean_num(item.get("SPEC_LONGMARGINRATIO" if is_shfe else "SPECLONGMARGINRATIO"))
         spec_short = clean_num(item.get("SPEC_SHORTMARGINRATIO" if is_shfe else "SPECSHORTMARGINRATIO"))

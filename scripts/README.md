@@ -41,6 +41,8 @@ python3 scripts/collect_settle_params.py   --start-date 2020-01-01 --end-date 20
 ### 各所语义
 
 - **SHFE/INE**：共同手续费源为 `https://www.shfe.com.cn/data/busiparamdata/future/SettlementYYYYMMDD.dat`。`TRADEFEEUNIT` 是元/手；`TRADEFEERATION` 为成交额绝对比例，乘 10000 为万分比；平今为普通费乘 `DISCOUNTRATE`，保留 0 和大于 1 的乘数。`HTRADE*` / `TTRADE*` 为套保费用，不能作为投机平今费用。按实际交易所分开 `sc/nr/lu/bc/ec`，不能照抄源内统一的 SHFE 标记。
+
+Settlement 与 CBI 共用 `fetch_with_browser_fallback`：先最多两次 HTTP，仍失败时仅尝试一次 Chrome 读取同一官方 URL。HTTP 成功或缓存命中时不启动浏览器；原始字节和缓存 SHA 保持原有语义。截止后停止，浏览器网络请求也受截止控制。HTTP/Chrome 失败不等于当日文件未发布；必须结合实际 HTTP 状态和响应日期判断，错误日期、反爬页面和不完整数据不能作为当日参数。
 - **INE**：保证金和结算价使用能源中心独立日表，核对响应日期。部分 EC 到期日交易保证金与共同结算表口径不同，不能用共同表的零值覆盖独立交易参数。
 - **DCE/GFEX**：`openFee` 为普通开仓，`offsetFee` 为普通平仓，`shortOpenFee` 为日内开仓，`shortOffsetFee` 为平今。套保费不替代投机费。
 - **CZCE**：旧表没有收取方式列时按官方旧表的绝对额语义解析；新表按“绝对值/比例值”识别，未知类型失败。

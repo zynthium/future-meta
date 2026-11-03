@@ -267,36 +267,9 @@ def read_table(path):
 
 def fetch_cbi_body(url):
     # Keep offline metadata generation independent of HTTP/browser dependencies.
-    from collect_settle_params import fetch_with_retry, get_chrome_path
+    from collect_settle_params import fetch_with_browser_fallback
 
-    try:
-        return fetch_with_retry(url, timeout=30, max_retries=2).content
-    except __import__("official_access").AccessWindowClosed:
-        raise
-    except RuntimeError:
-        logging.warning("CBI HTTP retries exhausted; reading the same official URL with Chrome: %s", url)
-
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as playwright:
-        options = {"headless": True}
-        chrome = get_chrome_path()
-        if chrome:
-            options["executable_path"] = chrome
-        else:
-            options["channel"] = "chrome"
-        browser = playwright.chromium.launch(**options)
-        try:
-            from official_access import guard_browser, remaining
-            page = browser.new_page()
-            guard_browser(page)
-            remaining()
-            response = page.goto(url, wait_until="load", timeout=30000)
-            if response is None or response.status != 200:
-                raise RuntimeError(f"Official CBI browser request failed: {url}")
-            return response.body()
-        finally:
-            browser.close()
+    return fetch_with_browser_fallback(url, timeout=30)
 
 
 def load_lifecycles(evidence, indexes, extra_manifests, network_dates, cache_dir):
