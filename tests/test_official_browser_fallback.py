@@ -296,6 +296,18 @@ class OfficialDocumentGuardTests(unittest.TestCase):
                     with self.assertRaises(Error):
                         paused(self.event(resource_type="Other"))
 
+    def test_cancelled_interception_is_ignored_while_page_is_still_open(self):
+        from playwright.sync_api import Error
+
+        paused = self.install()
+        self.page.is_closed.return_value = False
+        for method in ("Fetch.continueRequest", "Fetch.failRequest"):
+            with self.subTest(method=method):
+                self.session.send.side_effect = Error(
+                    f"CDPSession.send: Protocol error ({method}): Invalid InterceptionId."
+                )
+                paused(self.event(resource_type="Other"))
+
 
 class StaticDocumentChromeIntegrationTests(unittest.TestCase):
     @unittest.skipUnless(collector.get_chrome_path(), "Local Chrome is not installed")

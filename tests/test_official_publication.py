@@ -14,6 +14,33 @@ from test_data_branch import snapshot
 
 
 class PublicationTests(unittest.TestCase):
+    def test_raw_cdn_can_propagate_after_the_former_six_poll_limit(self):
+        manifest, state = snapshot()
+        stale = dict(manifest, sha256="0" * 64)
+        responses = [json.dumps(doc).encode() for doc in (
+            *[doc for _ in range(7) for doc in (stale, state)], manifest, state
+        )]
+        with (
+            patch.object(branch, "read", return_value=("commit", manifest, state)),
+            patch.object(publish, "download_asset", side_effect=responses),
+            patch.object(publish.time, "sleep") as sleep,
+        ):
+            publish.verify_live("repo", "commit", manifest, state)
+        self.assertGreater(sum(call.args[0] for call in sleep.call_args_list), 25)
+
+    def test_permanently_stale_raw_metadata_still_fails_with_bounded_waits(self):
+        manifest, state = snapshot()
+        with (
+            patch.object(branch, "read", return_value=("commit", manifest, state)),
+            patch.object(publish, "download_asset", return_value=b"{}") as download,
+            patch.object(publish.time, "sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(ValueError, "has not propagated"):
+                publish.verify_live("repo", "commit", manifest, state)
+        self.assertLessEqual(download.call_count, 18)
+        self.assertLessEqual(sum(call.args[0] for call in sleep.call_args_list), 305)
+        self.assertLessEqual(max(call.args[0] for call in sleep.call_args_list), 60)
+
     def test_no_change_never_creates_release_or_replaces_manifest(self):
         manifest, state = snapshot()
         old = copy.deepcopy(manifest)

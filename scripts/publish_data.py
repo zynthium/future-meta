@@ -162,7 +162,8 @@ def verify_live(repository, expected_commit, manifest, state):
     base = f"https://raw.githubusercontent.com/{repository}/data/"
     last_error = None
     # Raw CDN propagation is independent of the successful atomic Git commit.
-    for attempt in range(6):
+    delays = (5, 10, 20, 30, 60, 60, 60, 60)
+    for attempt in range(len(delays) + 1):
         try:
             actual = [
                 json.loads(download_asset(base + name, 2_000_000))
@@ -173,8 +174,8 @@ def verify_live(repository, expected_commit, manifest, state):
             last_error = ValueError("Canonical raw metadata has not propagated")
         except (OSError, ValueError) as error:
             last_error = error
-        if attempt < 5:
-            time.sleep(5)
+        if attempt < len(delays):
+            time.sleep(delays[attempt])
     raise ValueError(f"Public readback failed: {last_error}")
 
 

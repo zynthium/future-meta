@@ -98,9 +98,14 @@ def guard_browser(page, *, document_url=None):
             else:
                 admitted = True
                 session.send("Fetch.continueRequest", {"requestId": event["requestId"]})
-        except Error:
-            # Closing Chrome can cancel a pending favicon interception.
-            if not page.is_closed():
+        except Error as error:
+            # Navigation or closing Chrome can cancel a paused request before
+            # its acknowledgement. Other live-page protocol errors still fail.
+            cancelled = any(str(error).endswith(message) for message in (
+                "Protocol error (Fetch.continueRequest): Invalid InterceptionId.",
+                "Protocol error (Fetch.failRequest): Invalid InterceptionId.",
+            ))
+            if not page.is_closed() and not cancelled:
                 raise
 
     session.on("Fetch.requestPaused", paused)
