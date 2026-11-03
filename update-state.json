@@ -9,7 +9,14 @@
     "INE": "2026-10-30",
     "SHFE": "2026-10-30"
   },
-  "last_attempt": null,
+  "last_attempt": {
+    "slot": "2026-11-03:evening",
+    "started_at": "2026-11-03T11:02:36.422768+00:00",
+    "finished_at": null,
+    "status": "running",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/41624123269",
+    "run_id": "41624123269"
+  },
   "last_success_at": null,
   "current_release": "data-20261101T035357Z-bc62c3688e85",
   "previous_release": "data-20261031T110854Z-b4fb0dcd0469",
