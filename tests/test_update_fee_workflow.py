@@ -25,12 +25,18 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertIn("contents: write", self.workflow)
         self.assertIn("persist-credentials: false", self.workflow)
 
-    def test_offline_admission_and_runtime_collector(self):
+    def test_lightweight_admission_and_runtime_collector(self):
         for expected in (
-            'cron: "45 10 * * 1-5"',
-            'cron: "5 0 * * 1-5"',
+            'cron: "35,50 10 * * 1-5"',
+            'cron: "5,20,35 11 * * 1-5"',
+            'cron: "2,7,12 0 * * 1-5"',
+            'cron: "37 0 * * 1-5"',
+            'cron: "17 12 * * 1-5"',
             "needs: admission",
-            "scripts/update_schedule.py --github-output",
+            "scripts/update_admission.py",
+            '--github-output "$GITHUB_OUTPUT"',
+            "actions: read",
+            "fetch-depth: 0",
             "xvfb-run -a python",
             "playwright install --with-deps chrome",
         ):
@@ -39,6 +45,23 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
             "if: needs.admission.outputs.should_update == 'true'", self.workflow
         )
         self.assertNotIn("cloudflare", self.workflow.lower())
+
+    def test_update_does_not_repeat_ci_and_postcheck_requires_explicit_target(self):
+        self.assertNotIn('cargo test', self.workflow)
+        self.assertNotIn('unittest discover', self.workflow)
+        for expected in (
+            'needs: [admission, update]',
+            'needs.update.result != \'skipped\'',
+            'inputs.republish_current != true',
+            'TARGET_THROUGH: ${{ needs.admission.outputs.target_through }}',
+            '--verify-through "$TARGET_THROUGH"',
+        ):
+            self.assertIn(expected, self.workflow)
+
+    def test_health_crons_cannot_collect_even_if_delayed_into_access_window(self):
+        self.assertIn("github.event.schedule == '37 0 * * 1-5'", self.workflow)
+        self.assertIn("github.event.schedule == '17 12 * * 1-5'", self.workflow)
+        self.assertIn('args+=(--health-only)', self.workflow)
 
     def test_republish_is_explicit_and_uses_same_verified_entrypoint(self):
         self.assertIn("republish_current:", self.workflow)

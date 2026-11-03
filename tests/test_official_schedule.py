@@ -71,6 +71,37 @@ class OfficialScheduleTests(unittest.TestCase):
                                 check=True, capture_output=True, text=True)
         self.assertFalse(json.loads(result.stdout)['should_update'])
 
+    def test_completed_slot_waits_for_close_and_publication_grace(self):
+        for at, expected in (
+            ('2026-11-03T20:09:59+08:00', '2026-11-02'),
+            ('2026-11-03T20:10:00+08:00', '2026-11-03'),
+            ('2026-11-03T12:10:00+00:00', '2026-11-03'),
+        ):
+            with self.subTest(at=at):
+                self.assertEqual(schedule.latest_completed_slot(datetime.fromisoformat(at))['target_through'], expected)
+
+    def test_holiday_eve_and_break_do_not_invent_due_evening_updates(self):
+        for at in ('2026-09-30T20:17', '2026-10-01T20:17', '2026-10-07T20:17', '2026-10-08T08:29'):
+            with self.subTest(at=at):
+                completed = schedule.latest_completed_slot(datetime.fromisoformat(at).replace(tzinfo=schedule.CHINA))
+                self.assertEqual(completed['target_through'], '2026-09-29')
+        completed = schedule.latest_completed_slot(datetime.fromisoformat('2026-10-08T08:30+08:00'))
+        self.assertEqual(completed['target_through'], '2026-09-30')
+        self.assertEqual(completed['slot'], '2026-10-08:holiday_morning')
+
+    def test_holiday_morning_collects_pre_break_day_and_evening_collects_today(self):
+        for at, target in (
+            ('2026-10-08T08:07+08:00', '2026-09-30'),
+            ('2026-09-28T08:07+08:00', '2026-09-24'),
+            ('2026-10-08T18:35+08:00', '2026-10-08'),
+        ):
+            with self.subTest(at=at):
+                self.assertEqual(schedule.collection_target(datetime.fromisoformat(at)), target)
+
+    def test_health_checks_also_fail_closed_on_missing_calendar_year(self):
+        with self.assertRaisesRegex(ValueError, '2027'):
+            schedule.latest_completed_slot(datetime.fromisoformat('2027-01-04T20:17+08:00'))
+
     def test_runtime_recheck_skips_before_reading_branch_or_collecting(self):
         args=type('Args',(),{'republish_current':False})()
         with patch.object(update,'scheduled_decision',return_value={'should_update':False,'reason':'weekend'}), \

@@ -28,11 +28,29 @@ def weekday_neighbor(day, direction):
     return day
 
 
-def decide(now=None):
+def china_time(now=None):
     now = now or datetime.now(CHINA)
     if now.tzinfo is None:
         raise ValueError('Schedule timestamp requires a timezone')
-    now = now.astimezone(CHINA)
+    return now.astimezone(CHINA)
+
+
+def load_calendar():
+    calendar = json.loads(CALENDAR.read_text())
+    if calendar['schema'] != 1:
+        raise ValueError('Unsupported schedule calendar schema')
+    return calendar
+
+
+def trading_day(day, calendar):
+    year = calendar['years'].get(str(day.year))
+    if year is None:
+        raise ValueError(f'Official schedule calendar missing for {day.year}; update it before collecting')
+    return day.weekday() < 5 and day.isoformat() not in year['closed_weekdays']
+
+
+def decide(now=None, calendar=None):
+    now = china_time(now)
     day = now.date()
     result = {'should_update': False, 'slot': None, 'evaluated_at': now.isoformat()}
 
@@ -46,29 +64,57 @@ def decide(now=None):
     if not evening and not morning:
         return skip('outside_access_window')
 
-    calendar = json.loads(CALENDAR.read_text())
-    if calendar['schema'] != 1:
-        raise ValueError('Unsupported schedule calendar schema')
-
-    def trading_day(candidate):
-        year = calendar['years'].get(str(candidate.year))
-        if year is None:
-            raise ValueError(f'Official schedule calendar missing for {candidate.year}; update it before collecting')
-        return candidate.isoformat() not in year['closed_weekdays']
-
-    if not trading_day(day):
+    calendar = load_calendar() if calendar is None else calendar
+    if not trading_day(day, calendar):
         return skip('exchange_holiday')
     if evening:
         # Friday's night session belongs to Monday. A statutory weekday
         # closure instead means there is no holiday-eve night session.
-        if not trading_day(weekday_neighbor(day, 1)):
+        if not trading_day(weekday_neighbor(day, 1), calendar):
             return skip('no_night_before_holiday')
         slot = 'evening'
     else:
-        if trading_day(weekday_neighbor(day, -1)):
+        if trading_day(weekday_neighbor(day, -1), calendar):
             return skip('ordinary_morning')
         slot = 'holiday_morning'
     return {**result, 'should_update': True, 'slot': slot, 'reason': 'session_due'}
+
+
+def collection_target(now, calendar=None):
+    """Last completed trading date; holiday mornings collect the pre-break day."""
+    now = china_time(now)
+    calendar = load_calendar() if calendar is None else calendar
+    day = now.date() if now.time() >= time(18, 30) else now.date() - timedelta(days=1)
+    for _ in range(370):
+        if trading_day(day, calendar):
+            return day.isoformat()
+        day -= timedelta(days=1)
+    raise ValueError('No completed trading day in approved calendar')
+
+
+def latest_completed_slot(now=None):
+    """Expected checkpoint after a slot closes, allowing ten minutes to publish.
+
+    Reuse collection admission, so weekends, holiday eves and ordinary mornings
+    cannot invent a new collection obligation. No network access is involved.
+    """
+    now = china_time(now)
+    calendar = load_calendar()
+    for offset in range(370):
+        day = now.date() - timedelta(days=offset)
+        for hour, minute in ((18, 30), (8, 0)):
+            candidate = datetime.combine(day, time(hour, minute), CHINA)
+            # Avoid evaluating future windows (including unknown future years).
+            end = candidate.replace(hour=20, minute=0) if hour == 18 else candidate.replace(minute=20)
+            if end + timedelta(minutes=10) > now:
+                continue
+            gate = decide(candidate, calendar)
+            if gate['should_update']:
+                return {
+                    'slot': f"{day.isoformat()}:{gate['slot']}",
+                    'target_through': collection_target(candidate, calendar),
+                }
+    raise ValueError('No completed update slot in approved calendar')
 
 
 def main():

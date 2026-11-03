@@ -103,6 +103,8 @@ xvfb-run -a python3 scripts/update_official.py \
 
 `data_branch.py` 原子更新 manifest 与小状态，记录尝试、成功和六所检查点。`publish_data.py` 上传并核验不可变附件、公开读回及安全清理。无变化保持原 archive 和 manifest。
 
+`update_admission.py` 是无采集器依赖的只读前置检查：先按实际时间准入，再核对 GitHub 检查点、同一时段尝试和匹配执行代码的完整 CI；重复候选不安装 Chrome、不编译 Rust。`--health-only` 永不采集，按已结束时段报告漏更；`--verify-through YYYY-MM-DD` 核对一次运行明确要求的目标。二者均不写数据分支。工作流在窗口内多次候选唤醒，但每时段最多采集一轮，窗口后另作健康检查；GitHub 调度延迟不能保证消除，详见 [部署说明](../docs/deployment.md#交易所访问窗口)。
+
 `audit_official_rules.py` 是独立手动维护入口：校验全量文档并调用 `catalog_guard.py` 检查现行合约入口，在 `data/rule-audits/<日期>-<时段>/` 写出单独带时间的 `rule-audit.json`，不发布、不推进日更检查点。同一时段原子占用一次，运行中或失败后重复触发均跳过。可用 `--previous <成功报告>` 复用条件请求与目录选择绑定，仍受官方日历和访问窗口限制。新文档、原文修订或无法解析目录均失败，需本地审阅。每日参数不含乘数/最小变动价位，日更状态明确记录规格为已批准规则复用；规格修订需另行维护。详见 [部署说明](../docs/deployment.md#独立规则维护)。
 
 `migrate_archive_state.py` 是一次性本地迁移工具：读取有完整 SHA 清单的封存，从已批准业务 archive、审计状态和官方清单提取小状态与规则。它不联网、不发布。原始证据仅在本地保存；CI 临时原件不长期上传。
