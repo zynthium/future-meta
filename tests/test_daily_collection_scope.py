@@ -19,6 +19,12 @@ import official_access
 
 class DailyCollectionScopeTests(unittest.TestCase):
     def test_missing_days_use_daily_sources_without_rule_audit(self):
+        self.run_collection(False)
+
+    def test_complete_shfe_cbi_avoids_duplicate_ine_request(self):
+        self.run_collection(True)
+
+    def run_collection(self, combined_cbi):
         days = ["2026-10-29", "2026-10-30"]
         symbols = {
             "SHFE": "cu2701",
@@ -100,14 +106,19 @@ class DailyCollectionScopeTests(unittest.TestCase):
                     "report_date": day,
                     "ContractBaseInfo": [
                         {
-                            "INSTRUMENTID": symbols[ex],
+                            "INSTRUMENTID": symbol,
                             "TRADINGDAY": day,
                             "OPENDATE": "20260101",
                             "EXPIREDATE": "20270115",
                         }
+                        for symbol in (
+                            [symbols["SHFE"], symbols["INE"]]
+                            if combined_cbi
+                            else [symbols[ex]]
+                        )
                     ],
                 }
-            )
+            ).encode()
 
         def dce(selected_days, path, store, futures_only):
             self.assertEqual(selected_days, days)
@@ -172,7 +183,10 @@ class DailyCollectionScopeTests(unittest.TestCase):
         )
         for ex in ("SHFE", "INE", "CZCE", "GFEX", "DCE"):
             self.assertEqual([day for exchange, day in calls if exchange == ex], days)
-        self.assertEqual(len([c for c in calls if c[0] == "CBI"]), 4)
+        cbi_calls = [c for c in calls if c[0] == "CBI"]
+        self.assertEqual(len(cbi_calls), 2 if combined_cbi else 4)
+        if combined_cbi:
+            self.assertTrue(all("www.shfe.com.cn" in c[1] for c in cbi_calls))
         catalog.assert_called_once()
         self.assertEqual(catalog.call_args.kwargs, {"min_date": "2026-10-28"})
         anchor_get.assert_called_once_with("CFFEX", anchor["date"], anchor["url"])

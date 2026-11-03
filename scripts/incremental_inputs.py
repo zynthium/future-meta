@@ -360,14 +360,27 @@ def collect_interval(archive, state, rules, days, work):
                 "GFEX": lambda: collector.fetch_gfex_day(day, store),
             }[exchange]
             records.extend(collector.validate_records(fetch(), exchange, day, True))
+        required_cbi = {
+            f"{row['exchange']}.{row['symbol']}" for row in records
+            if row['date'] == day and row['exchange'] in ('SHFE', 'INE')
+        }
+        cbi_sources = []
         for exchange, host in [("SHFE", "www.shfe.com.cn"), ("INE", "www.ine.cn")]:
             url = f"https://{host}/data/busiparamdata/future/ContractBaseInfo{day.replace('-', '')}.dat"
-            body = json.loads(fetch_cbi_body(url))
+            raw_body = fetch_cbi_body(url)
+            body = json.loads(raw_body)
+            cbi_sources.append({'url': url, 'sha256': hashlib.sha256(raw_body).hexdigest()})
             for symbol, values in cbi_lifecycles(body, exchange, day).items():
                 old = lifecycle_by_day[day].get(symbol)
                 if old is not None and old != values:
                     raise ValueError(f"Conflicting official CBI sources: {symbol}")
                 lifecycle_by_day[day][symbol] = values
+            if required_cbi and all(
+                all(lifecycle_by_day[day].get(symbol, ())) and symbol in lifecycle_by_day[day]
+                for symbol in required_cbi
+            ):
+                break
+        source_versions['contract_base_info'] = {'report_date': day, 'sources': cbi_sources}
     dce_csv = work / "dce.csv"
     collector.prepare_csv(dce_csv)
     collector.collect_dce(days, str(dce_csv), store, True)
