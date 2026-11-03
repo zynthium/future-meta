@@ -10,43 +10,57 @@
     "SHFE": "2026-10-30"
   },
   "last_attempt": {
-    "slot": "2026-11-03:user-authorized-backfill-until-2200",
-    "started_at": "2026-11-03T13:39:58.016992+00:00",
-    "finished_at": "2026-11-03T13:41:11.239389+00:00",
-    "status": "failed",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/41646280190",
-    "run_id": "41646280190",
+    "slot": "2026-11-03:user-authorized-backfill-until-2230",
+    "started_at": "2026-11-03T14:19:16.971815+00:00",
+    "finished_at": null,
+    "status": "running",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/41652417742",
+    "run_id": "41652417742",
     "previous_attempt": {
-      "slot": "2026-11-03:user-authorized-backfill-until-2100",
-      "started_at": "2026-11-03T12:32:55.472574+00:00",
-      "finished_at": "2026-11-03T12:35:55.113840+00:00",
+      "slot": "2026-11-03:user-authorized-backfill-until-2200",
+      "started_at": "2026-11-03T13:39:58.016992+00:00",
+      "finished_at": "2026-11-03T13:41:11.239389+00:00",
       "status": "failed",
-      "run_url": "https://github.com/zynthium/future-meta/actions/runs/41636509721",
-      "run_id": "41636509721",
+      "run_url": "https://github.com/zynthium/future-meta/actions/runs/41646280190",
+      "run_id": "41646280190",
       "previous_attempt": {
-        "slot": "2026-11-03:evening",
-        "started_at": "2026-11-03T11:02:36.422768+00:00",
-        "finished_at": "2026-11-03T11:03:22.252069+00:00",
+        "slot": "2026-11-03:user-authorized-backfill-until-2100",
+        "started_at": "2026-11-03T12:32:55.472574+00:00",
+        "finished_at": "2026-11-03T12:35:55.113840+00:00",
         "status": "failed",
-        "run_url": "https://github.com/zynthium/future-meta/actions/runs/41624123269",
-        "run_id": "41624123269",
-        "error": "RuntimeError: Official request failed after 3 attempts: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261103.dat"
+        "run_url": "https://github.com/zynthium/future-meta/actions/runs/41636509721",
+        "run_id": "41636509721",
+        "previous_attempt": {
+          "slot": "2026-11-03:evening",
+          "started_at": "2026-11-03T11:02:36.422768+00:00",
+          "finished_at": "2026-11-03T11:03:22.252069+00:00",
+          "status": "failed",
+          "run_url": "https://github.com/zynthium/future-meta/actions/runs/41624123269",
+          "run_id": "41624123269",
+          "error": "RuntimeError: Official request failed after 3 attempts: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261103.dat"
+        },
+        "authorization": {
+          "kind": "explicit_one_time_user_exception",
+          "access_deadline": "2026-11-03T21:00:00+08:00",
+          "source_commit": "498683b431f3c7aced1c68cbd9d20cf84327125e",
+          "workflow_commit": "94b85ebad58602e913da9c510c6b6cfa37f43192"
+        },
+        "error": "TimeoutError: Page.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://www.dce.com.cn/\", waiting until \"domcontentloaded\"\n"
       },
       "authorization": {
         "kind": "explicit_one_time_user_exception",
-        "access_deadline": "2026-11-03T21:00:00+08:00",
-        "source_commit": "498683b431f3c7aced1c68cbd9d20cf84327125e",
-        "workflow_commit": "94b85ebad58602e913da9c510c6b6cfa37f43192"
+        "access_deadline": "2026-11-03T22:00:00+08:00",
+        "source_commit": "b1af7b62fea7038d624579dec82070e6fa6d8fb6",
+        "workflow_commit": "8e85845b2bae40c191bcb7331b71976763adea1f"
       },
-      "error": "TimeoutError: Page.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"http://www.dce.com.cn/\", waiting until \"domcontentloaded\"\n"
+      "error": "RuntimeError: Official GET failed after 2 HTTP attempts and 1 Chrome attempt: https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat; HTTP: Official request failed after 2 attempts: https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat; last error: ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer')); Chrome: Page.goto: net::ERR_CONNECTION_RESET at https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat\nCall log:\n  - navigating to \"https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat\", waiting until \"load\"\n"
     },
     "authorization": {
       "kind": "explicit_one_time_user_exception",
-      "access_deadline": "2026-11-03T22:00:00+08:00",
-      "source_commit": "b1af7b62fea7038d624579dec82070e6fa6d8fb6",
-      "workflow_commit": "8e85845b2bae40c191bcb7331b71976763adea1f"
-    },
-    "error": "RuntimeError: Official GET failed after 2 HTTP attempts and 1 Chrome attempt: https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat; HTTP: Official request failed after 2 attempts: https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat; last error: ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer')); Chrome: Page.goto: net::ERR_CONNECTION_RESET at https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat\nCall log:\n  - navigating to \"https://www.ine.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat\", waiting until \"load\"\n"
+      "access_deadline": "2026-11-03T22:30:00+08:00",
+      "source_commit": "cb0dcc7f27628734f24994749c91751948ba0843",
+      "workflow_commit": "64786fbb6727b28911039677b692798d006fe5b8"
+    }
   },
   "last_success_at": null,
   "current_release": "data-20261101T035357Z-bc62c3688e85",
