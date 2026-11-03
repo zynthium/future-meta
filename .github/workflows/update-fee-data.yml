@@ -156,7 +156,7 @@ jobs:
   backup:
     needs: [admission, primary]
     if: >-
-      always() && needs.admission.outputs.prepared == 'true' && (needs.primary.outputs.needs_backup == 'true' || (needs.primary.result == 'failure' && (needs.primary.outputs.handoff_uploaded == 'true' || needs.primary.outputs.safe_prepare_resume == 'true')))
+      always() && !cancelled() && needs.admission.outputs.prepared == 'true' && (needs.primary.outputs.needs_backup == 'true' || (needs.primary.result == 'failure' && (needs.primary.outputs.handoff_uploaded == 'true' || needs.primary.outputs.safe_prepare_resume == 'true')))
     runs-on: ${{ needs.admission.outputs.backup_runner }}
     timeout-minutes: 15
     permissions: {contents: read}
@@ -222,7 +222,7 @@ jobs:
   update:
     needs: [admission, primary, backup]
     if: >-
-      always() && (needs.admission.outputs.should_update == 'true' ||
+      always() && !cancelled() && (needs.admission.outputs.should_update == 'true' ||
       (needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.republish_current && inputs.offline_smoke != true))
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -269,7 +269,7 @@ jobs:
 
   verify:
     needs: [admission, update]
-    if: always() && needs.admission.result == 'success' && needs.update.result != 'skipped' && inputs.republish_current != true && inputs.offline_smoke != true
+    if: always() && !cancelled() && needs.admission.result == 'success' && needs.update.result != 'skipped' && inputs.republish_current != true && inputs.offline_smoke != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {contents: read}

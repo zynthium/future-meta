@@ -109,6 +109,11 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertIn("--offline-smoke", self.workflow)
         self.assertIn("inputs.offline_smoke != true", self.workflow)
 
+    def test_cancelled_runs_cannot_start_backup_collection_or_publication(self):
+        for job in ("backup", "update", "verify"):
+            block = self.workflow.split(f"  {job}:\n", 1)[1].split("    runs-on:", 1)[0]
+            self.assertIn("!cancelled()", block)
+
 
 if __name__ == "__main__":
     unittest.main()
