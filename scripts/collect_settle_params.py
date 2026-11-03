@@ -959,6 +959,51 @@ def fetch_gfex_day(day: str, store: RawStore) -> List[dict]:
     return parse_dce_gfex(json.loads(body), day, "GFEX")
 
 
+def _open_dce_page(playwright):
+    """Retry only browser initialization, replacing a failed session once."""
+    from official_access import guard_browser, remaining
+    from playwright.sync_api import Error as BrowserError
+
+    def budget(milliseconds):
+        seconds = remaining()
+        return milliseconds if seconds is None else max(1, min(milliseconds, int(seconds * 1000)))
+
+    for attempt in (1, 2):
+        browser = None
+        ready = False
+        phase = "launch"
+        try:
+            chrome = get_chrome_path()
+            options = {"headless": False, "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]}
+            if chrome:
+                options["executable_path"] = chrome
+            else:
+                options["channel"] = "chrome"
+            remaining()
+            browser = playwright.chromium.launch(**options)
+            page = browser.new_page()
+            guard_browser(page)
+            for phase, url, settle_ms in (
+                ("home", "http://www.dce.com.cn/", 3500),
+                ("report", "http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", 4000),
+            ):
+                logger.info("[DCE] Browser initialization attempt=%s phase=%s", attempt, phase)
+                response = page.goto(url, wait_until="domcontentloaded", timeout=budget(30000))
+                logger.info("[DCE] Navigation phase=%s status=%s", phase, None if response is None else response.status)
+                page.wait_for_timeout(budget(settle_ms))
+            ready = True
+            return browser, page
+        except BrowserError as error:
+            logger.warning("[DCE] Initialization failed attempt=%s phase=%s: %s", attempt, phase, error)
+            if attempt == 2:
+                raise RuntimeError(f"DCE browser initialization failed after 2 sessions; phase={phase}: {error}") from error
+        finally:
+            if browser is not None and not ready:
+                browser.close()
+        # The old browser is closed before waiting or creating another session.
+        time.sleep(budget(2000) / 1000)
+
+
 def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only: bool = False):
     url = "http://www.dce.com.cn/dcereport/publicweb/tradepara/futAndOptSettle"
     pending = []
@@ -977,22 +1022,9 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
-        chrome = get_chrome_path()
-        options = {"headless": False, "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]}
-        if chrome:
-            options["executable_path"] = chrome
-        else:
-            options["channel"] = "chrome"
-        browser = playwright.chromium.launch(**options)
+        browser, page = _open_dce_page(playwright)
         try:
-            page = browser.new_page()
-            from official_access import guard_browser, remaining
-            guard_browser(page)
-            remaining()
-            page.goto("http://www.dce.com.cn/", wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3500)
-            page.goto("http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(4000)
+            from official_access import remaining
             for i, day in enumerate(pending, 1):
                 remaining()
                 if i % 20 == 1 or i == len(pending):
