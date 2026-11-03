@@ -90,6 +90,7 @@ jobs:
     outputs:
       needs_backup: ${{ steps.collect.outputs.needs_backup }}
       collection_started: ${{ steps.collect.outputs.collection_started }}
+      safe_prepare_resume: ${{ steps.safe-setup.outputs.safe_prepare_resume }}
       handoff_uploaded: ${{ steps.handoff.outcome == 'success' }}
     env:
       RUNNER_LABEL: ${{ needs.admission.outputs.primary_runner }}
@@ -147,10 +148,15 @@ jobs:
             data/official-update/collection.json
             data/official-update/stage-*.json
 
+      - name: Prove collection was skipped after a healthy setup failure
+        id: safe-setup
+        if: always() && steps.collect.outcome == 'skipped'
+        run: echo 'safe_prepare_resume=true' >> "$GITHUB_OUTPUT"
+
   backup:
     needs: [admission, primary]
     if: >-
-      always() && needs.admission.outputs.prepared == 'true' && (needs.primary.outputs.needs_backup == 'true' || (needs.primary.result == 'failure' && (needs.primary.outputs.handoff_uploaded == 'true' || needs.primary.outputs.collection_started != 'true')))
+      always() && needs.admission.outputs.prepared == 'true' && (needs.primary.outputs.needs_backup == 'true' || (needs.primary.result == 'failure' && (needs.primary.outputs.handoff_uploaded == 'true' || needs.primary.outputs.safe_prepare_resume == 'true')))
     runs-on: ${{ needs.admission.outputs.backup_runner }}
     timeout-minutes: 15
     permissions: {contents: read}
@@ -159,6 +165,7 @@ jobs:
     env:
       RUNNER_LABEL: ${{ needs.admission.outputs.backup_runner }}
       OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
+      SAFE_SETUP_RECOVERY: ${{ needs.primary.outputs.safe_prepare_resume == 'true' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
         with: {persist-credentials: false}
@@ -216,7 +223,7 @@ jobs:
     needs: [admission, primary, backup]
     if: >-
       always() && (needs.admission.outputs.should_update == 'true' ||
-      (github.event_name == 'workflow_dispatch' && inputs.republish_current))
+      (needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.republish_current && inputs.offline_smoke != true))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: {contents: write}

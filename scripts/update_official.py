@@ -69,6 +69,8 @@ def cleanup_publication(repository, parent, manifest, state):
 
 
 def update(args):
+    if getattr(args, "offline_smoke", False):
+        raise ValueError("offline smoke requires the explicit runner stage entrypoint")
     republish = args.republish_current
     gate = None if republish else scheduled_decision()
     if gate is not None and not gate["should_update"]:
@@ -216,6 +218,8 @@ def main():
     parser.add_argument("--runner", choices=("ubuntu-latest", "macos-15"))
     parser.add_argument("--offline-smoke", action="store_true", help="Test runner handoff with blocked official transports")
     args = parser.parse_args()
+    if args.offline_smoke and (not args.phase or args.republish_current):
+        parser.error("offline smoke requires a runner phase and cannot republish current data")
     if args.phase:
         if args.republish_current:
             parser.error("Runner stages cannot republish current data")

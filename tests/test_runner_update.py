@@ -37,6 +37,21 @@ class RunnerUpdateTests(unittest.TestCase):
             runner.emit({"needs_backup": True, "error": "navigation failed\ncomplete=true"})
         self.assertEqual(output.read_text(), "needs_backup=true\n")
 
+    def test_offline_smoke_cannot_fall_through_to_legacy_online_cli(self):
+        for flags in (("--offline-smoke",), ("--republish-current", "--offline-smoke")):
+            with self.subTest(flags=flags), patch.object(sys, "argv", ["update_official.py", "--work-dir", str(self.work), *flags]), patch.object(update, "update") as online:
+                with self.assertRaises(SystemExit):
+                    update.main()
+                online.assert_not_called()
+
+    def test_offline_flag_is_also_rejected_by_direct_legacy_entrypoint(self):
+        self.args.offline_smoke = True
+        self.args.republish_current = False
+        with patch.object(branch, "read") as read:
+            with self.assertRaisesRegex(ValueError, "offline"):
+                update.update(self.args)
+        read.assert_not_called()
+
     def test_outside_window_does_not_read_or_write_production(self):
         with patch.object(update, "scheduled_decision", return_value={"should_update": False, "reason": "outside_access_window"}), patch.object(branch, "read") as read, patch.object(branch, "commit") as commit:
             result = runner.prepare(self.args)
@@ -130,6 +145,36 @@ class RunnerUpdateTests(unittest.TestCase):
         self.assertFalse((self.work / "transport.json").exists())
         with self.assertRaisesRegex(ValueError, "replay"):
             runner.collect(self.args)
+
+    def test_missing_primary_handoff_cannot_refund_unknown_request_budgets(self):
+        manifest, state, body = self.smoke_snapshot()
+        with patch.object(branch, "read", return_value=("parent", manifest, state)), patch.object(update.publish_data, "download_asset", return_value=body):
+            runner.prepare(self.args)
+        self.args.phase, self.args.runner = "backup", "macos-15"
+        result = runner.collect(self.args)
+        self.assertFalse(result["complete"])
+        self.assertIn("primary handoff", result["error"].lower())
+        self.assertFalse((self.work / "transport.json").exists())
+
+    def test_explicit_setup_failure_proof_allows_a_fresh_backup(self):
+        manifest, state, body = self.smoke_snapshot()
+        with patch.object(branch, "read", return_value=("parent", manifest, state)), patch.object(update.publish_data, "download_asset", return_value=body):
+            runner.prepare(self.args)
+        self.args.phase, self.args.runner = "backup", "macos-15"
+        with patch.dict(os.environ, {"SAFE_SETUP_RECOVERY": "true"}), patch("runner_smoke.collect", return_value={"offline_smoke": True, "files": 2}):
+            result = runner.collect(self.args)
+        self.assertTrue(result["complete"], result)
+
+    def test_entered_primary_without_ledger_cannot_continue_on_a_new_runner(self):
+        manifest, state, body = self.smoke_snapshot()
+        with patch.object(branch, "read", return_value=("parent", manifest, state)), patch.object(update.publish_data, "download_asset", return_value=body):
+            runner.prepare(self.args)
+        runner.write(self.work / "stage-primary.json", {"needs_backup": True, "complete": False})
+        self.args.phase, self.args.runner = "backup", "macos-15"
+        result = runner.collect(self.args)
+        self.assertFalse(result["complete"])
+        self.assertIn("ledger", result["error"].lower())
+        self.assertFalse((self.work / "transport.json").exists())
 
     def production_handoff(self):
         manifest, state, body = self.smoke_snapshot()

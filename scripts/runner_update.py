@@ -182,6 +182,10 @@ def collect(args):
                     return emit(report)
                 if primary.get("error") and not primary.get("needs_backup"):
                     raise ValueError("Primary business validation failed; no transport retry")
+                if not (args.work_dir / "transport.json").exists():
+                    raise ValueError("Primary request ledger is missing; consumed budgets are unknown")
+            elif os.environ.get("SAFE_SETUP_RECOVERY") != "true":
+                raise ValueError("Primary handoff is missing; no proof collection never started")
         os.environ["FUTURE_META_ACCESS_DEADLINE"] = session["deadline"]
         from collection_transport import activate, TransportUnavailable
 
