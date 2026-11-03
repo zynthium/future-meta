@@ -355,5 +355,131 @@ class StaticDocumentChromeIntegrationTests(unittest.TestCase):
             thread.join(timeout=5)
 
 
+class ChromePostTests(unittest.TestCase):
+    def test_post_guard_fulfills_blank_document_and_only_sends_one_target_post(self):
+        page = Mock()
+        session = page.context.new_cdp_session.return_value
+        with patch.dict(os.environ, {}, clear=True):
+            access.guard_browser(page, request_url=URL, request_method="POST", request_body="trade_date=20261103")
+        paused = session.on.call_args.args[1]
+        origin = "https://www.shfe.com.cn/.future-meta-transport-blank"
+        def event(url, method, resource, body=None):
+            request = {"url": url, "method": method}
+            if body is not None:
+                request["postData"] = body
+            return {"requestId": "one", "request": request, "resourceType": resource}
+        paused(event(origin, "GET", "Document"))
+        self.assertEqual(session.send.call_args.args[0], "Fetch.fulfillRequest")
+        paused(event(URL, "POST", "Fetch", "trade_date=20261103"))
+        self.assertEqual(session.send.call_args.args[0], "Fetch.continueRequest")
+        for value in (event(URL, "POST", "Fetch", "trade_date=20261103"),
+                      event(origin, "GET", "Document"), event(URL, "GET", "Document")):
+            paused(value)
+            self.assertEqual(session.send.call_args.args[0], "Fetch.failRequest")
+
+    def test_fetch_get_guard_blocks_remote_document_assets_repeats_and_expired_requests(self):
+        page = Mock()
+        session = page.context.new_cdp_session.return_value
+        with patch.dict(os.environ, {}, clear=True):
+            access.guard_browser(page, request_url=URL)
+        paused = session.on.call_args.args[1]
+        def event(url=URL, resource="Fetch", method="GET"):
+            return {"requestId": "one", "request": {"url": url, "method": method}, "resourceType": resource}
+        paused(event("https://www.shfe.com.cn/.future-meta-transport-blank", "Document"))
+        self.assertEqual(session.send.call_args.args[0], "Fetch.fulfillRequest")
+        for value in (event(resource="Document"), event(URL + "/favicon.ico", "Other"),
+                      event("https://example.com/escape"), event(method="POST")):
+            paused(value)
+            self.assertEqual(session.send.call_args.args[0], "Fetch.failRequest")
+        with patch.object(access, "remaining", side_effect=access.AccessWindowClosed("closed")):
+            paused(event())
+        self.assertEqual(session.send.call_args.args[0], "Fetch.failRequest")
+        paused(event())
+        self.assertEqual(session.send.call_args.args[0], "Fetch.continueRequest")
+        paused(event())
+        self.assertEqual(session.send.call_args.args[0], "Fetch.failRequest")
+
+    @unittest.skipUnless(collector.get_chrome_path(), "Local Chrome is not installed")
+    def test_get_reads_csv_attachment_without_download_navigation_or_extra_requests(self):
+        payloads = {
+            "/parameters.csv": ("text/csv", b"symbol,fee\r\nIF2611,0.000023\r\n\x00\xff"),
+            "/challenge.html": ("text/html", b"""<!doctype html><script>
+                window.open('/popup'); navigator.serviceWorker.register('/worker.js');
+                fetch('/extra'); </script><img src='/image.png'><link rel='icon' href='/favicon.ico'>"""),
+        }
+        received = []
+        class Fixture(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received.append(self.path)
+                if self.path not in payloads:
+                    self.send_error(500)
+                    return
+                content_type, body = payloads[self.path]
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                if self.path.endswith(".csv"):
+                    self.send_header("Content-Disposition", 'attachment; filename="parameters.csv"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            origin = f"http://127.0.0.1:{server.server_port}"
+            def check_fixture(value):
+                if not value.startswith(origin + "/"):
+                    raise AssertionError("Attempted non-fixture URL")
+            with patch.object(access, "validate_url", side_effect=check_fixture), patch.dict(os.environ, {}, clear=True):
+                for path, (_, body) in payloads.items():
+                    with self.subTest(path=path):
+                        actual = collector.fetch_chrome(origin + path)
+                        self.assertEqual(actual, body)
+            self.assertEqual(received, list(payloads))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    @unittest.skipUnless(collector.get_chrome_path(), "Local Chrome is not installed")
+    def test_post_uses_browser_network_without_getting_home_or_altering_bytes(self):
+        self.assertTrue(hasattr(collector, "fetch_chrome"), "Chrome POST transport is missing")
+        body = b"\x00\xffraw response\r\n"
+        received = []
+        class Fixture(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received.append(("GET", self.path, b""))
+                self.send_error(500)
+            def do_POST(self):
+                request_body = self.rfile.read(int(self.headers["Content-Length"]))
+                received.append(("POST", self.path, request_body))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/parameters"
+            origin = f"http://127.0.0.1:{server.server_port}"
+            def check_fixture(value):
+                if not value.startswith(origin + "/"):
+                    raise AssertionError("Attempted non-fixture URL")
+            with patch.object(access, "validate_url", side_effect=check_fixture), patch.dict(os.environ, {}, clear=True):
+                actual = collector.fetch_chrome(url, method="POST", data={"trade_date": "20261103", "variety": ""})
+            self.assertEqual(actual, body)
+            self.assertEqual(received, [("POST", "/parameters", b"trade_date=20261103&variety=")])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+
 if __name__ == "__main__":
     unittest.main()

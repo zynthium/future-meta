@@ -1,98 +1,254 @@
 name: update-fee-data
-
 on:
   schedule:
     - cron: "35,50 10 * * 1-5" # Asia/Shanghai 18:35, 18:50
     - cron: "5,20,35 11 * * 1-5" # 19:05, 19:20, 19:35
-    - cron: "2,7,12 0 * * 1-5" # 08:02, 08:07, 08:12; post-holiday only
-    - cron: "37 0 * * 1-5" # 08:37, read-only checkpoint watch
-    - cron: "17 12 * * 1-5" # 20:17, read-only checkpoint watch
+    - cron: "2,7,12 0 * * 1-5" # post-holiday morning only
+    - cron: "37 0 * * 1-5" # read-only checkpoint watch
+    - cron: "17 12 * * 1-5" # read-only checkpoint watch
   workflow_dispatch:
     inputs:
       republish_current:
-        description: Verify current archive and data-branch publication without exchange access
+        description: Verify current publication without exchange access
         type: boolean
         default: false
-
+      offline_smoke:
+        description: Exercise runner handoff with synthetic transports and no production writes
+        type: boolean
+        default: false
 concurrency:
   group: future-meta-production-official-update
   cancel-in-progress: false
-
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   admission:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
+    permissions: {contents: write, actions: read}
     outputs:
       should_update: ${{ steps.slot.outputs.should_update }}
-      target_through: ${{ steps.slot.outputs.target_through }}
+      prepared: ${{ steps.prepare.outputs.prepared }}
+      target_through: ${{ steps.prepare.outputs.target_through || steps.slot.outputs.target_through }}
+      primary_runner: ${{ steps.prepare.outputs.primary_runner }}
+      backup_runner: ${{ steps.prepare.outputs.backup_runner }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
+        with: {fetch-depth: 0, persist-credentials: false}
       - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Check slot, checkpoint and full CI without contacting exchanges
+        with: {python-version: '3.12'}
+      - name: Check slot, checkpoint and matching CI without contacting exchanges
         id: slot
         env:
           GH_TOKEN: ${{ github.token }}
           REPUBLISH_CURRENT: ${{ inputs.republish_current && 'true' || 'false' }}
+          OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
           HEALTH_ONLY: ${{ github.event.schedule == '37 0 * * 1-5' || github.event.schedule == '17 12 * * 1-5' }}
         run: |
+          set -euo pipefail
+          if [[ "$OFFLINE_SMOKE" == true && "$REPUBLISH_CURRENT" == true ]]; then exit 1; fi
           args=()
-          if [[ "$REPUBLISH_CURRENT" == 'true' ]]; then
+          if [[ "$OFFLINE_SMOKE" == true ]]; then
+            echo 'should_update=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          elif [[ "$REPUBLISH_CURRENT" == true ]]; then
             args+=(--republish-current)
-          elif [[ "$HEALTH_ONLY" == 'true' ]]; then
+          elif [[ "$HEALTH_ONLY" == true ]]; then
             args+=(--health-only)
           fi
-          python scripts/update_admission.py --repo "$GITHUB_REPOSITORY" \
-            --github-output "$GITHUB_OUTPUT" "${args[@]}"
+          python scripts/update_admission.py --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT" "${args[@]}"
+      - name: Prepare one logical attempt and choose runners from bounded health
+        id: prepare
+        if: steps.slot.outputs.should_update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          python -m pip install requests
+          args=()
+          if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
+          python scripts/update_official.py --phase prepare --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+      - name: Initial handoff for this workflow attempt only
+        if: always() && steps.prepare.outputs.prepared == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}-prepare
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            data/official-update/session.json
+            data/official-update/baseline.fmeta.zst
 
-  update:
+  primary:
     needs: admission
-    if: needs.admission.outputs.should_update == 'true' || (github.event_name == 'workflow_dispatch' && inputs.republish_current)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
+    if: >-
+      needs.admission.outputs.prepared == 'true'
+    runs-on: ${{ needs.admission.outputs.primary_runner }}
+    timeout-minutes: 15
+    permissions: {contents: read}
+    outputs:
+      needs_backup: ${{ steps.collect.outputs.needs_backup }}
+      collection_started: ${{ steps.collect.outputs.collection_started }}
+      handoff_uploaded: ${{ steps.handoff.outcome == 'success' }}
+    env:
+      RUNNER_LABEL: ${{ needs.admission.outputs.primary_runner }}
+      OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+        with: {persist-credentials: false}
       - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: actions/download-artifact@v4
+        id: download
         with:
-          python-version: "3.12"
-      - name: Install collector dependencies
-        run: python -m pip install requests playwright
+          name: future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}-prepare
+          path: data/official-update
+      - name: Recheck window and provenance before installing collector
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install requests playwright curl_cffi
+          args=()
+          if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
+          python scripts/update_official.py --phase check --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.offline_smoke != true
+      - uses: Swatinem/rust-cache@v2
+        if: inputs.offline_smoke != true
       - name: Install official browser
-        if: inputs.republish_current != true
+        if: inputs.offline_smoke != true
         run: python -m playwright install --with-deps chrome
-      - name: Check official metadata and publish atomically
+      - name: Collect pending files under this workflow's shared budget
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
+          runner=(python -u)
+          if [[ "$RUNNER_OS" == Linux && "$OFFLINE_SMOKE" != true ]]; then runner=(xvfb-run -a python -u); fi
+          "${runner[@]}" scripts/update_official.py --phase primary --runner "$RUNNER_LABEL" --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+      - name: Temporary originals and consumed budgets, deleted at workflow end
+        id: handoff
+        if: always() && steps.download.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}-primary
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            data/official-update/session.json
+            data/official-update/baseline.fmeta.zst
+            data/official-update/transport.json
+            data/official-update/collected/raw/
+            data/official-update/collection.json
+            data/official-update/stage-*.json
+
+  backup:
+    needs: [admission, primary]
+    if: >-
+      always() && needs.admission.outputs.prepared == 'true' && (needs.primary.outputs.needs_backup == 'true' || (needs.primary.result == 'failure' && (needs.primary.outputs.handoff_uploaded == 'true' || needs.primary.outputs.collection_started != 'true')))
+    runs-on: ${{ needs.admission.outputs.backup_runner }}
+    timeout-minutes: 15
+    permissions: {contents: read}
+    outputs:
+      handoff_uploaded: ${{ steps.handoff.outcome == 'success' }}
+    env:
+      RUNNER_LABEL: ${{ needs.admission.outputs.backup_runner }}
+      OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: actions/download-artifact@v4
+        id: download
+        with:
+          name: future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.primary.outputs.handoff_uploaded == 'true' && 'primary' || 'prepare' }}
+          path: data/official-update
+      - name: Recheck window and provenance before installing collector
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python -m pip install requests playwright curl_cffi
+          args=()
+          if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
+          python scripts/update_official.py --phase check --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.offline_smoke != true
+      - uses: Swatinem/rust-cache@v2
+        if: inputs.offline_smoke != true
+      - name: Install official browser
+        if: inputs.offline_smoke != true
+        run: python -m playwright install --with-deps chrome
+      - name: Collect pending files under this workflow's shared budget
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
+          runner=(python -u)
+          if [[ "$RUNNER_OS" == Linux && "$OFFLINE_SMOKE" != true ]]; then runner=(xvfb-run -a python -u); fi
+          "${runner[@]}" scripts/update_official.py --phase backup --runner "$RUNNER_LABEL" --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+      - name: Temporary originals and consumed budgets, deleted at workflow end
+        id: handoff
+        if: always() && steps.download.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}-backup
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            data/official-update/session.json
+            data/official-update/baseline.fmeta.zst
+            data/official-update/transport.json
+            data/official-update/collected/raw/
+            data/official-update/collection.json
+            data/official-update/stage-*.json
+
+  update:
+    needs: [admission, primary, backup]
+    if: >-
+      always() && (needs.admission.outputs.should_update == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.republish_current))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: actions/download-artifact@v4
+        if: inputs.republish_current != true
+        continue-on-error: true
+        with:
+          name: future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.backup.outputs.handoff_uploaded == 'true' && 'backup' || needs.primary.outputs.handoff_uploaded == 'true' && 'primary' || 'prepare' }}
+          path: data/official-update
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.offline_smoke != true
+      - uses: Swatinem/rust-cache@v2
+        if: inputs.offline_smoke != true
+      - name: Finalize one attempt and publish only complete six-exchange data
         env:
           GH_TOKEN: ${{ github.token }}
           REPUBLISH_CURRENT: ${{ inputs.republish_current && 'true' || 'false' }}
+          OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
         run: |
           set -euo pipefail
           mkdir -p data
-          args=()
-          runner=(xvfb-run -a python -u)
-          if [[ "$REPUBLISH_CURRENT" == 'true' ]]; then
-            args+=(--republish-current)
-            runner=(python -u)
-          fi
-          "${runner[@]}" scripts/update_official.py \
-            --repo "$GITHUB_REPOSITORY" --work-dir data/official-update \
-            "${args[@]}" 2>&1 | tee data/update.log
-      - name: Retain summary diagnostics
+          python -m pip install requests
+          args=(--phase finalize)
+          if [[ "$REPUBLISH_CURRENT" == true ]]; then args=(--republish-current); fi
+          if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
+          python -u scripts/update_official.py --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}" 2>&1 | tee data/update.log
+      - name: Retain summary diagnostics only
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -102,23 +258,42 @@ jobs:
           path: |
             data/update.log
             data/official-update/publication/update-report.json
+            data/official-update/stage-*.json
 
   verify:
     needs: [admission, update]
-    if: always() && needs.admission.result == 'success' && needs.update.result != 'skipped' && inputs.republish_current != true
+    if: always() && needs.admission.result == 'success' && needs.update.result != 'skipped' && inputs.republish_current != true && inputs.offline_smoke != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
+    permissions: {contents: read}
     steps:
       - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
+        with: {persist-credentials: false}
       - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+        with: {python-version: '3.12'}
       - name: Require all six exchanges to reach the admitted target
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_THROUGH: ${{ needs.admission.outputs.target_through }}
         run: python scripts/update_admission.py --repo "$GITHUB_REPOSITORY" --verify-through "$TARGET_THROUGH"
+
+  cleanup-handoff:
+    needs: [admission, primary, backup, update, verify]
+    if: always() && needs.admission.outputs.should_update == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {actions: write}
+    steps:
+      - name: Delete only this workflow attempt's temporary input artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PYTHON'
+          import json, os, subprocess
+          repo, run, attempt = os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
+          names = {f'future-meta-handoff-{run}-{attempt}-{stage}' for stage in ('prepare', 'primary', 'backup')}
+          response = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run}/artifacts?per_page=100'], text=True))
+          for artifact in response['artifacts']:
+              if artifact['name'] in names:
+                  subprocess.run(['gh', 'api', '--method', 'DELETE', f'repos/{repo}/actions/artifacts/{artifact["id"]}'], check=True)
+          PYTHON

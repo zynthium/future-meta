@@ -329,7 +329,6 @@ def cffex_baseline(archive, previous):
 def collect_interval(archive, state, rules, days, work):
     """Collect every missing daily snapshot, sharing one cache/browser session."""
     import collect_settle_params as collector
-    from collect_contract_specs import fetch_cbi_body
 
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
@@ -367,7 +366,7 @@ def collect_interval(archive, state, rules, days, work):
         cbi_sources = []
         for exchange, host in [("SHFE", "www.shfe.com.cn"), ("INE", "www.ine.cn")]:
             url = f"https://{host}/data/busiparamdata/future/ContractBaseInfo{day.replace('-', '')}.dat"
-            raw_body = fetch_cbi_body(url)
+            raw_body = cached_cbi(store, exchange, day, url)
             body = json.loads(raw_body)
             cbi_sources.append({'url': url, 'sha256': hashlib.sha256(raw_body).hexdigest()})
             for symbol, values in cbi_lifecycles(body, exchange, day).items():
@@ -428,6 +427,18 @@ def collect_interval(archive, state, rules, days, work):
         if s not in observed_symbols
     ]
     return snapshots, source_versions, exceptions
+
+
+def cached_cbi(store, exchange, day, url):
+    """Keep this round's dated metadata when another runner resumes collection."""
+    from collect_contract_specs import fetch_cbi_body
+
+    key = f"cbi-{day}"
+    body = store.cached(exchange, day, url, key=key)
+    if body is None:
+        body = fetch_cbi_body(url)
+        store.save(exchange, day, url, body, key=key)
+    return body
 
 
 def verify_cffex_anchor(store, anchor, catalog, through):

@@ -42,7 +42,7 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(expected, self.workflow)
         self.assertIn(
-            "if: needs.admission.outputs.should_update == 'true'", self.workflow
+            "needs.admission.outputs.prepared == 'true'", self.workflow
         )
         self.assertNotIn("cloudflare", self.workflow.lower())
 
@@ -72,13 +72,40 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
         self.assertIn("if: always()", self.workflow)
         self.assertIn("retention-days: 3", self.workflow)
         self.assertIn("set -euo pipefail", self.workflow)
+        diagnostics = self.workflow.split("- name: Retain summary diagnostics only", 1)[1].split("  verify:", 1)[0]
         for forbidden in (
             "data/official-update/raw",
+            "collected/raw",
             "official-inputs",
             "sqlite.gz",
             "settlement-evidence/",
         ):
-            self.assertNotIn(forbidden, self.workflow)
+            self.assertNotIn(forbidden, diagnostics)
+
+    def test_temporary_handoff_is_run_and_attempt_bound_and_deleted(self):
+        self.assertIn("future-meta-handoff-${{ github.run_id }}-${{ github.run_attempt }}", self.workflow)
+        self.assertEqual(self.workflow.count("retention-days: 1"), 3)
+        self.assertIn("cleanup-handoff:", self.workflow)
+        self.assertIn("permissions: {actions: write}", self.workflow)
+        self.assertIn("artifact['name'] in names", self.workflow)
+        self.assertNotIn("curl_cffi", self.workflow.split("  admission:", 1)[0])
+
+    def test_alternate_runner_continues_with_read_only_collection_permissions(self):
+        self.assertIn("runs-on: ${{ needs.admission.outputs.primary_runner }}", self.workflow)
+        self.assertIn("runs-on: ${{ needs.admission.outputs.backup_runner }}", self.workflow)
+        self.assertIn("needs.primary.outputs.needs_backup == 'true'", self.workflow)
+        self.assertIn("needs.primary.outputs.collection_started != 'true'", self.workflow)
+        self.assertIn("--phase primary", self.workflow)
+        self.assertIn("--phase backup", self.workflow)
+        self.assertIn("--phase finalize", self.workflow)
+        for name in ("primary", "backup"):
+            block = self.workflow.split(f"  {name}:\n", 1)[1].split("\n  ", 1)[0]
+            self.assertNotIn("contents: write", block)
+
+    def test_offline_smoke_is_explicit_and_does_not_enter_checkpoint_verifier(self):
+        self.assertIn("offline_smoke:", self.workflow)
+        self.assertIn("--offline-smoke", self.workflow)
+        self.assertIn("inputs.offline_smoke != true", self.workflow)
 
 
 if __name__ == "__main__":

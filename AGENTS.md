@@ -41,6 +41,9 @@
 
 - `crates/future-meta-daemon/src/archive_update.rs`：完整六所批次校验及 archive 版本合并。
 - `scripts/update_official.py`：时段复核、状态、采集、合并与发布。
+- `scripts/runner_update.py`：同一 workflow 的准备、主/备用 runner 接续与唯一发布。
+- `scripts/collection_transport.py`：跨 runner 共享请求预算、客户端选择及有界健康统计。
+- `scripts/runner_smoke.py`：禁止官网访问和生产写入的跨 runner 故障转移烟测。
 - `scripts/incremental_inputs.py`：日期、规格、生命周期及官方采集适配。
 - `scripts/audit_official_rules.py`：独立手动规则审阅，调用 `catalog_guard.py` 检查现行入口；不由日更触发，不发布，不推进日更检查点。不能用旧附件仍可访问证明没有新规则。
 - `scripts/official_access.py`：HTTP 重定向及浏览器逐请求截止控制。
@@ -59,9 +62,10 @@
 - 离线门禁跳过周末、普通早晨、调休工作周末、休市和节前无夜盘；程序在运行时再次检查。
 - 只在 18:30–20:00、08:00–08:20 内开始官方请求。同一时段最多一轮，重复触发跳过。
 - 轻量 admission 先读 GitHub 检查点并验证匹配执行代码的完整 CI，再准备采集环境；无缺失提前跳过，失败/中断同一时段仍缺数据则报错、不重采。更新后必须达到准入目标；窗口结束十分钟后健康检查按合法时段判断漏更。GitHub cron 可能延迟或丢弃，不能承诺准点。
-- 串行采集、缓存去重、复用大商所浏览器。普通 HTTP 最多三次，等待 2 秒、8 秒；上期所 Settlement（含能源中心手续费）及 CBI 共用有界传输：最多两次 HTTP 加一次 Chrome，不在三次 HTTP 之外额外追加浏览器。截止后不启动 Chrome；浏览器逐请求仍受截止控制。
-- 上期所静态数据文件的 Chrome 回退禁用 JavaScript 和 Service Worker，只允许一次目标 GET，阻止跳转、favicon 和其他页面资源；收到文档后直接读取原件字节，不等待附带资源。大商所交互页面仍正常加载所需资源。
-- 大商所仅在浏览器初始化发生传输/导航错误时，关闭失败会话后最多重建一次；导航单阶段上限 30 秒并受剩余窗口约束。初始化成功后复用会话，日期/API/解析校验失败不触发整批重采。
+- 生产以一次 workflow 为一轮：主 runner 的 `requests`、`curl_cffi` 各一次，失败后在另一 GitHub 托管 runner 用剩余 Chrome 尝试；同一方法、URL、表单/JSON 日期跨 runner 共最多三次。未访问文件在备用机仍共用三次预算，不重新计数。默认 Ubuntu 主、macOS 备，积累足够实际成功率/耗时后择优，不额外请求官网探测；不能指定或保证更换公网 IP。本地历史 CLI 保留原有重试行为。
+- 本轮已成功原件及发出前持久化的请求账本通过临时 handoff 接续，绑定 run ID、run attempt、源码/规则 SHA、业务基线及截止时间，禁止跨轮复用。临时 artifact 结束即删，硬中断最多留一天；不写入 `data` 分支、Release 或后续 bootstrap。长期仅保留有界 `transport_health` 汇总。
+- 生产 Chrome 回退仅在本地履行的同源空白文档执行受限 fetch，禁用 Service Worker；只允许一次目标 GET/POST，阻止跳转、favicon 和其他源站资源。源站响应只读字节，不作为页面执行，可处理 CSV 下载附件。本地历史 CLI 的静态导航路径仍禁用 JavaScript。大商所交互页面正常加载所需资源。
+- 大商所主 runner 最多初始化一次，备用接续剩余会话，全轮最多两个会话；导航单阶段上限 30 秒并受剩余窗口约束。初始化成功后复用会话，API 网络/HTTP 失败可在备用机接续未完成日期；反爬正文、日期或字段校验错误硬失败，不重采成功日期。
 - 每次 HTTP 重定向和浏览器网络请求复核截止；不得通过手动日更绕过窗口。
 - 当前准入日历只涵盖 2026，缺少年份停止；生命周期假设不能当成采集日历。
 - 实际采集包含多份官方文件和浏览器资源，不能把一轮更新说成一个 HTTP 请求。
@@ -78,7 +82,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 python3 -m unittest discover -s tests
 ```
 
-Python 官方采集测试需 `requests`、`playwright`；Linux 在线大商所需要 Chrome 与 `xvfb-run`。普通 Rust 构建不依赖它们。
+Python 官方采集测试需 `requests`、`playwright`、`curl_cffi`；Linux 在线大商所需要 Chrome 与 `xvfb-run`。普通 Rust 构建不依赖它们。
 
 定向验证：
 

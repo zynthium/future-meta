@@ -32,6 +32,7 @@ import tempfile
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
@@ -113,9 +114,14 @@ def fetch_with_retry(
     data: Optional[dict] = None,
 ) -> requests.Response:
     from official_access import request, AccessWindowClosed
+    from collection_transport import current
     hdr = {"User-Agent": USER_AGENT}
     if headers:
         hdr.update(headers)
+
+    context = current()
+    if context is not None:
+        return context.fetch(method, url, headers=hdr, timeout=timeout, data=data)
 
     last_error = "no HTTP attempt"
     for attempt in range(1, max_retries + 1):
@@ -142,7 +148,14 @@ def fetch_with_browser_fallback(url: str, timeout: int = 15) -> bytes:
     """Read one official GET with two HTTP attempts and one Chrome fallback."""
     from official_access import AccessWindowClosed, guard_browser, remaining
 
+    from collection_transport import current
     RawStore.check_url(url)
+    if current() is not None:
+        response = fetch_with_retry(url, timeout=timeout)
+        try:
+            return response.content
+        finally:
+            response.close()
     try:
         response = fetch_with_retry(url, timeout=timeout, max_retries=2)
         try:
@@ -199,6 +212,80 @@ def fetch_with_browser_fallback(url: str, timeout: int = 15) -> bytes:
             f"Official GET failed after 2 HTTP attempts and 1 Chrome attempt: {url}; "
             f"HTTP: {http_failure}; Chrome: {error}"
         ) from error
+
+
+def _browser_transport_error(error):
+    from playwright.sync_api import TimeoutError as BrowserTimeout
+    return isinstance(error, BrowserTimeout) or any(message in str(error).lower() for message in (
+        "net::", "failed to fetch", "networkerror", "fetch failed", "connection closed",
+        "target page, context or browser has been closed", "target closed", "browser has been closed",
+        "execution context was destroyed", "official dce http", "timeouterror:", "aborterror:",
+    ))
+
+
+def fetch_chrome(url, *, method="GET", headers=None, timeout=15, data=None, json=None):
+    """Read one Chrome GET/POST as bytes from a locally fulfilled origin."""
+    from official_access import AccessWindowClosed, guard_browser, remaining, validate_url
+    from json import dumps
+    from playwright.sync_api import Error as BrowserError, sync_playwright
+    validate_url(url)
+    method = method.upper()
+    if method not in ("GET", "POST") or (method == "GET" and (data is not None or json is not None)):
+        raise ValueError("Unsupported official Chrome request")
+    if data is not None and json is not None:
+        raise ValueError("Choose one POST body encoding")
+
+    def budget():
+        seconds = remaining()
+        return timeout * 1000 if seconds is None else max(1, min(timeout * 1000, int(seconds * 1000)))
+
+    remaining()
+    try:
+        with sync_playwright() as playwright:
+            chrome = get_chrome_path()
+            options = {"headless": True}
+            options["executable_path" if chrome else "channel"] = chrome or "chrome"
+            remaining()
+            browser = playwright.chromium.launch(**options)
+            try:
+                # Remote bodies are fetched, never navigated to or executed. This
+                # also handles CSV attachments without triggering Chrome downloads.
+                page = browser.new_page(java_script_enabled=True, service_workers="block")
+                body = None
+                request_headers = {key: value for key, value in (headers or {}).items()
+                                   if key.lower() != "user-agent"}
+                if method == "POST":
+                    content_type = "application/json" if json is not None else "application/x-www-form-urlencoded"
+                    body = (dumps(json, separators=(",", ":"), ensure_ascii=False)
+                            if json is not None else urllib.parse.urlencode(data or {}))
+                    request_headers.setdefault("Content-Type", content_type)
+                guard_browser(page, request_url=url, request_method=method, request_body=body)
+                parsed = urllib.parse.urlsplit(url)
+                origin_document = f"{parsed.scheme}://{parsed.netloc}/.future-meta-transport-blank"
+                # CDP fulfills this navigation locally: no homepage GET or APIRequestContext.
+                page.goto(origin_document, wait_until="domcontentloaded", timeout=budget())
+                result = page.evaluate("""async (args) => {
+                    const response = await fetch(args.url, {
+                        method: args.method, headers: args.headers,
+                        body: args.method === 'POST' ? args.body : undefined,
+                        credentials: 'omit', redirect: 'error', cache: 'no-store',
+                        signal: AbortSignal.timeout(args.timeout)
+                    });
+                    return {status: response.status,
+                        body: Array.from(new Uint8Array(await response.arrayBuffer()))};
+                }""", {"url": url, "method": method, "headers": request_headers, "body": body, "timeout": budget()})
+                if result["status"] != 200:
+                    raise requests.HTTPError(f"Official Chrome HTTP {result['status']}")
+                return bytes(result["body"])
+            finally:
+                browser.close()
+    except AccessWindowClosed:
+        raise
+    except BrowserError as error:
+        remaining()  # A guarded abort caused by expiry remains a hard deadline failure.
+        if _browser_transport_error(error):
+            raise requests.ConnectionError(str(error)) from error
+        raise
 
 
 # ----------------------------------------------------------------------
@@ -378,7 +465,9 @@ class RawStore:
             key: Optional[str] = None, margin: bool = False,
             refresh: bool = False, form: Optional[dict] = None,
             browser_fallback: bool = False) -> bytes:
-        if not refresh or self.offline:
+        from collection_transport import current
+        context = current()
+        if not refresh or self.offline or (context is not None and context.stage == "backup"):
             body = self.cached(exchange, day, url, key, margin)
             if body is not None:
                 return body
@@ -968,12 +1057,18 @@ def _open_dce_page(playwright):
     """Retry only browser initialization, replacing a failed session once."""
     from official_access import guard_browser, remaining
     from playwright.sync_api import Error as BrowserError
+    from collection_transport import current, TransportUnavailable
+    context = current()
 
     def budget(milliseconds):
         seconds = remaining()
         return milliseconds if seconds is None else max(1, min(milliseconds, int(seconds * 1000)))
 
-    for attempt in (1, 2):
+    attempts = (1, 2) if context is None else (
+        (1,) if context.stage == "primary" else tuple(range(1, 3 - len(context.ledger["dce_sessions"]))))
+    if not attempts:
+        raise TransportUnavailable("DCE browser session budget exhausted")
+    for attempt in attempts:
         browser = None
         ready = False
         phase = "launch"
@@ -985,28 +1080,68 @@ def _open_dce_page(playwright):
             else:
                 options["channel"] = "chrome"
             remaining()
-            browser = playwright.chromium.launch(**options)
-            page = browser.new_page()
-            guard_browser(page)
-            for phase, url, settle_ms in (
-                ("home", "http://www.dce.com.cn/", 3500),
-                ("report", "http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", 4000),
-            ):
-                logger.info("[DCE] Browser initialization attempt=%s phase=%s", attempt, phase)
-                response = page.goto(url, wait_until="domcontentloaded", timeout=budget(30000))
-                logger.info("[DCE] Navigation phase=%s status=%s", phase, None if response is None else response.status)
-                page.wait_for_timeout(budget(settle_ms))
-            ready = True
-            return browser, page
-        except BrowserError as error:
+            if context is not None:
+                context.reserve_dce_session()
+            session_attempt = (context.attempt("BROWSER", "http://www.dce.com.cn/", "chrome")
+                               if context is not None else nullcontext())
+            with session_attempt:
+                browser = playwright.chromium.launch(**options)
+                page = browser.new_page()
+                guard_browser(page)
+                for phase, url, settle_ms in (
+                    ("home", "http://www.dce.com.cn/", 3500),
+                    ("report", "http://www.dce.com.cn/frontend/dcereport/#/zh/queryFutAndOptSettle?variety=all&tradeType=1", 4000),
+                ):
+                    logger.info("[DCE] Browser initialization attempt=%s phase=%s", attempt, phase)
+                    response = page.goto(url, wait_until="domcontentloaded", timeout=budget(30000))
+                    logger.info("[DCE] Navigation phase=%s status=%s", phase, None if response is None else response.status)
+                    if context is not None and (response is None or response.status >= 500):
+                        raise TransportUnavailable(f"DCE navigation HTTP {None if response is None else response.status}")
+                    page.wait_for_timeout(budget(settle_ms))
+                ready = True
+                return browser, page
+        except (BrowserError, TransportUnavailable) as error:
             logger.warning("[DCE] Initialization failed attempt=%s phase=%s: %s", attempt, phase, error)
-            if attempt == 2:
+            if context is not None:
+                remaining()
+                if not isinstance(error, TransportUnavailable) and not _browser_transport_error(error):
+                    raise
+                if attempt == attempts[-1]:
+                    raise TransportUnavailable(f"DCE browser initialization unavailable; phase={phase}: {error}") from error
+            elif attempt == 2:
                 raise RuntimeError(f"DCE browser initialization failed after 2 sessions; phase={phase}: {error}") from error
         finally:
             if browser is not None and not ready:
                 browser.close()
         # The old browser is closed before waiting or creating another session.
         time.sleep(budget(2000) / 1000)
+
+
+def _fetch_dce_active(page, url, params):
+    from collection_transport import current, TransportUnavailable
+    from official_access import remaining
+    from playwright.sync_api import Error as BrowserError
+    seconds = remaining()
+    timeout = 30000 if seconds is None else max(1, min(30000, int(seconds * 1000)))
+    with current().attempt("POST", url, "chrome", json=params):
+        try:
+            result = page.evaluate("""async (args) => {
+                const response = await fetch('/dcereport/publicweb/tradepara/futAndOptSettle', {
+                    signal: AbortSignal.timeout(args.timeout), method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'clientid': 'web',
+                        'access-control-allow-origin-type': '*'}, body: JSON.stringify(args.params)
+                });
+                return {status: response.status,
+                    body: Array.from(new Uint8Array(await response.arrayBuffer()))};
+            }""", {"params": params, "timeout": timeout})
+        except BrowserError as error:
+            remaining()
+            if _browser_transport_error(error):
+                raise TransportUnavailable(f"DCE API transport unavailable: {error}") from error
+            raise
+        if result["status"] != 200:
+            raise TransportUnavailable(f"DCE API HTTP {result['status']}")
+        return bytes(result["body"])
 
 
 def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only: bool = False):
@@ -1035,7 +1170,11 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
                 if i % 20 == 1 or i == len(pending):
                     logger.info(f"[DCE] Collecting day {i}/{len(pending)}: {day}")
                 params = {"varietyId": "all", "tradeDate": day.replace("-", ""), "tradeType": "1", "lang": "zh"}
-                result = page.evaluate("""async (params) => {
+                from collection_transport import current
+                if current() is not None:
+                    body = _fetch_dce_active(page, url, params)
+                else:
+                    result = page.evaluate("""async (params) => {
                     const response = await fetch('/dcereport/publicweb/tradepara/futAndOptSettle', {
                         signal: AbortSignal.timeout(30000),
                         method: 'POST', headers: {'Content-Type': 'application/json', 'clientid': 'web',
@@ -1043,8 +1182,8 @@ def collect_dce(days: List[str], output_csv: str, store: RawStore, futures_only:
                     });
                     if (!response.ok) throw new Error('Official DCE HTTP ' + response.status);
                     return await response.text();
-                }""", params)
-                body = result.encode("utf-8")
+                    }""", params)
+                    body = result.encode("utf-8")
                 records = validate_records(parse_dce_gfex(json.loads(body), day, "DCE"), "DCE", day, futures_only)
                 store.save("DCE", day, url, body, request={"method": "POST", "json": params})
                 append_records_to_csv(output_csv, records)

@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import collect_settle_params as collector
 import official_access as access
+import collection_transport as transport
 from playwright.sync_api import TimeoutError as BrowserTimeout
 
 
@@ -150,6 +151,74 @@ class DceStartupTests(unittest.TestCase):
             [call.args[0] for call in page.wait_for_timeout.call_args_list[:2]],
             [1250, 1250],
         )
+
+
+    def test_active_primary_initialization_failure_hands_off_without_second_local_session(self):
+        self.first.new_page.return_value.goto.side_effect = BrowserTimeout("home stalled")
+        path = self.root / "transport.json"
+        with transport.activate(path, "primary", "ubuntu-latest"):
+            with self.assertRaises(transport.TransportUnavailable):
+                self.collect()
+        self.assertEqual(self.playwright.chromium.launch.call_count, 1)
+        self.first.close.assert_called_once()
+        health = transport.read_health(path)
+        self.assertEqual(sum(item["failure"] for item in health["buckets"]), 1)
+        self.second.new_page.return_value.evaluate.return_value = {
+            "status": 200, "body": list(parameters().encode())}
+        with transport.activate(path, "backup", "macos-15"):
+            self.collect()
+        self.assertEqual(self.playwright.chromium.launch.call_count, 2)
+        self.assertEqual(len(json.loads(path.read_text())["dce_sessions"]), 2)
+
+    def test_active_api_failure_preserves_completed_day_for_backup(self):
+        raw = {"status": 200, "body": list(parameters().encode())}
+        self.first.new_page.return_value.evaluate.side_effect = [raw, BrowserTimeout("API stalled")]
+        path = self.root / "transport.json"
+        with transport.activate(path, "primary", "ubuntu-latest"):
+            with self.assertRaises(transport.TransportUnavailable):
+                self.collect(["2026-11-02", "2026-11-03"])
+        self.assertTrue((self.root / "raw/dce/2026-11-02.json").exists())
+        self.assertFalse((self.root / "raw/dce/2026-11-03.json").exists())
+        self.second.new_page.return_value.evaluate.return_value = raw
+        with transport.activate(path, "backup", "macos-15"):
+            self.collect(["2026-11-02", "2026-11-03"])
+        self.second.new_page.return_value.evaluate.assert_called_once()
+        self.assertEqual(self.second.new_page.return_value.evaluate.call_args.args[1]["params"]["tradeDate"], "20261103")
+
+    def test_active_challenge_body_is_hard_failure_and_does_not_restart_session(self):
+        self.first.new_page.return_value.evaluate.return_value = {
+            "status": 200, "body": list(b"<html>challenge</html>")}
+        with transport.activate(self.root / "transport.json", "primary", "ubuntu-latest"):
+            with self.assertRaises(ValueError):
+                self.collect()
+        self.assertEqual(self.playwright.chromium.launch.call_count, 1)
+
+    def test_active_api_http_error_is_recoverable_but_programming_error_is_not(self):
+        from playwright.sync_api import Error
+        for result, expected in [({"status": 503, "body": []}, transport.TransportUnavailable),
+                                 (Error("ReferenceError: missingVariable is not defined"), Error)]:
+            with self.subTest(result=result):
+                self.playwright.chromium.launch.side_effect = None
+                self.playwright.chromium.launch.return_value = self.first
+                if isinstance(result, Exception):
+                    self.first.new_page.return_value.evaluate.side_effect = result
+                else:
+                    self.first.new_page.return_value.evaluate.side_effect = None
+                    self.first.new_page.return_value.evaluate.return_value = result
+                path = self.root / (expected.__name__ + ".json")
+                with transport.activate(path, "primary", "ubuntu-latest"):
+                    with self.assertRaises(expected):
+                        self.collect()
+
+
+    def test_active_api_deadline_and_abort_do_not_trigger_another_session(self):
+        from playwright.sync_api import Error
+        self.first.new_page.return_value.evaluate.side_effect = Error("TimeoutError: signal timed out")
+        path = self.root / "abort.json"
+        with transport.activate(path, "primary", "ubuntu-latest"):
+            with self.assertRaises(transport.TransportUnavailable):
+                self.collect()
+        self.assertEqual(self.playwright.chromium.launch.call_count, 1)
 
 
 if __name__ == "__main__":

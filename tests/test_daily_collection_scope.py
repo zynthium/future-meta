@@ -18,6 +18,17 @@ import official_access
 
 
 class DailyCollectionScopeTests(unittest.TestCase):
+    def test_cbi_handoff_reuses_the_exact_original_without_another_request(self):
+        day = "2026-11-03"
+        url = "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat"
+        body = b'{"report_date":"20261103","original":"bytes"}\n'
+        with tempfile.TemporaryDirectory() as temp, patch.object(specs, "fetch_cbi_body", return_value=body) as fetch:
+            first = collector.RawStore(Path(temp), None, False)
+            self.assertEqual(inputs.cached_cbi(first, "SHFE", day, url), body)
+            resumed = collector.RawStore(Path(temp), None, False)
+            self.assertEqual(inputs.cached_cbi(resumed, "SHFE", day, url), body)
+        fetch.assert_called_once_with(url)
+
     def test_missing_days_use_daily_sources_without_rule_audit(self):
         self.run_collection(False)
 
