@@ -172,13 +172,18 @@ def fetch_with_browser_fallback(url: str, timeout: int = 15) -> bytes:
             remaining()
             browser = playwright.chromium.launch(**options)
             try:
-                page = browser.new_page()
-                guard_browser(page)
+                page = browser.new_page(
+                    java_script_enabled=False, service_workers="block"
+                )
+                # These endpoints return bytes, not an interactive website.
+                # Reject redirects and page assets rather than spending the
+                # third transport attempt on unrelated official requests.
+                guard_browser(page, document_url=url)
                 seconds = remaining()
                 timeout_ms = timeout * 1000
                 if seconds is not None:
                     timeout_ms = max(1, min(timeout_ms, int(seconds * 1000)))
-                response = page.goto(url, wait_until="load", timeout=timeout_ms)
+                response = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
                 status = None if response is None else response.status
                 if status != 200:
                     raise RuntimeError(f"Official browser request failed: {url} (HTTP {status})")

@@ -1,7 +1,10 @@
 import json
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
 import tempfile
+from threading import Thread
 import unittest
 from unittest.mock import Mock, patch
 
@@ -74,8 +77,11 @@ class OfficialBrowserFallbackTests(unittest.TestCase):
         self.assertEqual(rows[0]["close_today_fee"], 0)
         self.assertEqual(self.fetch(), rows)
         self.assertEqual(self.http.call_count, 2)
-        self.page.goto.assert_called_once_with(URL, wait_until="load", timeout=15000)
-        self.guard.assert_called_once_with(self.page)
+        self.page.goto.assert_called_once_with(URL, wait_until="domcontentloaded", timeout=15000)
+        self.guard.assert_called_once_with(self.page, document_url=URL)
+        self.browser.new_page.assert_called_once_with(
+            java_script_enabled=False, service_workers="block"
+        )
         self.browser.close.assert_called_once()
         wrapper = json.loads(
             (Path(self.temp.name) / "shfe/2026-11-03.json").read_text()
@@ -213,7 +219,7 @@ class OfficialBrowserFallbackTests(unittest.TestCase):
     def test_navigation_timeout_is_limited_by_remaining_window(self):
         self.remaining.return_value = 0.5
         self.fetch()
-        self.page.goto.assert_called_once_with(URL, wait_until="load", timeout=500)
+        self.page.goto.assert_called_once_with(URL, wait_until="domcontentloaded", timeout=500)
 
     def test_window_closure_during_driver_startup_prevents_chrome_launch(self):
         self.remaining.side_effect = [None, access.AccessWindowClosed("closed")]
@@ -221,6 +227,120 @@ class OfficialBrowserFallbackTests(unittest.TestCase):
             self.fetch()
         self.playwright.chromium.launch.assert_not_called()
         self.page.goto.assert_not_called()
+
+
+class OfficialDocumentGuardTests(unittest.TestCase):
+    def setUp(self):
+        self.page = Mock()
+        self.session = self.page.context.new_cdp_session.return_value
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def install(self):
+        access.guard_browser(self.page, document_url=URL)
+        return self.session.on.call_args.args[1]
+
+    def event(self, url=URL, resource_type="Document", method="GET"):
+        return {
+            "requestId": "one",
+            "resourceType": resource_type,
+            "request": {"url": url, "method": method},
+        }
+
+    def test_only_one_target_document_is_sent_without_a_deadline(self):
+        paused = self.install()
+        paused(self.event())
+        paused(self.event())
+        commands = [call.args[0] for call in self.session.send.call_args_list]
+        self.assertEqual(commands, ["Fetch.enable", "Fetch.continueRequest", "Fetch.failRequest"])
+
+    def test_assets_redirects_and_other_methods_are_blocked(self):
+        paused = self.install()
+        for event in (
+            self.event(URL + "/favicon.ico", "Other"),
+            self.event(resource_type="Script"),
+            self.event("https://www.shfe.com.cn/redirect.dat"),
+            self.event("https://example.com/redirect.dat"),
+            self.event(method="POST"),
+        ):
+            paused(event)
+        commands = [call.args[0] for call in self.session.send.call_args_list]
+        self.assertNotIn("Fetch.continueRequest", commands)
+        self.assertEqual(commands.count("Fetch.failRequest"), 5)
+
+    def test_cutoff_still_blocks_the_target_document(self):
+        paused = self.install()
+        with patch.object(access, "remaining", side_effect=access.AccessWindowClosed("closed")):
+            paused(self.event())
+        self.assertEqual(self.session.send.call_args.args[0], "Fetch.failRequest")
+
+    def test_default_dce_guard_keeps_its_multi_resource_behavior(self):
+        with patch.dict(os.environ, {"FUTURE_META_ACCESS_DEADLINE": "2026-11-03T20:00:00+08:00"}), patch.object(access, "remaining", return_value=30):
+            access.guard_browser(self.page)
+            paused = self.session.on.call_args.args[1]
+            paused(self.event("http://www.dce.com.cn/challenge.js", "Script"))
+        self.assertEqual(self.session.send.call_args.args[0], "Fetch.continueRequest")
+
+    def test_page_close_cancels_pending_interception_without_hiding_active_errors(self):
+        from playwright.sync_api import Error
+
+        paused = self.install()
+        for closed in (True, False):
+            with self.subTest(closed=closed):
+                self.page.is_closed.return_value = closed
+                self.session.send.side_effect = Error("Target page has been closed")
+                if closed:
+                    paused(self.event(resource_type="Other"))
+                else:
+                    with self.assertRaises(Error):
+                        paused(self.event(resource_type="Other"))
+
+
+class StaticDocumentChromeIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(collector.get_chrome_path(), "Local Chrome is not installed")
+    def test_error_document_cannot_open_targets_or_load_resources(self):
+        body = b'''<!doctype html><script>
+            window.open('/popup');
+            navigator.serviceWorker.register('/service-worker.js');
+            fetch('/extra');
+            </script><img src="/image.png"><link rel="icon" href="/favicon.ico">'''
+        received = []
+
+        class Fixture(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/document"
+
+            def check_fixture(value):
+                if value != url:
+                    raise AssertionError("Integration test attempted a non-fixture URL")
+
+            with (
+                patch.object(collector.RawStore, "check_url", side_effect=check_fixture),
+                patch.object(collector, "fetch_with_retry", side_effect=RuntimeError("simulated local HTTP failure")),
+                patch.dict(os.environ, {}, clear=True),
+            ):
+                actual = collector.fetch_with_browser_fallback(url)
+            self.assertEqual(actual, body)
+            self.assertEqual(received, ["/document"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":

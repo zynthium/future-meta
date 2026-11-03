@@ -34,7 +34,7 @@ class OfficialPostTransportTests(unittest.TestCase):
                 patch.object(collector, 'get_chrome_path', return_value=None), \
                 patch('playwright.sync_api.sync_playwright', return_value=manager):
             self.assertEqual(specs.fetch_cbi_body(url), body)
-        browser.new_page.return_value.goto.assert_called_once_with(url, wait_until='load', timeout=30000)
+        browser.new_page.return_value.goto.assert_called_once_with(url, wait_until='domcontentloaded', timeout=30000)
         browser.close.assert_called_once()
 
     def test_cbi_browser_failure_closes_browser_and_does_not_return_error_body(self):
