@@ -12,12 +12,13 @@
   "last_attempt": {
     "slot": "2026-11-11:evening",
     "started_at": "2026-11-11T10:38:04.246639+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-11T10:41:32.610186+00:00",
+    "status": "failed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/43005225480",
     "run_id": "43005225480",
     "workflow_attempt": "1",
-    "source_commit": "f9fb57c92ae6aac47c51b90104704df12cea8dc1"
+    "source_commit": "f9fb57c92ae6aac47c51b90104704df12cea8dc1",
+    "error": "RuntimeError: Official collection incomplete: TransportUnavailable: Official transport unavailable on ubuntu-latest: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261111.dat; ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))"
   },
   "last_success_at": "2026-11-03T15:32:01.555573+00:00",
   "current_release": "data-20261103T152948Z-d2a27e77f654",
@@ -581,5 +582,58 @@
       ]
     }
   },
-  "retired_releases": []
+  "retired_releases": [],
+  "transport_health": {
+    "version": 1,
+    "buckets": [
+      {
+        "host": "czce.com.cn",
+        "runner": "ubuntu-latest",
+        "client": "requests",
+        "success": 5,
+        "failure": 0,
+        "duration_seconds": 10.419889
+      },
+      {
+        "host": "gfex.com.cn",
+        "runner": "ubuntu-latest",
+        "client": "requests",
+        "success": 5,
+        "failure": 0,
+        "duration_seconds": 8.815847
+      },
+      {
+        "host": "ine.cn",
+        "runner": "ubuntu-latest",
+        "client": "curl_cffi",
+        "success": 3,
+        "failure": 0,
+        "duration_seconds": 3.624715
+      },
+      {
+        "host": "ine.cn",
+        "runner": "ubuntu-latest",
+        "client": "requests",
+        "success": 2,
+        "failure": 2,
+        "duration_seconds": 11.354008
+      },
+      {
+        "host": "shfe.com.cn",
+        "runner": "ubuntu-latest",
+        "client": "curl_cffi",
+        "success": 4,
+        "failure": 1,
+        "duration_seconds": 15.632156
+      },
+      {
+        "host": "shfe.com.cn",
+        "runner": "ubuntu-latest",
+        "client": "requests",
+        "success": 6,
+        "failure": 3,
+        "duration_seconds": 24.306664
+      }
+    ]
+  }
 }
