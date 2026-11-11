@@ -572,7 +572,7 @@ def fetch_shfe_ine(date_str: str, exchange: str, store: RawStore) -> List[dict]:
 
     fees_url = f"https://www.shfe.com.cn/data/busiparamdata/future/Settlement{clean_date}.dat"
     fee_data = json.loads(store.get("SHFE", date_str, fees_url, browser_fallback=True))
-    data = fee_data if is_shfe else json.loads(store.get("INE", date_str, url, margin=True))
+    data = fee_data if is_shfe else json.loads(store.get("INE", date_str, url, margin=True, browser_fallback=True))
     if str(data.get("report_date", "")).strip() != clean_date:
         raise ValueError(f"Official margin report_date mismatch: {exchange} {date_str}")
     if str(fee_data.get("report_date", "")).strip() != clean_date:
