@@ -12,12 +12,13 @@
   "last_attempt": {
     "slot": "2026-11-11:evening",
     "started_at": "2026-11-11T11:16:56.968138+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-11T11:26:11.092147+00:00",
+    "status": "failed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/43010612568",
     "run_id": "43010612568",
     "workflow_attempt": "1",
-    "source_commit": "321865a59b98135e001487a6e9eee449ca83e33d"
+    "source_commit": "321865a59b98135e001487a6e9eee449ca83e33d",
+    "error": "RuntimeError: Official collection incomplete: TransportUnavailable: Official transport unavailable on ubuntu-latest: https://www.ine.cn/data/tradedata/future/dailydata/js20261106.dat; ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer')); JSONDecodeError: Expecting value: line 1 column 1 (char 0)"
   },
   "last_success_at": "2026-11-03T15:32:01.555573+00:00",
   "current_release": "data-20261103T152948Z-d2a27e77f654",
@@ -587,51 +588,107 @@
     "buckets": [
       {
         "host": "czce.com.cn",
+        "runner": "macos-15-intel",
+        "client": "requests",
+        "success": 3,
+        "failure": 0,
+        "duration_seconds": 4.357783
+      },
+      {
+        "host": "czce.com.cn",
         "runner": "ubuntu-latest",
         "client": "requests",
-        "success": 5,
+        "success": 7,
         "failure": 0,
-        "duration_seconds": 10.419889
+        "duration_seconds": 17.095958
+      },
+      {
+        "host": "gfex.com.cn",
+        "runner": "macos-15-intel",
+        "client": "chrome",
+        "success": 1,
+        "failure": 0,
+        "duration_seconds": 3.743607
+      },
+      {
+        "host": "gfex.com.cn",
+        "runner": "macos-15-intel",
+        "client": "curl_cffi",
+        "success": 0,
+        "failure": 1,
+        "duration_seconds": 0.435176
+      },
+      {
+        "host": "gfex.com.cn",
+        "runner": "macos-15-intel",
+        "client": "requests",
+        "success": 2,
+        "failure": 1,
+        "duration_seconds": 25.337387
       },
       {
         "host": "gfex.com.cn",
         "runner": "ubuntu-latest",
         "client": "requests",
-        "success": 5,
+        "success": 7,
         "failure": 0,
-        "duration_seconds": 8.815847
+        "duration_seconds": 13.86154
       },
       {
         "host": "ine.cn",
-        "runner": "ubuntu-latest",
-        "client": "curl_cffi",
-        "success": 3,
+        "runner": "macos-15-intel",
+        "client": "chrome",
+        "success": 1,
         "failure": 0,
-        "duration_seconds": 3.624715
+        "duration_seconds": 9.125327
       },
       {
         "host": "ine.cn",
-        "runner": "ubuntu-latest",
+        "runner": "macos-15-intel",
         "client": "requests",
         "success": 2,
-        "failure": 2,
-        "duration_seconds": 11.354008
+        "failure": 0,
+        "duration_seconds": 1.318822
       },
       {
-        "host": "shfe.com.cn",
+        "host": "ine.cn",
         "runner": "ubuntu-latest",
         "client": "curl_cffi",
         "success": 4,
-        "failure": 1,
-        "duration_seconds": 15.632156
+        "failure": 2,
+        "duration_seconds": 13.968628
+      },
+      {
+        "host": "ine.cn",
+        "runner": "ubuntu-latest",
+        "client": "requests",
+        "success": 3,
+        "failure": 3,
+        "duration_seconds": 16.922865
+      },
+      {
+        "host": "shfe.com.cn",
+        "runner": "macos-15-intel",
+        "client": "requests",
+        "success": 4,
+        "failure": 0,
+        "duration_seconds": 2.635127
+      },
+      {
+        "host": "shfe.com.cn",
+        "runner": "ubuntu-latest",
+        "client": "curl_cffi",
+        "success": 5,
+        "failure": 3,
+        "duration_seconds": 35.800394
       },
       {
         "host": "shfe.com.cn",
         "runner": "ubuntu-latest",
         "client": "requests",
-        "success": 6,
+        "success": 10,
         "failure": 3,
-        "duration_seconds": 24.306664
+        "duration_seconds": 33.473076
       }
     ]
   }
