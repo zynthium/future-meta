@@ -10,15 +10,14 @@
     "SHFE": "2026-11-03"
   },
   "last_attempt": {
-    "slot": "2026-11-11:evening-failed",
-    "started_at": "2026-11-11T10:38:04.246639+00:00",
-    "finished_at": "2026-11-11T10:41:32.610186+00:00",
-    "status": "failed",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/43005225480",
-    "run_id": "43005225480",
+    "slot": "2026-11-11:evening",
+    "started_at": "2026-11-11T11:16:56.968138+00:00",
+    "finished_at": null,
+    "status": "running",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/43010612568",
+    "run_id": "43010612568",
     "workflow_attempt": "1",
-    "source_commit": "f9fb57c92ae6aac47c51b90104704df12cea8dc1",
-    "error": "RuntimeError: Official collection incomplete: TransportUnavailable: Official transport unavailable on ubuntu-latest: https://www.shfe.com.cn/data/busiparamdata/future/Settlement20261111.dat; ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))"
+    "source_commit": "321865a59b98135e001487a6e9eee449ca83e33d"
   },
   "last_success_at": "2026-11-03T15:32:01.555573+00:00",
   "current_release": "data-20261103T152948Z-d2a27e77f654",
