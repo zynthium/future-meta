@@ -56,7 +56,7 @@ jobs:
           elif [[ "$HEALTH_ONLY" == true ]]; then
             args+=(--health-only)
           fi
-          python scripts/update_admission.py --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT" "${args[@]}"
+          python scripts/update_admission.py --repo "$GITHUB_REPOSITORY" --github-output "$GITHUB_OUTPUT" ${args[@]+"${args[@]}"}
       - name: Prepare one logical attempt and choose runners from bounded health
         id: prepare
         if: steps.slot.outputs.should_update == 'true'
@@ -68,7 +68,7 @@ jobs:
           python -m pip install requests
           args=()
           if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
-          python scripts/update_official.py --phase prepare --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+          python scripts/update_official.py --phase prepare --repo "$GITHUB_REPOSITORY" --work-dir data/official-update ${args[@]+"${args[@]}"}
       - name: Initial handoff for this workflow attempt only
         if: always() && steps.prepare.outputs.prepared == 'true'
         uses: actions/upload-artifact@v4
@@ -113,7 +113,7 @@ jobs:
           python -m pip install requests playwright curl_cffi
           args=()
           if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
-          python scripts/update_official.py --phase check --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+          python scripts/update_official.py --phase check --repo "$GITHUB_REPOSITORY" --work-dir data/official-update ${args[@]+"${args[@]}"}
       - uses: dtolnay/rust-toolchain@stable
         if: inputs.offline_smoke != true
       - uses: Swatinem/rust-cache@v2
@@ -131,7 +131,7 @@ jobs:
           if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
           runner=(python -u)
           if [[ "$RUNNER_OS" == Linux && "$OFFLINE_SMOKE" != true ]]; then runner=(xvfb-run -a python -u); fi
-          "${runner[@]}" scripts/update_official.py --phase primary --runner "$RUNNER_LABEL" --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+          "${runner[@]}" scripts/update_official.py --phase primary --runner "$RUNNER_LABEL" --repo "$GITHUB_REPOSITORY" --work-dir data/official-update ${args[@]+"${args[@]}"}
       - name: Temporary originals and consumed budgets, deleted at workflow end
         id: handoff
         if: always() && steps.download.outcome == 'success'
@@ -184,7 +184,7 @@ jobs:
           python -m pip install requests playwright curl_cffi
           args=()
           if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
-          python scripts/update_official.py --phase check --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+          python scripts/update_official.py --phase check --repo "$GITHUB_REPOSITORY" --work-dir data/official-update ${args[@]+"${args[@]}"}
       - uses: dtolnay/rust-toolchain@stable
         if: inputs.offline_smoke != true
       - uses: Swatinem/rust-cache@v2
@@ -202,7 +202,7 @@ jobs:
           if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
           runner=(python -u)
           if [[ "$RUNNER_OS" == Linux && "$OFFLINE_SMOKE" != true ]]; then runner=(xvfb-run -a python -u); fi
-          "${runner[@]}" scripts/update_official.py --phase backup --runner "$RUNNER_LABEL" --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}"
+          "${runner[@]}" scripts/update_official.py --phase backup --runner "$RUNNER_LABEL" --repo "$GITHUB_REPOSITORY" --work-dir data/official-update ${args[@]+"${args[@]}"}
       - name: Temporary originals and consumed budgets, deleted at workflow end
         id: handoff
         if: always() && steps.download.outcome == 'success'
@@ -254,7 +254,7 @@ jobs:
           args=(--phase finalize)
           if [[ "$REPUBLISH_CURRENT" == true ]]; then args=(--republish-current); fi
           if [[ "$OFFLINE_SMOKE" == true ]]; then args+=(--offline-smoke); fi
-          python -u scripts/update_official.py --repo "$GITHUB_REPOSITORY" --work-dir data/official-update "${args[@]}" 2>&1 | tee data/update.log
+          python -u scripts/update_official.py --repo "$GITHUB_REPOSITORY" --work-dir data/official-update ${args[@]+"${args[@]}"} 2>&1 | tee data/update.log
       - name: Retain summary diagnostics only
         if: always()
         uses: actions/upload-artifact@v4
