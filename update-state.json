@@ -554,9 +554,7 @@
   },
   "last_success_at": "2026-11-12T11:27:07.589090+00:00",
   "previous_release": "data-20261103T152948Z-d2a27e77f654",
-  "retired_releases": [
-    "data-20261101T035357Z-bc62c3688e85"
-  ],
+  "retired_releases": [],
   "schema": 1,
   "source_versions": {
     "cffex_snapshot": {
