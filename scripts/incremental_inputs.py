@@ -171,6 +171,17 @@ def new_lifecycle(rules, symbol, observed):
         shifted = year * 12 + month - 1 - offset
         prior_y, prior_m = shifted // 12, shifted % 12 + 1
     listing = next_day(rules, expiry(rules, exchange, product, prior_y, prior_m))
+    launch_dates = [
+        (s.get("valid_from_trade_date") or s["valid_from"])[:10]
+        for s in rules.get("specifications", [])
+        if s.get("exchange") == exchange
+        and s.get("product") == product
+        and not s.get("full_symbol")
+    ]
+    launch = min(launch_dates) if launch_dates else None
+    if launch:
+        if listing < launch or (launch <= observed < listing):
+            listing = launch
     # Contradiction is an error; never clamp an inferred date to the observation.
     if not listing <= observed <= expires:
         raise ValueError(

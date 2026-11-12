@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "approved_through": "2026-10-30",
+  "approved_through": "2026-11-12",
   "specifications": [
     {
       "exchange": "CFFEX",
@@ -1565,6 +1565,23 @@
       "delivery_month_to": "",
       "source_url": "http://www.dce.com.cn/dce/content/2025/jbxyjjqhhyygz/18624247.html",
       "source_sha256": "87a648745c926e5eacc3b586eadbe9a947fc8f542027cb5eeee0fffecb455f8c"
+    },
+    {
+      "exchange": "CZCE",
+      "product": "SO",
+      "full_symbol": "",
+      "valid_from": "2026-11-12",
+      "valid_to": "",
+      "lot_size": 20.0,
+      "tick_size": 1.0,
+      "valid_from_phase": "date",
+      "valid_to_phase": "date",
+      "valid_from_trade_date": "",
+      "valid_to_trade_date": "",
+      "delivery_month_from": "",
+      "delivery_month_to": "",
+      "source_url": "https://www.czce.com.cn/cn/content_file/gyjys/jysdt/ggytz/2026/11/1faea389f0db4f558fb442fa2aa7f4d8.docx",
+      "source_sha256": "d52ec976327c15750127deaa35263b55da3f76c38b48b08537d593eef7090a4c"
     }
   ],
   "sources": [
@@ -1943,6 +1960,11 @@
     {
       "url": "http://www.dce.com.cn/dce/content/2025/ywggytz/18623631.html",
       "sha256": "9594a08240078d3f0f25b4ac653eadbee9e4236f4c1bf35569d7912381474c80"
+    },
+    {
+      "exchange": "CZCE",
+      "url": "https://www.czce.com.cn/cn/content_file/gyjys/jysdt/ggytz/2026/11/1faea389f0db4f558fb442fa2aa7f4d8.docx",
+      "sha256": "d52ec976327c15750127deaa35263b55da3f76c38b48b08537d593eef7090a4c"
     }
   ],
   "lifecycle_calendars": {

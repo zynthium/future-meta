@@ -82,6 +82,36 @@ class InputTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "specification"):
             inputs.specification(rules, "DCE.new2701", "2026-11-02")
 
+    def test_launch_batch_lifecycle_contracts_anchor_to_product_launch_date(self):
+        rules = {
+            "specifications": [
+                {
+                    "exchange": "CZCE",
+                    "product": "SO",
+                    "full_symbol": "",
+                    "valid_from": "2026-11-12",
+                    "valid_to": "",
+                    "lot_size": 20.0,
+                    "tick_size": 1.0,
+                    "valid_from_phase": "date",
+                    "valid_to_phase": "date",
+                    "valid_from_trade_date": "",
+                    "valid_to_trade_date": "",
+                }
+            ],
+            "lifecycle_calendars": {
+                "2026": {"closed_weekdays": []},
+                "2027": {"closed_weekdays": [], "assumption": {"test": True}},
+            },
+        }
+        # SO705: rolling date would be in May 2026, which predates product launch. Anchors to launch date.
+        listing_705, expires_705, _ = inputs.new_lifecycle(rules, "CZCE.SO705", "2026-11-12")
+        self.assertEqual(listing_705, "2026-11-12")
+        # SO711: rolling date would be 2026-11-16 (after launch date). Anchors to launch date.
+        listing_711, expires_711, _ = inputs.new_lifecycle(rules, "CZCE.SO711", "2026-11-12")
+        self.assertEqual(listing_711, "2026-11-12")
+        self.assertTrue(listing_711 <= "2026-11-12" <= expires_711)
+
     def test_source_document_change_cannot_silently_keep_approved_rule(self):
         response = type(
             "Response",
