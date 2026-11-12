@@ -10,7 +10,7 @@
     "SHFE": "2026-11-03"
   },
   "last_attempt": {
-    "slot": "2026-11-12:evening",
+    "slot": "2026-11-12:evening-failed",
     "started_at": "2026-11-12T10:36:14.026345+00:00",
     "finished_at": "2026-11-12T10:42:27.331560+00:00",
     "status": "failed",
