@@ -10,15 +10,14 @@
     "SHFE": "2026-11-03"
   },
   "last_attempt": {
-    "slot": "2026-11-12:evening-failed",
-    "started_at": "2026-11-12T10:36:14.026345+00:00",
-    "finished_at": "2026-11-12T10:42:27.331560+00:00",
-    "status": "failed",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/43201779359",
-    "run_id": "43201779359",
+    "slot": "2026-11-12:evening",
+    "started_at": "2026-11-12T11:20:07.985863+00:00",
+    "finished_at": null,
+    "status": "running",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/43208219199",
+    "run_id": "43208219199",
     "workflow_attempt": "1",
-    "source_commit": "a11afe993b2163c17063b6e28a9edf3dfff2786a",
-    "error": "RuntimeError: Official collection incomplete: ValueError: Missing/conflicting approved specification: CZCE.SO705 2026-11-12"
+    "source_commit": "54b98686fd50e8eef25d99272282e66e7d2919f5"
   },
   "last_success_at": "2026-11-03T15:32:01.555573+00:00",
   "current_release": "data-20261103T152948Z-d2a27e77f654",
