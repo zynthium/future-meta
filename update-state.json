@@ -1,27 +1,14 @@
 {
-  "schema": 1,
-  "archive_sha256": "d2a27e77f654e91c8e829a9ef11a0eaf20658581bc0ada79c53a9fd33225562c",
+  "archive_sha256": "4e204ddc5ea9709fffeed8711ec3fd5ca0f5555dd5ef4f88fa6279f9560d78d5",
   "checked_through": {
-    "CFFEX": "2026-11-03",
-    "CZCE": "2026-11-03",
-    "DCE": "2026-11-03",
-    "GFEX": "2026-11-03",
-    "INE": "2026-11-03",
-    "SHFE": "2026-11-03"
+    "CFFEX": "2026-11-12",
+    "CZCE": "2026-11-12",
+    "DCE": "2026-11-12",
+    "GFEX": "2026-11-12",
+    "INE": "2026-11-12",
+    "SHFE": "2026-11-12"
   },
-  "last_attempt": {
-    "slot": "2026-11-12:evening",
-    "started_at": "2026-11-12T11:20:07.985863+00:00",
-    "finished_at": null,
-    "status": "running",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/43208219199",
-    "run_id": "43208219199",
-    "workflow_attempt": "1",
-    "source_commit": "54b98686fd50e8eef25d99272282e66e7d2919f5"
-  },
-  "last_success_at": "2026-11-03T15:32:01.555573+00:00",
-  "current_release": "data-20261103T152948Z-d2a27e77f654",
-  "previous_release": "data-20261101T035357Z-bc62c3688e85",
+  "current_release": "data-20261112T112007Z-4e204ddc5ea9",
   "exceptions": {
     "assumed_expiry": {
       "CFFEX.IC2701": "calendar-c81a8f124ba4",
@@ -213,6 +200,10 @@
       "CZCE.SM708": "calendar-c81a8f124ba4",
       "CZCE.SM709": "calendar-c81a8f124ba4",
       "CZCE.SM710": "calendar-c81a8f124ba4",
+      "CZCE.SO705": "calendar-c81a8f124ba4",
+      "CZCE.SO707": "calendar-c81a8f124ba4",
+      "CZCE.SO709": "calendar-c81a8f124ba4",
+      "CZCE.SO711": "calendar-c81a8f124ba4",
       "CZCE.SR701": "calendar-c81a8f124ba4",
       "CZCE.SR703": "calendar-c81a8f124ba4",
       "CZCE.SR705": "calendar-c81a8f124ba4",
@@ -253,6 +244,7 @@
       "CZCE.ZC708": "calendar-c81a8f124ba4",
       "CZCE.ZC709": "calendar-c81a8f124ba4",
       "CZCE.ZC710": "calendar-c81a8f124ba4",
+      "CZCE.ZC711": "calendar-c81a8f124ba4",
       "DCE.a2701": "calendar-c81a8f124ba4",
       "DCE.a2703": "calendar-c81a8f124ba4",
       "DCE.a2705": "calendar-c81a8f124ba4",
@@ -365,9 +357,13 @@
       "DCE.jm2710": "calendar-c81a8f124ba4",
       "DCE.l2701": "calendar-c81a8f124ba4",
       "DCE.l2702": "calendar-c81a8f124ba4",
+      "DCE.l2702F": "calendar-c81a8f124ba4",
       "DCE.l2703": "calendar-c81a8f124ba4",
+      "DCE.l2703F": "calendar-c81a8f124ba4",
       "DCE.l2704": "calendar-c81a8f124ba4",
+      "DCE.l2704F": "calendar-c81a8f124ba4",
       "DCE.l2705": "calendar-c81a8f124ba4",
+      "DCE.l2705F": "calendar-c81a8f124ba4",
       "DCE.l2706": "calendar-c81a8f124ba4",
       "DCE.l2707": "calendar-c81a8f124ba4",
       "DCE.l2708": "calendar-c81a8f124ba4",
@@ -411,9 +407,13 @@
       "DCE.pg2710": "calendar-c81a8f124ba4",
       "DCE.pp2701": "calendar-c81a8f124ba4",
       "DCE.pp2702": "calendar-c81a8f124ba4",
+      "DCE.pp2702F": "calendar-c81a8f124ba4",
       "DCE.pp2703": "calendar-c81a8f124ba4",
+      "DCE.pp2703F": "calendar-c81a8f124ba4",
       "DCE.pp2704": "calendar-c81a8f124ba4",
+      "DCE.pp2704F": "calendar-c81a8f124ba4",
       "DCE.pp2705": "calendar-c81a8f124ba4",
+      "DCE.pp2705F": "calendar-c81a8f124ba4",
       "DCE.pp2706": "calendar-c81a8f124ba4",
       "DCE.pp2707": "calendar-c81a8f124ba4",
       "DCE.pp2708": "calendar-c81a8f124ba4",
@@ -431,9 +431,13 @@
       "DCE.rr2710": "calendar-c81a8f124ba4",
       "DCE.v2701": "calendar-c81a8f124ba4",
       "DCE.v2702": "calendar-c81a8f124ba4",
+      "DCE.v2702F": "calendar-c81a8f124ba4",
       "DCE.v2703": "calendar-c81a8f124ba4",
+      "DCE.v2703F": "calendar-c81a8f124ba4",
       "DCE.v2704": "calendar-c81a8f124ba4",
+      "DCE.v2704F": "calendar-c81a8f124ba4",
       "DCE.v2705": "calendar-c81a8f124ba4",
+      "DCE.v2705F": "calendar-c81a8f124ba4",
       "DCE.v2706": "calendar-c81a8f124ba4",
       "DCE.v2707": "calendar-c81a8f124ba4",
       "DCE.v2708": "calendar-c81a8f124ba4",
@@ -484,24 +488,10 @@
       "GFEX.si2707": "calendar-c81a8f124ba4",
       "GFEX.si2708": "calendar-c81a8f124ba4",
       "GFEX.si2709": "calendar-c81a8f124ba4",
-      "GFEX.si2710": "calendar-c81a8f124ba4",
-      "DCE.l2702F": "calendar-c81a8f124ba4",
-      "DCE.l2703F": "calendar-c81a8f124ba4",
-      "DCE.l2704F": "calendar-c81a8f124ba4",
-      "DCE.pp2702F": "calendar-c81a8f124ba4",
-      "DCE.pp2703F": "calendar-c81a8f124ba4",
-      "DCE.pp2704F": "calendar-c81a8f124ba4",
-      "DCE.v2702F": "calendar-c81a8f124ba4",
-      "DCE.v2703F": "calendar-c81a8f124ba4",
-      "DCE.v2704F": "calendar-c81a8f124ba4",
-      "DCE.l2705F": "calendar-c81a8f124ba4",
-      "DCE.pp2705F": "calendar-c81a8f124ba4",
-      "DCE.v2705F": "calendar-c81a8f124ba4"
+      "GFEX.si2710": "calendar-c81a8f124ba4"
     },
     "assumptions": {
       "calendar-c81a8f124ba4": {
-        "source": "user_provided_holiday_assumptions",
-        "year": 2027,
         "closed_date_ranges": [
           [
             "2027-01-01",
@@ -532,7 +522,9 @@
             "2027-10-07"
           ]
         ],
-        "weekends_closed": true
+        "source": "user_provided_holiday_assumptions",
+        "weekends_closed": true,
+        "year": 2027
       }
     },
     "without_observations": [
@@ -550,38 +542,53 @@
       "CFFEX.TS2709"
     ]
   },
+  "last_attempt": {
+    "finished_at": "2026-11-12T11:27:07.589090+00:00",
+    "run_id": "43208219199",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/43208219199",
+    "slot": "2026-11-12:evening",
+    "source_commit": "54b98686fd50e8eef25d99272282e66e7d2919f5",
+    "started_at": "2026-11-12T11:20:07.985863+00:00",
+    "status": "changed",
+    "workflow_attempt": "1"
+  },
+  "last_success_at": "2026-11-12T11:27:07.589090+00:00",
+  "previous_release": "data-20261103T152948Z-d2a27e77f654",
+  "retired_releases": [
+    "data-20261101T035357Z-bc62c3688e85"
+  ],
+  "schema": 1,
   "source_versions": {
     "cffex_snapshot": {
       "date": "2026-10-19",
-      "url": "http://www.cffex.com.cn/sj/jscs/202610/19/20261019_1.csv",
-      "sha256": "6e5d46e181536f17f130e14ecf745ea0c0d17ce39d2ddad49fc814a60f03b470"
-    },
-    "specifications": {
-      "mode": "approved_rules",
-      "approved_through": "2026-10-30",
-      "rules_sha256": "323bedcf3652b5f61de8c23ddc182ab4b5993b4296e9881bde9f6fb265ac42b7",
-      "live_check_performed": false
-    },
-    "monthly_average_backfill": {
-      "from": "2025-10-29",
-      "through": "2026-10-30",
-      "contracts": 45,
-      "observations": 4176,
-      "fee_versions": 206,
-      "minimum_sdk": "0.7.0",
-      "metadata_verified_at": "2026-11-01T04:03:22.218809+00:00"
+      "sha256": "6e5d46e181536f17f130e14ecf745ea0c0d17ce39d2ddad49fc814a60f03b470",
+      "url": "http://www.cffex.com.cn/sj/jscs/202610/19/20261019_1.csv"
     },
     "contract_base_info": {
-      "report_date": "2026-11-03",
+      "report_date": "2026-11-12",
       "sources": [
         {
-          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261103.dat",
-          "sha256": "71ba90e2836fc004b1b31ea604a213c859ac1be18069946063d48154c85939ae"
+          "sha256": "33fad2c31297f5910e8c3cd4a201617d4bc6a4dc06eec7b771d0cfc651b2d423",
+          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261112.dat"
         }
       ]
+    },
+    "monthly_average_backfill": {
+      "contracts": 45,
+      "fee_versions": 206,
+      "from": "2025-10-29",
+      "metadata_verified_at": "2026-11-01T04:03:22.218809+00:00",
+      "minimum_sdk": "0.7.0",
+      "observations": 4176,
+      "through": "2026-10-30"
+    },
+    "specifications": {
+      "approved_through": "2026-11-12",
+      "live_check_performed": false,
+      "mode": "approved_rules",
+      "rules_sha256": "96f55cd268412d9542503316ff88b782810784b7cf41b71e3ace05c74eba05c8"
     }
   },
-  "retired_releases": [],
   "transport_health": {
     "version": 1,
     "buckets": [
@@ -589,17 +596,17 @@
         "host": "cffex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 2,
+        "success": 4,
         "failure": 0,
-        "duration_seconds": 0.667332
+        "duration_seconds": 1.50181
       },
       {
         "host": "czce.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 10,
+        "success": 17,
         "failure": 0,
-        "duration_seconds": 10.417707
+        "duration_seconds": 22.42719
       },
       {
         "host": "czce.com.cn",
@@ -613,9 +620,9 @@
         "host": "dce.com.cn",
         "runner": "macos-15-intel",
         "client": "chrome",
-        "success": 8,
+        "success": 16,
         "failure": 0,
-        "duration_seconds": 36.050128
+        "duration_seconds": 82.189622
       },
       {
         "host": "gfex.com.cn",
@@ -637,9 +644,9 @@
         "host": "gfex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 9,
+        "success": 16,
         "failure": 1,
-        "duration_seconds": 53.893817
+        "duration_seconds": 65.203851
       },
       {
         "host": "gfex.com.cn",
@@ -661,9 +668,9 @@
         "host": "ine.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 9,
+        "success": 16,
         "failure": 0,
-        "duration_seconds": 5.794421
+        "duration_seconds": 10.704603
       },
       {
         "host": "ine.cn",
@@ -685,9 +692,9 @@
         "host": "shfe.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 18,
+        "success": 32,
         "failure": 0,
-        "duration_seconds": 11.902049
+        "duration_seconds": 20.90291
       },
       {
         "host": "shfe.com.cn",
