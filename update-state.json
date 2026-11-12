@@ -12,12 +12,13 @@
   "last_attempt": {
     "slot": "2026-11-12:evening",
     "started_at": "2026-11-12T10:36:14.026345+00:00",
-    "finished_at": null,
-    "status": "running",
+    "finished_at": "2026-11-12T10:42:27.331560+00:00",
+    "status": "failed",
     "run_url": "https://github.com/zynthium/future-meta/actions/runs/43201779359",
     "run_id": "43201779359",
     "workflow_attempt": "1",
-    "source_commit": "a11afe993b2163c17063b6e28a9edf3dfff2786a"
+    "source_commit": "a11afe993b2163c17063b6e28a9edf3dfff2786a",
+    "error": "RuntimeError: Official collection incomplete: ValueError: Missing/conflicting approved specification: CZCE.SO705 2026-11-12"
   },
   "last_success_at": "2026-11-03T15:32:01.555573+00:00",
   "current_release": "data-20261103T152948Z-d2a27e77f654",
@@ -586,12 +587,20 @@
     "version": 1,
     "buckets": [
       {
+        "host": "cffex.com.cn",
+        "runner": "macos-15-intel",
+        "client": "requests",
+        "success": 2,
+        "failure": 0,
+        "duration_seconds": 0.667332
+      },
+      {
         "host": "czce.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 3,
+        "success": 10,
         "failure": 0,
-        "duration_seconds": 4.357783
+        "duration_seconds": 10.417707
       },
       {
         "host": "czce.com.cn",
@@ -600,6 +609,14 @@
         "success": 7,
         "failure": 0,
         "duration_seconds": 17.095958
+      },
+      {
+        "host": "dce.com.cn",
+        "runner": "macos-15-intel",
+        "client": "chrome",
+        "success": 8,
+        "failure": 0,
+        "duration_seconds": 36.050128
       },
       {
         "host": "gfex.com.cn",
@@ -621,9 +638,9 @@
         "host": "gfex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 2,
+        "success": 9,
         "failure": 1,
-        "duration_seconds": 25.337387
+        "duration_seconds": 53.893817
       },
       {
         "host": "gfex.com.cn",
@@ -645,9 +662,9 @@
         "host": "ine.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 2,
+        "success": 9,
         "failure": 0,
-        "duration_seconds": 1.318822
+        "duration_seconds": 5.794421
       },
       {
         "host": "ine.cn",
@@ -669,9 +686,9 @@
         "host": "shfe.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 4,
+        "success": 18,
         "failure": 0,
-        "duration_seconds": 2.635127
+        "duration_seconds": 11.902049
       },
       {
         "host": "shfe.com.cn",
