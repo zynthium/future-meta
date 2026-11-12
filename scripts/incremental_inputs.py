@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -38,13 +39,13 @@ def iso_date(value):
     )
 
 
-def specification(rules, symbol, observed):
+def specification(rules, symbol, observed, *, auto_discover=None):
     from collect_contract_specs import applies_to_contract, instant, symbol_parts
 
     exchange, contract = symbol.split(".")
     _, _, product = symbol_parts(exchange, contract)
     matching = []
-    for rule in rules["specifications"]:
+    for rule in rules.get("specifications", []):
         if rule["exchange"] != exchange or rule["product"] != product:
             continue
         if rule.get("full_symbol") and rule["full_symbol"] != symbol:
@@ -63,6 +64,25 @@ def specification(rules, symbol, observed):
         ):
             matching.append(rule)
     if not matching or len({(r["lot_size"], r["tick_size"]) for r in matching}) != 1:
+        should_discover = (
+            auto_discover
+            if auto_discover is not None
+            else (
+                rules.get("auto_discover_specs", False)
+                or os.environ.get("FUTURE_META_AUTO_DISCOVER_SPECS") == "1"
+            )
+        )
+        if should_discover:
+            try:
+                import spec_discovery
+
+                discovered = spec_discovery.auto_register_specification(
+                    rules, symbol, observed
+                )
+                if discovered:
+                    return discovered
+            except Exception:
+                pass
         raise ValueError(
             f"Missing/conflicting approved specification: {symbol} {observed}"
         )
