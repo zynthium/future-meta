@@ -1,11 +1,11 @@
 ---
 name: future-meta
-description: 指导 Rust 客户端使用 future-meta 按需下载刷新中国期货元数据，查询历史手续费、多空保证金、日内开仓费及合约规格，判断数据覆盖和交易日边界，并选择普通查询或 tick 级预编译 API。
+description: 指导 Rust 与 Python 客户端使用 future-meta 按需下载刷新中国期货元数据，查询历史手续费、多空保证金、日内开仓费及合约规格，判断数据覆盖和交易日边界，并选择普通查询或 tick 级预编译 API。
 ---
 
 # future-meta 客户端手续费、保证金与合约规格指南
 
-这个 skill 用于帮助客户端用户把 `future-meta` 接入自己的 Rust 程序、
+这个 skill 用于帮助客户端用户把 `future-meta` 接入自己的 Rust 或 Python 程序、
 回测引擎、交易系统或研究工具。回答时优先解决“该用哪个 API、代码怎么写、
 历史时点应使用哪一版手续费、保证金和合约规格、数据是否覆盖目标日期、热路径怎么放置数据结构”。
 
@@ -21,14 +21,14 @@ description: 指导 Rust 客户端使用 future-meta 按需下载刷新中国期
 | 判断历史是否覆盖目标日期 | `update-state.json` 的核验截止和例外 + 查询结果；历史缺口需结合本地证据 |
 | 查询当前合约乘数和最小变动价位 | `contract` / `contract_for_handle` |
 | 回测历史合约规格 | `contract_spec_asof` / `contract_spec_at` / `contract_spec_on` |
-| 已有 `ContractHandle` 并查询历史规格 | `contract_spec_for_handle_at/on` |
-| 已有 `OffsetDateTime` | `contract_fee_at` |
+| 已有 `ContractHandle` 并查询历史规格 | `contract_spec_for_handle_at/on`（Python 为 `contract_spec_for_handle_asof/on`） |
+| 已有 `OffsetDateTime`（Rust） | `contract_fee_at` |
 | 已经按交易日切分 | `for_trading_day` + `TradingDayMeta::prepare_fee` |
 | tick 级或高频回测，日期与时间戳符合自然日边界 | `FutureMeta::prepare_fee_cursors`；夜盘先看“时间和交易日” |
 | 多合约混合 tick | 循环外将 symbol 映射为 `ContractHandle` 和整数 slot |
 | 实盘或长期运行需要获取新数据 | 保留 `DownloadClient` 并按需调用 `refresh()`；仅返回 `true` 时重建 handle/cursor |
-| 需要查看源规则字段 | `contract_fee_*` / `fee_rule` 这类 raw rule API |
-| 本地离线 artifact | `FutureMeta::load_file`，或 `decode_archive_bytes` + `FutureMeta::from_archive` |
+| 需要查看源规则字段 | `contract_fee_*` / `fee_rule` 这类 raw rule API（Python 支持 `.to_dict()`） |
+| 本地离线 artifact | Rust: `FutureMeta::load_file` 或 `decode_archive_bytes` + `FutureMeta::from_archive`；Python: `FutureMeta.from_file` / `FutureMeta.from_compressed_bytes` |
 
 如果用户提到 tick、高频、回测循环、逐笔、性能、跨日、多合约或 CPU cache，
 先核对交易日与实际时间戳的边界；符合 cursor 自然日约束时推荐 `PreparedFeeCursors`。
@@ -90,6 +90,32 @@ let archive = future_meta::archive::decode_archive_bytes(&bytes)?;
 let meta = future_meta::FutureMeta::from_archive(archive)?;
 ```
 
+### Python 安装与加载
+
+Python 绑定位于独立 crate `crates/future-meta-py`，通过 `PyO3 + maturin`（`abi3-py310`，兼容 Python 3.10+）编译为原生扩展模块 `future_meta`，内部托管 Tokio Runtime 并在网络/磁盘 I/O 与解压时通过 `py.detach` 释放 GIL，对外提供同步阻塞接口。
+
+可从 GitHub Release 下载对应平台的 `.whl` 附件安装，或在仓库根目录本地编译安装：
+
+```bash
+pip install maturin
+maturin develop --release
+```
+
+Python 在线与离线加载：
+
+```python
+import future_meta
+
+# 在线下载或读取校验通过的本地缓存
+meta = future_meta.load_or_fetch()
+spec = meta.contract_spec_asof("DCE.p2605", "2026-04-09T10:00:00+08:00")
+fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")
+print(spec.lot_size, spec.tick_size, spec.tick_value(), fee.open_fee.to_dict())
+
+# 离线加载本地文件或字节
+meta_from_file = future_meta.FutureMeta.from_file("latest.fmeta.zst")
+```
+
 ## 长期运行和实盘更新
 
 `FutureMeta` 是加载得到的只读快照，不会在后台自动更新。长期运行时在启动阶段
@@ -130,6 +156,22 @@ let contract = client.meta().contract_for_handle(handle)?;
 
 多读者共享时可发布 `client.meta().clone()` 得到同一查询快照；只在 `refresh()` 返回
 `true` 后切换读者所用快照。旧 clone 与旧句柄保持配套，不要在持有借用的 cursor 时刷新其所属客户端。
+
+在 Python 中使用 `DownloadClient`（同步调用）：
+
+```python
+import future_meta
+
+client = future_meta.DownloadClient.load()
+meta = client.meta()
+handle = meta.resolve_contract("SHFE.cu2701")
+
+if client.refresh():
+    meta = client.meta()
+    handle = meta.resolve_contract("SHFE.cu2701")
+
+contract = meta.contract_for_handle(handle)
+```
 
 ## 普通查询
 
@@ -288,6 +330,19 @@ for tick in ticks {
 let fee = fees.advance_and_get(tick.trading_date, tick.fee_slot, tick.unix_nanos)?;
 ```
 
+Python 高频回测同样支持 `prepare_fee_cursors` 与 `for_trading_day`（交易日参数传 `"YYYY-MM-DD"` 字符串）：
+
+```python
+cu = meta.resolve_contract("SHFE.cu2607")
+fees = meta.prepare_fee_cursors([cu], "2026-06-04", first_tick_unix_nanos)
+
+for tick in ticks:
+    if tick.unix_nanos >= fees.next_change_unix_nanos():
+        fees.advance_to(tick.trading_date, tick.unix_nanos)
+    fee = fees.current(tick.fee_slot)
+    cost += fee.open_amount(tick.price, tick.lots)
+```
+
 ## 多合约混合 tick
 
 进入循环前建立紧凑 slot 映射，tick 结构里保存 `fee_slot: usize`：
@@ -361,7 +416,7 @@ let close_yesterday = fee.close_yesterday_amount(price, lots);
 
 ## 错误处理
 
-- `FutureMetaError` 是 `#[non_exhaustive]`，匹配时保留通配分支。
+- Rust 中 `FutureMetaError` 是 `#[non_exhaustive]`，匹配时保留通配分支；Python 中所有客户端错误统一抛出 `future_meta.FutureMetaError` 异常。
 - `InvalidSymbol`：symbol 格式不符合 TqSdk 风格。
 - `NoVersionAt`：目标日期没有可用手续费或合约规格版本。
 - `InvalidFeeSlot`：tick 的 slot 和准备好的 handle 表不一致。

@@ -42,10 +42,56 @@ jobs:
           cargo test --workspace --locked
           cargo test -p future-meta --features download --locked
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo build -p future-meta-py --locked
           python -m unittest discover -s tests
 
-  publish:
+  wheels:
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            sdist: true
+          - os: macos-15-intel
+            target: x86_64
+            sdist: false
+          - os: macos-latest
+            target: aarch64
+            sdist: false
+          - os: windows-latest
+            target: x86_64
+            sdist: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build Python wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --locked
+          sccache: "true"
+      - name: Build Python sdist
+        if: matrix.sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [verify, wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -54,6 +100,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: python-wheels-*
+          path: dist
+          merge-multiple: true
       - name: Publish SDK Release and read it back
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,7 +118,9 @@ jobs:
             args+=(--notes "Initial SDK release.")
           fi
           if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json url >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${args[@]}"
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" "${args[@]}"
+          else
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
-            --jq 'if .draft or .prerelease then error("SDK Release is not stable") else {tag_name, html_url} end'
+            --jq 'if .draft or .prerelease then error("SDK Release is not stable") else {tag_name, html_url, assets: [.assets[].name]} end'

@@ -123,6 +123,31 @@ class ReleaseRulesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Cargo.lock"):
             release.validate_release(self.repo, "v0.8.1")
 
+    def test_sdk_tag_requires_matching_python_binding_versions_when_present(self):
+        (self.repo / "crates/future-meta-py").mkdir(parents=True)
+        (self.repo / "crates/future-meta-py/Cargo.toml").write_text(
+            '[package]\nname = "future-meta-py"\nversion = "0.8.0"\n'
+        )
+        self.write_version("0.8.1")
+        self.commit()
+        self.git("tag", "v0.8.1")
+        with self.assertRaisesRegex(ValueError, "crates/future-meta-py/Cargo.toml"):
+            release.validate_release(self.repo, "v0.8.1")
+        (self.repo / "crates/future-meta-py/Cargo.toml").write_text(
+            '[package]\nname = "future-meta-py"\nversion = "0.8.1"\n'
+        )
+        self.commit()
+        self.git("tag", "-f", "v0.8.1")
+        with self.assertRaisesRegex(ValueError, "future-meta-py in Cargo.lock"):
+            release.validate_release(self.repo, "v0.8.1")
+        (self.repo / "Cargo.lock").write_text(
+            '[[package]]\nname = "future-meta"\nversion = "0.8.1"\n\n'
+            '[[package]]\nname = "future-meta-py"\nversion = "0.8.1"\n'
+        )
+        self.commit()
+        self.git("tag", "-f", "v0.8.1")
+        self.assertEqual(release.validate_release(self.repo, "v0.8.1")["version"], "0.8.1")
+
     def test_tag_cannot_publish_a_commit_outside_main(self):
         self.new_release("0.8.1", update_main=False)
         with self.assertRaisesRegex(ValueError, "belong to main"):

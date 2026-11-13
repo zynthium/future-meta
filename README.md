@@ -2,9 +2,10 @@
 
 [![update-fee-data](https://github.com/zynthium/future-meta/actions/workflows/update-fee-data.yml/badge.svg)](https://github.com/zynthium/future-meta/actions/workflows/update-fee-data.yml)
 [![Rust 2024](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 [![Data](https://img.shields.io/badge/GitHub-data-222222.svg)](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)
 
-中国期货手续费历史数据维护与本地 as-of 查询库。
+中国期货手续费历史数据维护与本地 as-of 查询库（支持 Rust 与 Python 客户端）。
 
 提交、验证和发版遵循 [发布规则](docs/releasing.md)：普通提交运行 CI，纯文档不升级 SDK；明确推送 SDK 版本标签后由 Actions 验证并创建 Release，数据日更独立运行。
 
@@ -33,17 +34,18 @@ flowchart LR
     state[data 分支: manifest 和检查点] --> daemon
     daemon --> releases[GitHub Release: 不可变 archive]
     daemon --> state
-    state --> client[future-meta client]
+    state --> client["future-meta client (Rust / Python)"]
     releases --> client
     client --> app[交易/研究程序]
 ```
 
-工作区包含两个 crate：
+工作区包含三个 crate：
 
 | Crate | 作用 |
 | --- | --- |
 | `future-meta` | 公开模型、archive 编解码、下载缓存、TqSdk symbol 解析和 as-of 查询 API |
 | `future-meta-daemon` | archive 增量历史维护，以及本地 SQLite 重建、证据审阅与导出工具 |
+| `future-meta-py` | 基于 `PyO3 + maturin` 的独立 Python C-Extension 绑定（`future_meta`），保持核心 Rust crate 零 Python 依赖 |
 
 ## 快速开始
 
@@ -116,6 +118,36 @@ let contract = client.meta().contract_for_handle(handle)?;
 `refresh()` 在 HTTP 304 或 archive SHA 未变时返回 `false`，复用当前 `FutureMeta`、索引和句柄，不读磁盘缓存；SHA 变化时校验并加载新包后返回 `true`，此时需重新解析句柄及构建预计算表。失败会返回错误并保留当前实例和已有缓存。
 
 该客户端复用 HTTP 连接池及内存中的 ETag，刷新频率由调用方控制，每次刷新仍会发出一次 manifest 检查请求。`load_or_fetch` 继续用于一次性加载。
+
+### 在 Python 中使用
+
+可从 GitHub Release 下载对应平台的 `.whl` 附件安装，或在仓库根目录通过 `maturin` / `uv` 本地安装：
+
+```bash
+pip install maturin
+maturin develop --release
+```
+
+Python 端提供同步阻塞接口（内部托管 Tokio Runtime 并释放 GIL）：
+
+```python
+import future_meta
+
+# 一次性加载或长驻客户端定期刷新
+client = future_meta.DownloadClient.load()
+meta = client.meta()
+
+contract = meta.contract("SHFE.cu2607")
+print(contract.lot_size, contract.tick_size, contract.tick_value())
+
+spec = meta.contract_spec_asof("DCE.p2605", "2026-04-09T10:00:00+08:00")
+fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")
+print(spec.tick_size, fee.open_fee.to_dict(), fee.close_today_fee.to_dict())
+
+# 后续检查是否有新数据包
+if client.refresh():
+    meta = client.meta()
+```
 
 `Manifest.generated_at` 与 `data_version` 表示 artifact 构建时间；
 `history_end` 与 `fee_effective_from` 表示最后一条已批准手续费的生效时间。两者不同，
@@ -357,6 +389,9 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo test --workspace
 cargo test -p future-meta --features download
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo build -p future-meta-py
+python3 -m unittest discover -s tests
 ```
 
 性能 smoke test：
@@ -379,6 +414,8 @@ cargo test -p future-meta --features download --test client_archive
 - `data/`
 - `public/`
 - `target/`
+- `dist/`
+- `.venv/`
 - `.env`
 - `.mcp.json`
 

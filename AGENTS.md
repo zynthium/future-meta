@@ -6,6 +6,7 @@
 
 - `crates/future-meta`：公开模型、schema 4 archive 编解码、symbol、查询及可选 `download` 缓存。
 - `crates/future-meta-daemon`：基于 archive 的业务历史增量；保留本地 SQLite 重建、证据审阅和导出工具。
+- `crates/future-meta-py`：基于 `PyO3 + maturin`（`abi3-py310`）的独立 Python 扩展绑定 `future_meta`，保持 `crates/future-meta` 纯 Rust 零 Python 依赖与 `#![forbid(unsafe_code)]`。
 - 自动更新只使用上一版客户端 archive、轻量检查点和小规则配置，不使用线上 SQLite 或原件 bootstrap。
 - 客户端文件作为不可变 `data-*` Release 附件；固定索引为 `https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json`。
 - 独立 `data` 分支只存 `manifest.json` 与 `update-state.json`。数据 Release 使用 `--latest=false`，不改变 SDK Latest。
@@ -40,11 +41,13 @@
 ## 入口与文件
 
 - `crates/future-meta-daemon/src/archive_update.rs`：完整六所批次校验及 archive 版本合并。
+- `crates/future-meta-py/src/lib.rs` 与 `pyproject.toml`：Python SDK（`future_meta`）FFI 绑定、PEP 561 类型桩与 `maturin` 构建配置。
 - `scripts/update_official.py`：时段复核、状态、采集、合并与发布。
 - `scripts/runner_update.py`：同一 workflow 的准备、主/备用 runner 接续与唯一发布。
 - `scripts/collection_transport.py`：跨 runner 共享请求预算、客户端选择及有界健康统计。
 - `scripts/runner_smoke.py`：禁止官网访问和生产写入的跨 runner 故障转移烟测。
 - `scripts/incremental_inputs.py`：日期、规格、生命周期及官方采集适配。
+- `scripts/spec_discovery.py`：无认证公开合约文本解析（合约乘数、最小变动价位、交割月份）与中途规格变更合并。
 - `scripts/audit_official_rules.py`：独立手动规则审阅，调用 `catalog_guard.py` 检查现行入口；不由日更触发，不发布，不推进日更检查点。不能用旧附件仍可访问证明没有新规则。
 - `scripts/official_access.py`：HTTP 重定向及浏览器逐请求截止控制。
 - `scripts/data_branch.py`：同一 commit 读取索引/状态，Git API 非强制提交。
@@ -79,6 +82,7 @@ cargo check --workspace --all-targets
 cargo test --workspace
 cargo test -p future-meta --features download
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo build -p future-meta-py
 python3 -m unittest discover -s tests
 ```
 
@@ -106,10 +110,10 @@ cargo run -p future-meta --features download --example online_smoke \
 完整规则见 `docs/releasing.md`。自动验证、显式发布；提交、推送、SDK Release 和数据更新分别判断。
 
 - “提交”只创建 commit；“提交推送”不创建 SDK 标签或 Release。“提交并发布”按实际交付对象执行：纯文档推送 `main` 后说明无需 SDK 发版；只有用户明确要求文档也创建 SDK Release 时例外执行。一次发布授权不延续为后续任务的发版授权。
-- 文档、AGENTS、技能说明/提示词、测试、格式和行为不变的重构默认不升级 SDK。普通提交不改版本；正式 SDK 发版时才同步更新 SDK `Cargo.toml` 和锁文件。
+- 文档、AGENTS、技能说明/提示词、测试、格式和行为不变的重构默认不升级 SDK。普通提交不改版本；正式 SDK 发版时才同步更新 `crates/future-meta/Cargo.toml`、`crates/future-meta-py/Cargo.toml` 和 `Cargo.lock`。
 - SDK 修复/性能/安全交付升补丁版本；当前 `0.x` 阶段新增 API、合约类型或破坏兼容升次版本，并说明迁移边界。按最新 SDK 标签到待发布提交的累计实际变化判断，不仅看最后一次提交或 commit 类型。
 - 采集器、daemon、规则配置和日历不因自身改动升级 SDK。业务数据变化走独立 `data-*` 发布；无变化只更新状态。
-- `.github/workflows/ci.yml` 对普通 push/PR 做只读离线验证；纯文档走轻量检查。SDK Release 仅由显式推送的 `vX.Y.Z` 标签触发 `release-sdk.yml`，通过版本、main 归属和完整离线检查后发布。数据日更保持独立。
+- `.github/workflows/ci.yml` 对普通 push/PR 做只读离线验证；纯文档走轻量检查。SDK Release 仅由显式推送的 `vX.Y.Z` 标签触发 `release-sdk.yml`，通过版本、main 归属和完整离线检查后构建跨平台 Python Wheel/sdist 并发布。数据日更保持独立。
 
 ## 更新和发布授权
 
@@ -131,7 +135,7 @@ GitHub raw 存在 CDN 延迟，固定 URL 读回采用有界退避等待，最�
 - Rust 2024、禁止 unsafe，遵循现有 crate 边界。抓取与维护逻辑留在 daemon/Python。
 - 解析优先结构化 parser。保持 archive 加载后的低分配本地查询定位。
 - schema 4 和公开客户端模型变更必须有测试及迁移说明。
-- `data/`、`public/`、`target/`、`.env`、`.codex/`、`.mcp.json` 不提交；不得删除本地历史证据作为清理代码的副作用。
+- `data/`、`public/`、`target/`、`dist/`、`.venv/`、`.env`、`.codex/`、`.mcp.json` 不提交；不得删除本地历史证据作为清理代码的副作用。
 - `config/official-rules.json` 是经审阅的小配置，允许随规则更新提交；大 archive 和原件不进入源码分支。
 - 只 stage 当前任务文件，保留无关脏工作；使用简洁 conventional commit。
 - 不提交 token、Cookie、代理凭据或密钥。发布只使用内置 `GITHUB_TOKEN` 的 `contents: write`，checkout 不持久化凭据。

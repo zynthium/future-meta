@@ -27,6 +27,14 @@ def validate_release(repo, tag, main_ref="origin/main"):
     packages = [p for p in lock["package"] if p["name"] == "future-meta"]
     if len(packages) != 1 or packages[0]["version"] != version:
         raise ValueError("SDK tag does not match Cargo.lock")
+    py_manifest = repo / "crates/future-meta-py/Cargo.toml"
+    if py_manifest.exists():
+        py_package = tomllib.loads(py_manifest.read_text())["package"]
+        if py_package["version"] != version:
+            raise ValueError("SDK tag does not match crates/future-meta-py/Cargo.toml")
+        py_packages = [p for p in lock["package"] if p["name"] == "future-meta-py"]
+        if len(py_packages) != 1 or py_packages[0]["version"] != version:
+            raise ValueError("SDK tag does not match future-meta-py in Cargo.lock")
     if git(repo, "rev-parse", f"refs/tags/{tag}^{{commit}}") != git(repo, "rev-parse", "HEAD"):
         raise ValueError("SDK tag does not point to the checked-out commit")
     ancestor = subprocess.run(

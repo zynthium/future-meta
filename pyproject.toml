@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "future-meta"
+dynamic = ["version"]
+description = "Chinese futures fee, margin, and contract specification as-of query client"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[project.urls]
+Repository = "https://github.com/zynthium/future-meta"
+
+[tool.maturin]
+manifest-path = "crates/future-meta-py/Cargo.toml"
+python-source = "crates/future-meta-py/python"
+module-name = "future_meta._native"
+features = ["extension-module"]
+strip = true

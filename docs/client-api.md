@@ -31,6 +31,55 @@ replacing the disk cache. Each refresh still checks the manifest over the networ
 the client reuses its HTTP connection pool and stores the ETag only in memory.
 The existing `load_or_fetch` API remains suitable for one-time loading.
 
+## Python Bindings (`future_meta`)
+
+`crates/future-meta-py` wraps `future-meta` as a native Python extension module (`future_meta`) built with `PyO3 + maturin` (`abi3-py310`), without adding Python dependencies to the pure-Rust `future-meta` crate.
+
+### Installation
+
+Install prebuilt wheels attached to SDK GitHub Releases, or build locally from a repository checkout:
+
+```bash
+pip install maturin
+maturin develop --release
+```
+
+### Online & Offline Loading
+
+`load_or_fetch`, `DownloadClient.load`, `DownloadClient.refresh`, and `FutureMeta.from_file` run synchronously on an internal Tokio runtime while releasing the Python GIL (`py.detach`):
+
+```python
+import future_meta
+
+# One-shot download/cache load
+meta = future_meta.load_or_fetch()
+
+# Long-running client with ETag / SHA conditional refresh
+client = future_meta.DownloadClient.load()
+if client.refresh():
+    meta = client.meta()
+
+# Offline archive loading from disk or bytes
+offline_meta = future_meta.FutureMeta.from_file("latest.fmeta.zst")
+```
+
+### Queries & Cross-Day Tick Cursors
+
+Trading-day APIs (`*_on`, `for_trading_day`, `prepare_fee_cursors`, `advance_to`, `advance_and_get`) accept `"YYYY-MM-DD"` strings:
+
+```python
+cu = meta.resolve_contract("SHFE.cu2607")
+
+spec = meta.contract_spec_for_handle_on(cu, "2026-06-04")
+fee = meta.contract_fee_for_handle_on(cu, "2026-06-04")
+
+cursors = meta.prepare_fee_cursors([cu], "2026-06-04", 1780534800_000_000_000)
+prepared = cursors.current(0)
+cost = prepared.open_amount(80000.0, 2.0)
+```
+
+All model objects (`Contract`, `ContractSpecVersion`, `ContractFee`, `FeeSpec`, `ParsedSymbol`) expose read-only attributes and `.to_dict()`. Client errors raise `future_meta.FutureMetaError`. Full PEP 561 type stubs (`__init__.pyi` and `py.typed`) are bundled in the package.
+
 ## Concrete contracts only
 
 Fee and specification records belong only to concrete futures contracts. Pass symbols such as

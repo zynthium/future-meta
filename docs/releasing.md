@@ -8,7 +8,7 @@
 - “提交推送”创建 commit 并推送远端，不创建 SDK 标签或 Release。
 - “提交并发布”先判断交付对象。纯文档推送到 `main` 即完成文档更新，并说明无需 SDK 发版；有待交付的 SDK 变化时才准备 SDK 版本；数据变化走独立数据发布流程。
 - 用户明确要求创建 SDK Release，即使只有文档变化，也可作为一次明确例外执行。不把一次发布授权当成之后所有任务的发版授权。
-- 普通提交不修改版本号。正式准备 SDK 发版时，才同时修改 `crates/future-meta/Cargo.toml` 和 `Cargo.lock`。
+- 普通提交不修改版本号。正式准备 SDK 发版时，才同时修改 `crates/future-meta/Cargo.toml`、`crates/future-meta-py/Cargo.toml` 和 `Cargo.lock`。
 
 ## 按影响选择发布对象
 
@@ -58,8 +58,8 @@ SDK 通过 Git 标签和 GitHub Release 分发，不以本流程发布到 crates
 1. 明确决定发布 SDK，检查自上一 SDK 标签以来的用户可见变化并选择版本。
 2. 更新 SDK `Cargo.toml` 和锁文件，完成必要的代码、文档、技能与迁移说明；验证后提交推送到 `main`。
 3. 创建稳定版本的 annotated tag，先在本地检查，再推送该标签。推送 SDK 版本标签就是正式发版指令。
-4. 工作流校验稳定 `vX.Y.Z` 格式、Cargo 与锁文件版本、标签与 checkout 一致、提交已进入 `main`、版本递增，再执行完整离线检查。
-5. 验证通过后，独立的 `contents: write` job 使用内置 `GITHUB_TOKEN` 创建 SDK Release 并设置 Latest。说明从前一个稳定 SDK 标签生成，排除独立的数据标签比较范围。checkout 不持久化凭据。
+4. 工作流校验稳定 `vX.Y.Z` 格式、Cargo 与锁文件版本（含 `future-meta` 与 `future-meta-py`）、标签与 checkout 一致、提交已进入 `main`、版本递增，再执行完整离线检查并构建跨平台 Python Wheel 与源码包。
+5. 验证通过后，独立的 `contents: write` job 使用内置 `GITHUB_TOKEN` 创建 SDK Release、上传 Python Wheel/sdist 附件并设置 Latest。说明从前一个稳定 SDK 标签生成，排除独立的数据标签比较范围。checkout 不持久化凭据。
 6. 观察 Actions 完成并读回 Release，确认 SDK Latest 和标签 commit。正式发布报告给出 commit、版本、验证命令和 Actions URL。
 
 示例版本仅作演示，需按待交付变化选择：

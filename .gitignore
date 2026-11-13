@@ -11,3 +11,9 @@
 .serena/
 .tokensave/
 __pycache__/
+/.venv
+/dist
+*.egg-info/
+crates/future-meta-py/python/future_meta/*.so
+crates/future-meta-py/python/future_meta/*.dylib
+crates/future-meta-py/python/future_meta/*.pyd
