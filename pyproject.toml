@@ -7,7 +7,7 @@ name = "future-meta"
 dynamic = ["version"]
 description = "Chinese futures fee, margin, and contract specification as-of query client"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -25,7 +25,10 @@ classifiers = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/zynthium/future-meta"
+Documentation = "https://github.com/zynthium/future-meta/blob/main/docs/client-api.md"
 Repository = "https://github.com/zynthium/future-meta"
+Releases = "https://github.com/zynthium/future-meta/releases"
 
 [tool.maturin]
 manifest-path = "crates/future-meta-py/Cargo.toml"

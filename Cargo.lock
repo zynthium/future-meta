@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "future-meta"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "bincode",
  "hex",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "future-meta-py"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "future-meta",
  "pyo3",
