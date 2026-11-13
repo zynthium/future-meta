@@ -3,7 +3,8 @@
 #![allow(
     clippy::missing_errors_doc,
     clippy::must_use_candidate,
-    clippy::needless_pass_by_value
+    clippy::needless_pass_by_value,
+    clippy::used_underscore_items
 )]
 
 use std::path::PathBuf;
@@ -1193,8 +1194,8 @@ pub fn sha256_hex(data: &[u8]) -> String {
     future_meta::archive::sha256_hex(data)
 }
 
-#[pymodule]
-fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "_native")]
+fn native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SCHEMA_VERSION", SCHEMA_VERSION)?;
     m.add("FutureMetaError", py.get_type::<FutureMetaError>())?;
     m.add_class::<ParsedSymbol>()?;

@@ -452,11 +452,10 @@ pub fn parse_citics_list_html(html: &str) -> Result<Vec<AnnouncementListItem>> {
             continue;
         };
         let title = normalized_text(&anchor.text().collect::<Vec<_>>().join(" "));
-        let published_at = item
-            .select(&date_selector)
-            .next()
-            .map(|date| normalized_text(&date.text().collect::<Vec<_>>().join(" ")))
-            .unwrap_or_default();
+        let Some(date) = item.select(&date_selector).next() else {
+            continue;
+        };
+        let published_at = normalized_text(&date.text().collect::<Vec<_>>().join(" "));
         if article_id.trim().is_empty() || title.is_empty() || published_at.is_empty() {
             continue;
         }
