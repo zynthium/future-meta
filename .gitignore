@@ -1,8 +1,10 @@
 /target
 /data
 /public
+/assets
 /.env
 /.codex
+/.code-review-graph
 /.worktrees
 /.mcp.json
 **/*.rs.bk

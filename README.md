@@ -1,61 +1,45 @@
 # future-meta
 
+[![Crates.io](https://img.shields.io/crates/v/future-meta.svg)](https://crates.io/crates/future-meta)
+[![PyPI](https://img.shields.io/pypi/v/future-meta.svg)](https://pypi.org/project/future-meta/)
+[![CI](https://github.com/zynthium/future-meta/actions/workflows/ci.yml/badge.svg)](https://github.com/zynthium/future-meta/actions/workflows/ci.yml)
 [![update-fee-data](https://github.com/zynthium/future-meta/actions/workflows/update-fee-data.yml/badge.svg)](https://github.com/zynthium/future-meta/actions/workflows/update-fee-data.yml)
 [![Rust 2024](https://img.shields.io/badge/Rust-2024-orange.svg)](https://www.rust-lang.org/)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
 [![Data](https://img.shields.io/badge/GitHub-data-222222.svg)](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-中国期货手续费历史数据维护与本地 as-of 查询库（支持 Rust 与 Python 客户端）。
+中国六大期货交易所（SHFE / INE / DCE / CZCE / CFFEX / GFEX）历史手续费、保证金与合约规格的高性能本地 as-of 查询 SDK（支持 **Rust** 与 **Python**）。
 
-提交、验证和发版遵循 [发布规则](docs/releasing.md)：普通提交运行 CI，纯文档不升级 SDK；明确推送 SDK 版本标签后由 Actions 验证并创建 Release，数据日更独立运行。
-
-`future-meta` 从交易所官方数据维护手续费、保证金和规格变更历史。日更直接以既有客户端 archive 为基线；客户端读取独立 `data` 分支的 manifest，再下载不可变 Release 附件，在本地完成高性能 as-of 查询。SQLite 和原始证据只供本地诊断。
+`future-meta` 从六所官方结算参数与规则原件维护具体期货合约的手续费、买卖保证金率和合约规格（合约乘数、最小变动价位）变更历史。客户端通过独立 `data` 分支的固定索引拉取经过 SHA-256 校验的不可变压缩数据包（Schema 4），在本地内存中完成零网络依赖、纳秒级热路径的时点（as-of）查询。
 
 > [!IMPORTANT]
-> SDK 与数据独立发布：包含大商所月均价合约的数据包需要 SDK v0.7.0 或更新版本；升级一次后，每日数据更新不要求升级 SDK。下载使用新的 [manifest URL](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)。最后尝试、成功时间与完整核验日期见 [更新状态](https://raw.githubusercontent.com/zynthium/future-meta/data/update-state.json)，不以 archive 的生成时间代替检查进度。
+> **SDK 与数据解耦发布**：每日数据更新独立发布为 `data-*` Release 附件并更新 [manifest.json](https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json)，客户端无需因日常数据更新而升级 SDK（包含大商所 `F` 月均价合约的数据包需 SDK `v0.7.0+`）。六所日度参数最新尝试、成功时间与完整核验截止交易日（`checked_through`）请以 [update-state.json](https://raw.githubusercontent.com/zynthium/future-meta/data/update-state.json) 为准，不以 archive 生成时间代替核验进度。
 
-## 功能特性
+---
 
-- 手续费和规格只属于具体期货合约，例如 `SHFE.cu2607`、`CZCE.SR903`。
-- 支持大商所 `DCE.l2611F`、`DCE.pp2611F`、`DCE.v2611F` 月均价合约；完整保留 `F` 后缀及独立费率、规格和生命周期。TqSdk 品种标识仍为 `DCE.l`、`DCE.pp`、`DCE.v`，品种查询包含该品种的普通与月均价合约。
-- 支持具体合约、品种下具体合约的 as-of 手续费查询；`KQ.m@...`、`KQ.i@...` 不返回手续费或规格。
-- 提供可按历史时间查询的合约乘数、最小变动价位，以及派生的每手每跳价值。
-- 支持预解析 `ContractHandle`、`PreparedFee` 和跨日 day-fixed cursor 表，适合高频回测热路径。
-- 客户端 archive 使用 `bincode` + `zstd` 压缩，并带 SHA-256 校验。
-- 日更对业务字段比较，仅在变化时追加历史版本；无变化保持 archive 原字节。独立保留日内开仓费与未知值。
-- 官方日更采集六所逐日参数及必要 CBI，复用已批准规格规则后按需生成客户端 artifact；规格文档与目录另行手动审阅，日度检查点不代表规格重新核验。工作日在夜盘前窗口内多次候选唤醒，早晨仅节后首个早晨准入，同一时段最多采集一轮；本地官方日历门禁跳过周末、休市和节前无夜盘。只读健康检查报告漏更，GitHub 调度延迟仍可能发生。线上状态须以实际运行和发布读回为准。
+## 核心特性
 
-## 架构
+- **具体合约粒度与 TqSdk 编码规范**：手续费与规格严格绑定具体期货合约（如 `SHFE.cu2701`、`CZCE.SR701`）；主连/指数符号（`KQ.m@...`、`KQ.i@...`）不返回手续费或规格。
+- **支持大商所月均价合约**：完整支持 `DCE.l2611F`、`DCE.pp2611F`、`DCE.v2611F` 等月均价合约，保留大写 `F` 尾缀及独立费率、规格和生命周期；品种查询（`DCE.l`、`DCE.pp`、`DCE.v`）同时覆盖普通与月均价合约。
+- **历史规格与手续费时点（As-Of）查询**：支持按 RFC3339 时间戳或交易日查询任意历史截面的开仓、平昨、平今、日内开仓费率、买卖保证金率，以及合约乘数（`lot_size`）、最小变动价位（`tick_size`）和派生的每手每跳价值（`tick_value`）。
+- **高频回测跨日游标热路径**：提供预解析 `ContractHandle`、`PreparedFee` 与跨日 `PreparedFeeCursors` 游标表；热路径仅需一次 `i64` 纳秒时间戳比较与连续槽位读取，零字符串解析、零哈希查找、零堆内存分配。
+- **严格官方证据与零伪造边界**：仅接受六所官方参数与规则；严格区分零费率（`0`）与未知（`Unknown` / `None`），缺失数据、日期不符或反爬异常直接报错阻断，绝不以旧值、邻近合约或品种默认值冒充。
+- **Rust 与 Python 双语言原生支持**：核心库 `future-meta` 保持 100% 纯安全 Rust（`#![forbid(unsafe_code)]`）；Python 包 `future_meta` 基于 `PyO3 + maturin`（`abi3-py310`）构建原生扩展，内置完整 PEP 561 类型注解（`.pyi`）。
 
-```mermaid
-flowchart LR
-    archive[上一版客户端 archive] --> daemon[future-meta-daemon]
-    exchange[官方缺失交易日数据] --> daemon
-    state[data 分支: manifest 和检查点] --> daemon
-    daemon --> releases[GitHub Release: 不可变 archive]
-    daemon --> state
-    state --> client["future-meta client (Rust / Python)"]
-    releases --> client
-    client --> app[交易/研究程序]
-```
+---
 
-工作区包含三个 crate：
+## 安装
 
-| Crate | 作用 |
-| --- | --- |
-| `future-meta` | 公开模型、archive 编解码、下载缓存、TqSdk symbol 解析和 as-of 查询 API |
-| `future-meta-daemon` | archive 增量历史维护，以及本地 SQLite 重建、证据审阅与导出工具 |
-| `future-meta-py` | 基于 `PyO3 + maturin` 的独立 Python C-Extension 绑定（`future_meta`），保持核心 Rust crate 零 Python 依赖 |
+### Rust
 
-## 快速开始
-
-运行在线 smoke test，通过 data 分支 manifest 下载 Release 附件并查询 `SHFE.cu2607`：
+通过 [crates.io](https://crates.io/crates/future-meta) 安装：
 
 ```bash
-cargo run -p future-meta --features download --example online_smoke SHFE.cu2607 2026-06-08T10:48:06Z
+cargo add future-meta --features download
 ```
 
-在自己的 Rust 程序中使用（通过 crates.io 或 Git 标签）：
+或在 `Cargo.toml` 中添加：
 
 ```toml
 [dependencies]
@@ -64,14 +48,38 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 time = "0.3"
 ```
 
+> 若仅需加载本地离线 `.fmeta.zst` 文件而无需在线下载，可省略 `features = ["download"]`。
+
+### Python
+
+通过 [PyPI](https://pypi.org/project/future-meta/) 安装预编译 Wheel（支持 Linux `x86_64`/`aarch64`、macOS `x86_64`/`arm64`、Windows `x86_64`，Python 3.10+）：
+
+```bash
+pip install future-meta
+```
+
+如需在源码仓库本地编译安装：
+
+```bash
+maturin develop --release
+```
+
+---
+
+## 快速开始
+
+### Rust 示例
+
 ```rust
 use future_meta::{DownloadConfig, load_or_fetch};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 自动拉取最新 manifest 与数据包并缓存到本地
     let meta = load_or_fetch(DownloadConfig::default()).await?;
 
-    let contract = meta.contract("SHFE.cu2607")?;
+    // 1. 查询合约静态规格与每跳价值
+    let contract = meta.contract("SHFE.cu2701")?;
     println!(
         "lot_size={}, tick_size={}, tick_value={}",
         contract.lot_size,
@@ -79,104 +87,85 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         contract.tick_value()
     );
 
+    // 2. 查询历史时点有效的合约规格
     let historical_spec = meta.contract_spec_asof(
         "DCE.p2605",
         "2026-04-09T10:00:00+08:00",
     )?;
     println!("historical tick_size={}", historical_spec.tick_size);
 
-    let fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")?;
+    // 3. 查询历史时点所属交易日的手续费与保证金率
+    let fee = meta.contract_fee_asof("SHFE.cu2701", "2026-10-30T10:00:00+08:00")?;
     println!("open={:?}, close_today={:?}", fee.open_fee, fee.close_today_fee);
 
     Ok(())
 }
 ```
 
-默认 manifest 地址是：
+也可以直接运行内置在线示例验证：
 
-```text
-https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json
+```bash
+cargo run -p future-meta --features download --example online_smoke \
+  SHFE.cu2701 2026-10-30T10:00:00+08:00
 ```
 
-可用 `FUTURE_META_CACHE_DIR` 覆盖客户端 artifact 缓存目录。
+#### 长驻进程条件刷新（`DownloadClient`）
 
-SDK v0.8.0 新增 `DownloadClient`。长驻进程需要定期检查更新时，保留该实例，避免每次检查都解压和重建索引。在 async 函数中使用：
+长驻交易或研究服务需要定期检查数据更新时，推荐持有 `DownloadClient` 实例以复用连接池、内存 ETag 和已加载的 `FutureMeta`：
 
 ```rust
 use future_meta::{DownloadClient, DownloadConfig};
 
 let mut client = DownloadClient::load(DownloadConfig::default()).await?;
-let mut handle = client.meta().resolve_contract("SHFE.cu2607")?;
+let mut handle = client.meta().resolve_contract("SHFE.cu2701")?;
 
-// 在后续需要检查更新时调用，不放入每次行情查询的路径。
+// 在定时任务或盘前检查时调用（请勿放入逐笔行情热路径）
 if client.refresh().await? {
-    handle = client.meta().resolve_contract("SHFE.cu2607")?;
+    // 返回 true 表示已加载新 archive，需重新解析句柄和构建预计算游标表
+    handle = client.meta().resolve_contract("SHFE.cu2701")?;
 }
 let contract = client.meta().contract_for_handle(handle)?;
 ```
 
-`refresh()` 在 HTTP 304 或 archive SHA 未变时返回 `false`，复用当前 `FutureMeta`、索引和句柄，不读磁盘缓存；SHA 变化时校验并加载新包后返回 `true`，此时需重新解析句柄及构建预计算表。失败会返回错误并保留当前实例和已有缓存。
+- `refresh()` 在 HTTP `304 Not Modified` 或 archive SHA-256 未变时返回 `Ok(false)`，零解压、零磁盘读取；
+- 当远端发布新数据包时自动下载、校验 SHA-256 并原子替换内存快照后返回 `Ok(true)`；
+- 网络异常时返回 `Err`，并完整保留当前内存实例与本地磁盘缓存。
 
-该客户端复用 HTTP 连接池及内存中的 ETag，刷新频率由调用方控制，每次刷新仍会发出一次 manifest 检查请求。`load_or_fetch` 继续用于一次性加载。
+### Python 示例
 
-### 在 Python 中使用
-
-可直接从 PyPI 安装，或从 GitHub Release 下载对应平台的 `.whl` 附件、在仓库根目录通过 `maturin` 本地安装：
-
-```bash
-pip install future-meta
-# 或在本地源码目录构建安装：
-maturin develop --release
-```
-
-Python 端提供同步阻塞接口（内部托管 Tokio Runtime 并释放 GIL）：
+Python 端提供同步接口（内部托管 Tokio Runtime 并在网络 I/O 与解压期间释放 GIL）：
 
 ```python
 import future_meta
 
-# 一次性加载或长驻客户端定期刷新
+# 1. 在线加载（或使用 future_meta.load_or_fetch() / future_meta.FutureMeta.from_file(...)）
 client = future_meta.DownloadClient.load()
 meta = client.meta()
 
-contract = meta.contract("SHFE.cu2607")
+# 2. 查询合约规格与历史时点手续费
+contract = meta.contract("SHFE.cu2701")
 print(contract.lot_size, contract.tick_size, contract.tick_value())
 
 spec = meta.contract_spec_asof("DCE.p2605", "2026-04-09T10:00:00+08:00")
-fee = meta.contract_fee_asof("SHFE.cu2607", "2026-06-08T10:48:06Z")
+fee = meta.contract_fee_asof("SHFE.cu2701", "2026-10-30T10:00:00+08:00")
 print(spec.tick_size, fee.open_fee.to_dict(), fee.close_today_fee.to_dict())
 
-# 后续检查是否有新数据包
+# 3. 高频回测跨日游标表
+handle = meta.resolve_contract("SHFE.cu2701")
+cursors = meta.prepare_fee_cursors([handle], "2026-10-30", 1793325600_000_000_000)
+prepared = cursors.advance_and_get("2026-10-30", 0, 1793325600_000_000_000)
+print("open 2 lots @ 75000:", prepared.open_amount(75000.0, 2))
+
+# 4. 定期检查远端是否有新数据包
 if client.refresh():
     meta = client.meta()
 ```
 
-`Manifest.generated_at` 与 `data_version` 表示 artifact 构建时间；
-`history_end` 与 `fee_effective_from` 表示最后一条已批准手续费的生效时间。两者不同，
-不应把构建时间当作费率最新时间。
+---
 
-## 查询 API
+## 高频回测热路径
 
-`FutureMeta` 保留通用查询入口；高频回测优先使用跨日预编译 cursor 表：
-
-| API | 说明 |
-| --- | --- |
-| `contract(symbol)` | O(1) 查询合约乘数、最小变动价位等静态规格元数据 |
-| `contract_for_handle(handle)` | 使用已解析的 `ContractHandle` 查询合约规格，适合热路径；`tick_value()` 返回每手每跳价值 |
-| `contract_spec_asof(symbol, at)` | 查询 RFC3339 时间点有效的合约乘数、最小变动价位和每手每跳价值 |
-| `contract_spec_at/on(...)` | 使用预解析时间或交易日查询历史合约规格 |
-| `contract_spec_for_handle_at/on(...)` | 使用 `ContractHandle` 查询历史合约规格，避免重复解析 symbol |
-| `contract_fee_asof(symbol, at)` | 查询具体期货合约在某个 RFC3339 时间点所属交易所本地日期的手续费 |
-| `contract_fee_at(symbol, at)` | 使用已解析的 `OffsetDateTime` 查询，内部按交易所本地日期选择日级手续费 |
-| `contract_fee_on(symbol, trading_date)` | 使用交易所本地 `Date` 查询，适合手续费盘中不变的场景 |
-| `resolve_contract(symbol)` | 将合约 symbol 预解析为 `ContractHandle` |
-| `prepare_fee_cursors(handles, trading_date, start_unix_nanos)` | 构建跨日 day-fixed cursor 表，是 tick 回测推荐入口 |
-| `for_trading_day(trading_date)` | 构建单日交易快照，适合已经按日切分的高级用法 |
-| `TradingDayMeta::prepare_fee(handle)` | 单日内将手续费编译为紧凑数值结构 |
-| `TradingDayMeta::prepare_fee_book(handles)` | 单日内按 caller slot 顺序构建连续 `PreparedFee` 表 |
-| `TradingDayMeta::prepare_fee_cursors(handles, start_unix_nanos)` | 单日内按 caller slot 顺序构建可跨日推进的 cursor 表 |
-| `underlying_fees_asof(underlying_symbol, at)` | 查询某个品种在该时间点不是 `NotTrading` 的具体合约手续费列表；`Unknown` 保留 |
-
-tick 回测通常跨多日。推荐先解析合约，再构建跨日 cursor 表：
+跨多日 Tick 回测推荐预先将合约 symbol 解析为 `ContractHandle` 并映射为连续整数槽位（`slot`），通过 `prepare_fee_cursors` 构建跨日游标表：
 
 ```rust
 use future_meta::{DownloadConfig, load_or_fetch};
@@ -184,7 +173,7 @@ use future_meta::{DownloadConfig, load_or_fetch};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let meta = load_or_fetch(DownloadConfig::default()).await?;
-    let handle = meta.resolve_contract("SHFE.cu2607")?;
+    let handle = meta.resolve_contract("SHFE.cu2701")?;
     let mut fees = meta.prepare_fee_cursors(
         [handle],
         first_tick.trading_date,
@@ -205,187 +194,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-多合约混合 tick 时，预先把 symbol 映射成 slot，循环内只用整数索引。低频路径可直接用便捷方法：
+也可直接调用 `fees.advance_and_get(tick.trading_date, tick.fee_slot, tick.unix_nanos)?` 合并推进与读取。`PreparedFeeCursors` 仅在跨越生效边界的慢路径重建槽位；常规 Tick 路径仅包含一次 `i64` 比较与一次下标读取。
 
-```rust
-let mut fees = meta.prepare_fee_cursors(handles, first_tick.trading_date, first_tick.unix_nanos)?;
+---
 
-for tick in ticks {
-    let fee = fees.advance_and_get(tick.trading_date, tick.fee_slot, tick.unix_nanos)?;
-    pnl -= fee.close_today_amount(tick.price, tick.lots);
-}
-```
+## 查询 API 速查
 
-`PreparedFeeCursors` 内部只在交易日边界慢路径重建；正常 tick 路径是一
-次 `i64` 比较和一次 slot 读取。交易日快照和 cursor 都只使用加载 archive 后派生的
-内存索引，不会把交易日等派生字段写入 `latest.fmeta.zst`。
+完整数据结构与用法详见 [客户端查询 API 说明](docs/client-api.md)。
 
-手续费字段保留源站规则语义：
+| API | 说明 |
+| --- | --- |
+| `contract(symbol)` | O(1) 查询合约乘数、最小变动价位与生命周期等规格元数据 |
+| `contract_for_handle(handle)` | 使用预解析 `ContractHandle` 查询合约规格；`tick_value()` 返回每手每跳价值 |
+| `contract_spec_asof(symbol, at)` | 查询 RFC3339 时间点有效的合约乘数、最小变动价位和每手每跳价值 |
+| `contract_spec_at / on(...)` | 使用预解析时间或交易日查询历史合约规格 |
+| `contract_spec_for_handle_at / on(...)` | 使用 `ContractHandle` 查询历史合约规格，避免重复解析 symbol |
+| `contract_fee_asof(symbol, at)` | 查询具体期货合约在某个 RFC3339 时间点所属交易所本地日期的手续费 |
+| `contract_fee_at / on(symbol, ...)` | 使用预解析时间戳或交易所本地交易日查询日级手续费 |
+| `resolve_contract(symbol)` | 将合约 symbol 预解析为轻量句柄 `ContractHandle` |
+| `prepare_fee_cursors(handles, trading_date, start_unix_nanos)` | 构建跨日 day-fixed 游标表（高频 Tick 回测推荐入口） |
+| `for_trading_day(trading_date)` | 构建单交易日快照 `TradingDayMeta`，支持 `prepare_fee` 与 `prepare_fee_book` |
+| `underlying_fees_asof(underlying_symbol, at)` | 查询某品种在该时间点非 `NotTrading` 的全部具体合约手续费（保留 `Unknown`） |
 
-- `open_fee`
-- `close_yesterday_fee`
-- `close_today_fee`
-- `intraday_open_fee`（未知时为 `None`）
-- `buy_margin_rate`
-- `sell_margin_rate`
-- `source_updated_at`
-- `valid_from` / `valid_to`
+### 手续费与保证金字段语义
+
+- `open_fee`：开仓手续费（`FixedPerLot` 按手固定金额 / `Rate` 按成交额比例）
+- `close_yesterday_fee`：平昨手续费
+- `close_today_fee`：平今手续费
+- `intraday_open_fee`：日内开仓手续费（未知时为 `None`）
+- `buy_margin_rate` / `sell_margin_rate`：买/卖交易保证金率
+- `valid_from` / `valid_to`：生效闭区间起点与开区间终点（`valid_to = None` 表示当前仍有效）
 
 > [!NOTE]
-> `valid_from` 为闭区间起点，`valid_to` 为开区间终点。手续费按交易所本地日期生效，不在日内盘中切换；时间戳查询会先映射到交易所本地日期。`valid_to = None` 表示当前仍有效。
+> 手续费按交易所本地交易日生效，不在盘中切换；时间戳查询会先映射到交易所本地日期。客户端 archive 仅存储不可派生的基础字段，不写入源站展示价格、每手保证金金额或每跳盈亏等派生值。
 
-## 数据来源与边界
+---
 
-当前维护链路只接受交易所官方原件及其可追溯采集输出：
+## 架构与数据更新机制
 
-- 初始历史使用六所官方参数、生命周期与合约规格从零重建，不读取旧 SQLite 补值。步骤见 [官方数据重建说明](docs/official-rebuild.md)。
-- 日常增量恢复同一截止日的维护库和官方元数据 bootstrap，仅采集其后缺失的官方交易日；校验短区间重建库后，由 `update-collected` 合并到新副本。完整流程见 [部署说明](docs/deployment.md#github-定时更新)。
-- 新上市 symbol 必须有生命周期和规格依据；缺少参数或元数据时失败并保留诊断，不以旧合约、品种费率或零值补齐。首条官方观测前的空档继续保留为未知。
-- 公告扫描只做补充发现和审计，待复核队列独立保留；人工历史补充仍按 [官方历史证据流程](docs/official-evidence.md) 暂存、复核并导入审阅副本。
-- archive schema 4 使用共享字典、按合约批量变更和日期引用增量编码，完整保留规格历史、多空保证金和独立日内开仓费。0.5.0 客户端兼容 schema 1/2/3，加载后仍使用原查询模型；详见 [格式迁移说明](docs/archive-format.md)。
-
-旧第三方抓取、候选交叉核验及其更新命令已移除。历史来源记录和审阅材料仍保留，但不作为日更输入，也不追溯改称官方证据。
-
-项目只持久化手续费查询需要的基础字段。不会把源站展示用派生字段写入 client archive，例如价格、涨跌停、每手保证金、每跳盈亏、手续费折算金额等。
-
-## 本地维护数据
-
-检查已有 seed：
-
-```bash
-cargo run -p future-meta-daemon -- inspect --db data/future-meta.sqlite
+```mermaid
+flowchart LR
+    archive[上一版客户端 archive] --> daemon[future-meta-daemon]
+    exchange[六所官方缺失交易日参数] --> daemon
+    rules[已审阅规则配置与准入日历] --> daemon
+    state[data 分支: manifest 与 update-state] --> daemon
+    daemon --> releases[GitHub Release: 不可变 data-* 附件]
+    daemon --> state
+    state --> client["future-meta SDK (Rust / Python)"]
+    releases --> client
+    client --> app[量化交易 / 回测与研究系统]
 ```
 
-生成 2020 年以来五字段历史覆盖报告：
+### 工作区结构
+
+| 路径 | 说明 |
+| --- | --- |
+| `crates/future-meta` | 纯 Rust 客户端核心库：公开模型、Schema 4 archive 编解码、TqSdk symbol 解析、as-of 查询及可选 `download` 缓存 |
+| `crates/future-meta-py` | 基于 `PyO3 + maturin`（`abi3-py310`）的独立 Python 扩展绑定 `future_meta`，保持核心 Rust 库零 Python 依赖 |
+| `crates/future-meta-daemon` | 维护端增量合并、六所批次完整性校验，以及本地 SQLite 重建、证据审阅与导出工具 |
+| `config/` | 经审阅的官方轻量规则配置（`official-rules.json`）与交易日历准入配置（`update-calendar.json`） |
+| `scripts/` | 生产自动更新、跨 runner 故障转移采集、无认证公开合约规格发现与独立手动规则审阅工具 |
+
+### 自动更新与时间语义
+
+- **默认索引地址**：`https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json`（可通过环境变量 `FUTURE_META_CACHE_DIR` 覆盖本地缓存目录）。
+- **无 SQLite 在线增量**：GitHub Actions（`.github/workflows/update-fee-data.yml`）在法定交易日准入窗口内直接以既有客户端 archive 为基线补齐缺失交易日；仅当业务字段发生变化时发布新的 `data-*` Release 附件，无业务变化时保持 archive 字节与 SHA-256 不变，仅推进状态检查点。
+- **时间字段区分**：
+  - `manifest.generated_at` / `data_version`：当前数据包生成时间；
+  - `manifest.history_end`：数据包中最后一条已批准费率记录的起始时间（**不是**核验截止日）；
+  - `update-state.json` 中的 `checked_through` 与 `last_success_at`：六所日度参数完整核验到的交易日与最近成功检查时间。
+
+---
+
+## 文档导航
+
+| 文档 | 内容说明 |
+| --- | --- |
+| [客户端查询 API 说明](docs/client-api.md) | Rust 与 Python 客户端完整 API、返回模型与使用示例 |
+| [Archive 格式说明](docs/archive-format.md) | Schema 4 压缩格式、共享字典与增量编码规范 |
+| [自动更新与部署说明](docs/deployment.md) | 定时采集准入窗口、`update-state.json` 字段语义、跨 runner 接续与故障排查 |
+| [版本与发布规则](docs/releasing.md) | 提交、CI 验证、SDK 版本升级判定与 crates.io / PyPI / GitHub Release 发布流程 |
+| [官方数据重建说明](docs/official-rebuild.md) | 本地从零重建 SQLite 维护库与历史参数导入说明 |
+| [官方历史证据流程](docs/official-evidence.md) | 本地历史公告/参数原件暂存、SHA-256 复核与证据配对规范 |
+| [维护脚本说明](scripts/README.md) | 采集、规则审阅与辅助脚本命令行说明 |
+
+---
+
+## 开发与验证
+
+常用本地检查命令：
 
 ```bash
-cargo run -p future-meta-daemon -- audit-coverage \
-  --db data/future-meta.sqlite \
-  --from 2020-01-01 \
-  --through 2026-08-24 \
-  --out /tmp/future-meta-coverage.json \
-  --strict
-```
-
-`--strict` 要求范围内每个合约都有官方上市日、到期日，以及来源标记为
-`official` 的连续手续费和合约规格区间。任一缺口都会在写出 JSON 报告后返回失败。
-不带 `--strict` 时只生成报告，适合补证据期间查看剩余缺口。
-
-暂存人工复核过的交易所历史材料：
-
-```bash
-cargo run -p future-meta-daemon -- stage-official \
-  --db data/official-evidence.sqlite \
-  --input path/to/adjustments.json
-```
-
-将证据库中已复核、已配对的公告与参数文件物化到审阅副本：
-
-```bash
-cargo run -p future-meta-daemon -- import-official-history \
-  --db path/to/review-copy.sqlite \
-  --evidence-db data/official-evidence.sqlite \
-  --exchange CFFEX \
-  --snapshot-dir data/official-evidence \
-  --from 2020-01-01 \
-  --through 2026-08-24
-```
-
-导入器只读取 `verified` 记录，逐份验证保留文件的 SHA-256，并要求公告与收费表或
-结算参数配对。部分调整只能继承同一具体合约此前已导入的完整官方三腿参数；缺少
-完整前序时硬失败。也可重复传入 `--input reviewed.json`，导入未写入证据库的已复核
-JSON。
-
-官方生命周期与合约规格使用独立 TSV 导入，不能复用只含手续费的页面：
-
-```bash
-cargo run -p future-meta-daemon -- import-official-metadata \
-  --db path/to/review-copy.sqlite \
-  --manifest data/official-evidence/official-metadata.tsv \
-  --snapshot-dir data/official-evidence
-```
-
-每行必须给出具体 `symbol`、上市日、到期日、连续规格区间、合约乘数、最小变动价位，
-以及分别证明生命周期和规格的官方 URL 与 SHA-256。导入前验证全部保留文件；任一
-合约的规格区间未从上市日连续覆盖到到期日时硬失败。
-
-交易所每日参数表可在保留原始字节后，以较低证据等级直接建立完整三腿手续费历史。
-例如 CZCE 导入只接受官方固定 URL、逐文件 SHA-256 和明确的绝对值/比例值单位，
-并将版本记录为 `official_parameter`；已有 `paired_official` 版本不会被覆盖：
-
-```bash
-cargo run -p future-meta-daemon -- import-czce-parameters \
-  --db path/to/review-copy.sqlite \
-  --manifest data/official-evidence/czce-daily-params-20200101-20260818.tsv \
-  --snapshot-dir data/official-evidence \
-  --from 2020-01-01
-```
-
-该命令只应作用于审阅副本。它会先验证全部输入，再原子替换参数表覆盖期内相冲突的
-第三方版本；相邻相同参数不会制造重复版本。手续费参数页不证明合约乘数或最小变动
-价位，因此不会把派生规格冒充官方规格证据。
-
-GFEX 每日结算参数也可按相同规则导入：
-
-```bash
-cargo run -p future-meta-daemon -- import-gfex-parameters \
-  --db path/to/review-copy.sqlite \
-  --manifest data/official-evidence/gfex-daily-settlement-20221222-20260818.tsv \
-  --snapshot-dir data/official-evidence \
-  --from 2022-12-22
-```
-
-导入器将 `openFee`、`offsetFee`、`shortOffsetFee` 分别映射为开仓、平昨、平今手续费；
-`绝对值` 表示元/手，`比例值` 表示成交额万分比，零值保留为明确的零手续费。
-`official_empty` 和 `pending` 清单项不构成覆盖证据，也不会被静默跳过后宣称完整。
-
-INE 日参数的 `TRADEFEERATIO`、`TRADEFEEUNIT` 只证明一般手续费，不能单独证明平今。
-导入时必须另给人工复核的官方平今规则：
-
-```bash
-cargo run -p future-meta-daemon -- import-ine-parameters \
-  --db path/to/review-copy.sqlite \
-  --manifest data/official-evidence/ine-dailydata-20200101-20260818.tsv \
-  --close-today-rules data/official-evidence/ine-close-today-rules.tsv \
-  --snapshot-dir data/official-evidence \
-  --from 2020-01-01
-```
-
-规则可按品种或具体合约限定连续有效期，并明确 `same_as_general`、`Zero`、元/手或
-成交额万分比。每个日参数观察都必须命中唯一的最高优先级规则；缺失、同级重叠、URL
-或 SHA-256 不合法时，导入在写库前硬失败。成功版本同时保留日参数与平今规则两份
-官方证据，并标记为 `paired_official`。
-
-## 自动更新与部署
-
-GitHub Actions 从现有 archive 和小检查点补齐缺失交易日；不下载 SQLite 或原件包。新数据先发布并校验 Release，再以一次提交同时更新 `data` 分支的 manifest 与检查点。无业务变化只更新状态，不重发 archive。缺少日度参数、元数据或请求失败均停止更新，不推进成功检查点；全量规则审阅独立手动执行。
-
-固定索引：`https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json`。
-
-SDK v0.7.0 默认使用此入口，也可显式配置：
-
-```rust
-let config = DownloadConfig {
-    manifest_url: "https://raw.githubusercontent.com/zynthium/future-meta/data/manifest.json".into(),
-    ..Default::default()
-};
-```
-
-工作流为 `.github/workflows/update-fee-data.yml`，仅需内置 `GITHUB_TOKEN` 的 `contents: write`。无需 Pages。数据 Release 设置 `--latest=false`，SDK Latest 独立保留。
-
-只验证当前公开数据，不访问交易所：
-
-```bash
-gh workflow run update-fee-data.yml --ref main -f republish_current=true
-```
-
-历史原件与 SQLite 在本地保留；从零重建和证据导入不属于日更链路。访问窗口、状态字段、迁移及诊断见 [部署说明](docs/deployment.md)。
-
-## 开发
-
-常用检查：
-
-```bash
+python3 scripts/check_docs.py
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo test --workspace
@@ -395,41 +295,30 @@ cargo build -p future-meta-py
 python3 -m unittest discover -s tests
 ```
 
-性能 smoke test：
+性能基准 smoke test：
 
 ```bash
 cargo run --release -p future-meta --example perf_smoke -- public/latest.fmeta.zst 1000000 100
 ```
 
-高频回测热路径应使用 `FutureMeta::prepare_fee_cursors`。它统一处理日级固定手续费、跨日重建和多合约 slot；循环内通常只有一次 `i64` 时间比较和一次 `current()` 读取。
-
-定向测试：
-
-```bash
-cargo test -p future-meta-daemon --test daemon_pipeline
-cargo test -p future-meta --features download --test client_archive
-```
-
-生成目录默认不提交：
-
-- `data/`
-- `public/`
-- `target/`
-- `dist/`
-- `.venv/`
-- `.env`
-- `.mcp.json`
+---
 
 ## 常见问题
 
-**为什么 client 只下载 artifact？**
+**为什么客户端只下载不可变 archive 附件，而不直接请求交易所？**
 
-采集和证据校验集中在维护端完成。客户端读取经过摘要校验的固定快照，才能在本地查询历史并固定回测输入，不依赖交易所网站的实时响应。
+交易所官方页面存在时段限制、反爬策略及历史格式差异。维护端集中完成多源采集、完整性核验与规则对齐后生成带 SHA-256 校验的快照，客户端即可在本地获得可复现、确定性的回测与交易查询输入。
 
-**新合约缺少参数或元数据怎么办？**
+**新上市合约缺少参数或规格元数据时会怎样？**
 
-日更保留缺口报告并失败，待补充官方原件后重跑。不能从旧 SQLite、其他合约或品种默认值补齐，也不能删除缺失合约来制造完整覆盖。
+日更会严格报错并阻断推进 `checked_through`，绝不从旧合约、邻近月份或品种默认值猜测补齐。对于公开合约文本可无认证解析的规格变动，由 `spec_discovery.py` 自动提取并校验；无法解释的规则变化由人工审阅更新 `config/official-rules.json` 后恢复。
 
-**成功下载是否表示数据已更新到今天？**
+**成功下载最新 archive 是否代表数据已核验到今天？**
 
-不表示。应查看 `coverage.json` 的观测截止日与未知区间；manifest 构建时间、最后一次参数变化时间和实际观测截止日分别表示不同含义。
+不一定。无费率变化时不会重新生成 archive，请查看 [update-state.json](https://raw.githubusercontent.com/zynthium/future-meta/data/update-state.json) 的 `checked_through`（完整核验交易日）、`last_success_at`（最近成功检查时间）以及 `exceptions`（已知例外声明）。
+
+---
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
