@@ -54,18 +54,23 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64
+            manylinux: auto
             sdist: true
           - os: ubuntu-latest
             target: aarch64
+            manylinux: "2_28"
             sdist: false
           - os: macos-15-intel
             target: x86_64
+            manylinux: auto
             sdist: false
           - os: macos-latest
             target: aarch64
+            manylinux: auto
             sdist: false
           - os: windows-latest
             target: x86_64
+            manylinux: auto
             sdist: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
@@ -76,19 +81,21 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Build Python sdist
+        if: matrix.sdist
+        uses: PyO3/maturin-action@v1
+        env:
+          RUSTC_WRAPPER: ""
+        with:
+          command: sdist
+          args: --out dist
       - name: Build Python wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          manylinux: "2_28"
+          manylinux: ${{ matrix.manylinux }}
           args: --release --out dist --locked
           sccache: "true"
-      - name: Build Python sdist
-        if: matrix.sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
       - uses: actions/upload-artifact@v4
         with:
           name: python-wheels-${{ matrix.os }}-${{ matrix.target }}
