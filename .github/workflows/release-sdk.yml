@@ -105,6 +105,7 @@ jobs:
   publish:
     needs: [verify, wheels]
     runs-on: ubuntu-latest
+    environment: PYPI_API_TOKEN
     timeout-minutes: 15
     permissions:
       contents: write
