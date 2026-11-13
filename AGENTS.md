@@ -113,7 +113,7 @@ cargo run -p future-meta --features download --example online_smoke \
 - 文档、AGENTS、技能说明/提示词、测试、格式和行为不变的重构默认不升级 SDK。普通提交不改版本；正式 SDK 发版时才同步更新 `crates/future-meta/Cargo.toml`、`crates/future-meta-py/Cargo.toml` 和 `Cargo.lock`。
 - SDK 修复/性能/安全交付升补丁版本；当前 `0.x` 阶段新增 API、合约类型或破坏兼容升次版本，并说明迁移边界。按最新 SDK 标签到待发布提交的累计实际变化判断，不仅看最后一次提交或 commit 类型。
 - 采集器、daemon、规则配置和日历不因自身改动升级 SDK。业务数据变化走独立 `data-*` 发布；无变化只更新状态。
-- `.github/workflows/ci.yml` 对普通 push/PR 做只读离线验证；纯文档走轻量检查。SDK Release 仅由显式推送的 `vX.Y.Z` 标签触发 `release-sdk.yml`，通过版本、main 归属和完整离线检查后构建跨平台 Python Wheel/sdist 并发布。数据日更保持独立。
+- `.github/workflows/ci.yml` 对普通 push/PR 做只读离线验证；纯文档走轻量检查。SDK Release 仅由显式推送的 `vX.Y.Z` 标签触发 `release-sdk.yml`，通过版本、main 归属和完整离线检查后构建跨平台 Python Wheel/sdist，并同步发布至 crates.io、PyPI 和 GitHub Release。数据日更保持独立。
 
 ## 更新和发布授权
 
@@ -138,5 +138,5 @@ GitHub raw 存在 CDN 延迟，固定 URL 读回采用有界退避等待，最�
 - `data/`、`public/`、`target/`、`dist/`、`.venv/`、`.env`、`.codex/`、`.mcp.json` 不提交；不得删除本地历史证据作为清理代码的副作用。
 - `config/official-rules.json` 是经审阅的小配置，允许随规则更新提交；大 archive 和原件不进入源码分支。
 - 只 stage 当前任务文件，保留无关脏工作；使用简洁 conventional commit。
-- 不提交 token、Cookie、代理凭据或密钥。发布只使用内置 `GITHUB_TOKEN` 的 `contents: write`，checkout 不持久化凭据。
+- 不提交 token、Cookie、代理凭据或密钥。数据发布只使用内置 `GITHUB_TOKEN` 的 `contents: write`；SDK 发布通过 GitHub Secrets/Variables 中的 `CARGO_REGISTRY_TOKEN` 与 `PYPI_API_TOKEN` 发布到 crates.io 与 PyPI，checkout 不持久化凭据。
 - 已执行 SDK/数据发布或线上数据发布验证的最终报告包含实际验证命令和对应 Actions run URL；仅本地改动不要求制造线上运行。没有合法窗口的真实采集不能冒称已验证。

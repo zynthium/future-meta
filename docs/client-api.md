@@ -37,9 +37,11 @@ The existing `load_or_fetch` API remains suitable for one-time loading.
 
 ### Installation
 
-Install prebuilt wheels attached to SDK GitHub Releases, or build locally from a repository checkout:
+Install directly from PyPI, from prebuilt wheels attached to SDK GitHub Releases, or build locally from a repository checkout:
 
 ```bash
+pip install future-meta
+# Or from a local checkout:
 pip install maturin
 maturin develop --release
 ```

@@ -53,13 +53,13 @@ python scripts/ci_scope.py --base HEAD~1
 
 ## SDK 标签发布
 
-SDK 通过 Git 标签和 GitHub Release 分发，不以本流程发布到 crates.io。`.github/workflows/release-sdk.yml` 仅由 `v*` 标签的 push 触发，不由普通提交触发，也不处理 `data-*`。
+SDK 通过 Git 标签触发 `.github/workflows/release-sdk.yml`，自动同步发布到 **crates.io**、**PyPI** 和 **GitHub Release**；不由普通提交触发，也不处理 `data-*`。
 
 1. 明确决定发布 SDK，检查自上一 SDK 标签以来的用户可见变化并选择版本。
-2. 更新 SDK `Cargo.toml` 和锁文件，完成必要的代码、文档、技能与迁移说明；验证后提交推送到 `main`。
+2. 更新 `crates/future-meta/Cargo.toml`、`crates/future-meta-py/Cargo.toml` 和 `Cargo.lock`，完成必要的代码、文档、技能与迁移说明；验证后提交推送到 `main`。
 3. 创建稳定版本的 annotated tag，先在本地检查，再推送该标签。推送 SDK 版本标签就是正式发版指令。
-4. 工作流校验稳定 `vX.Y.Z` 格式、Cargo 与锁文件版本（含 `future-meta` 与 `future-meta-py`）、标签与 checkout 一致、提交已进入 `main`、版本递增，再执行完整离线检查并构建跨平台 Python Wheel 与源码包。
-5. 验证通过后，独立的 `contents: write` job 使用内置 `GITHUB_TOKEN` 创建 SDK Release、上传 Python Wheel/sdist 附件并设置 Latest。说明从前一个稳定 SDK 标签生成，排除独立的数据标签比较范围。checkout 不持久化凭据。
+4. 工作流校验稳定 `vX.Y.Z` 格式、Cargo 与锁文件版本（含 `future-meta` 与 `future-meta-py`）、标签与 checkout 一致、提交已进入 `main`、版本递增，再执行完整离线检查、`cargo package` 校验并构建跨平台 Python Wheel 与源码包。
+5. 验证通过后，独立的 `publish` job 使用仓库配置的 `CARGO_REGISTRY_TOKEN` 发布 `future-meta` 到 crates.io，使用 `PYPI_API_TOKEN` 发布 Python Wheel/sdist 到 PyPI，并使用内置 `GITHUB_TOKEN` 创建 SDK GitHub Release、上传 Wheel/sdist 附件并设置 Latest。说明从前一个稳定 SDK 标签生成，排除独立的数据标签比较范围。checkout 不持久化凭据。
 6. 观察 Actions 完成并读回 Release，确认 SDK Latest 和标签 commit。正式发布报告给出 commit、版本、验证命令和 Actions URL。
 
 示例版本仅作演示，需按待交付变化选择：

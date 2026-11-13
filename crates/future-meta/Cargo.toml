@@ -1,6 +1,10 @@
 [package]
 name = "future-meta"
-version = "0.8.1"
+version = "0.9.0"
+description = "Chinese futures fee, margin, and contract specification as-of query client"
+readme = "../../README.md"
+keywords = ["futures", "trading", "china", "tqsdk", "quant"]
+categories = ["finance", "data-structures"]
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

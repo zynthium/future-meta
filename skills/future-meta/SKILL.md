@@ -36,11 +36,13 @@ description: 指导 Rust 与 Python 客户端使用 future-meta 按需下载刷�
 
 ## 安装和加载
 
-在线下载启用 `download` feature。以下示例固定 SDK v0.8.1；Git 依赖不表示已发布到 crates.io：
+在线下载启用 `download` feature。可通过 crates.io 或固定 Git 标签引入依赖：
 
 ```toml
 [dependencies]
-future-meta = { git = "https://github.com/zynthium/future-meta", tag = "v0.8.1", features = ["download"] }
+future-meta = { version = "0.9", features = ["download"] }
+# 或使用固定 Git 标签：
+# future-meta = { git = "https://github.com/zynthium/future-meta", tag = "v0.9.0", features = ["download"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 time = "0.3"
 ```
@@ -94,9 +96,11 @@ let meta = future_meta::FutureMeta::from_archive(archive)?;
 
 Python 绑定位于独立 crate `crates/future-meta-py`，通过 `PyO3 + maturin`（`abi3-py310`，兼容 Python 3.10+）编译为原生扩展模块 `future_meta`，内部托管 Tokio Runtime 并在网络/磁盘 I/O 与解压时通过 `py.detach` 释放 GIL，对外提供同步阻塞接口。
 
-可从 GitHub Release 下载对应平台的 `.whl` 附件安装，或在仓库根目录本地编译安装：
+可直接从 PyPI 安装，或从 GitHub Release 下载对应平台的 `.whl` 附件、在仓库根目录本地编译安装：
 
 ```bash
+pip install future-meta
+# 或在本地源码目录构建安装：
 pip install maturin
 maturin develop --release
 ```

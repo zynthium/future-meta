@@ -55,11 +55,11 @@ flowchart LR
 cargo run -p future-meta --features download --example online_smoke SHFE.cu2607 2026-06-08T10:48:06Z
 ```
 
-在自己的 Rust 程序中使用：
+在自己的 Rust 程序中使用（通过 crates.io 或 Git 标签）：
 
 ```toml
 [dependencies]
-future-meta = { git = "https://github.com/zynthium/future-meta", features = ["download"] }
+future-meta = { version = "0.9", features = ["download"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 time = "0.3"
 ```
@@ -121,10 +121,11 @@ let contract = client.meta().contract_for_handle(handle)?;
 
 ### 在 Python 中使用
 
-可从 GitHub Release 下载对应平台的 `.whl` 附件安装，或在仓库根目录通过 `maturin` / `uv` 本地安装：
+可直接从 PyPI 安装，或从 GitHub Release 下载对应平台的 `.whl` 附件、在仓库根目录通过 `maturin` 本地安装：
 
 ```bash
-pip install maturin
+pip install future-meta
+# 或在本地源码目录构建安装：
 maturin develop --release
 ```
 
