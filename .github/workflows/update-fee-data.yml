@@ -1,11 +1,7 @@
 name: update-fee-data
 on:
   schedule:
-    - cron: "35,50 10 * * 1-5" # Asia/Shanghai 18:35, 18:50
-    - cron: "5,20,35 11 * * 1-5" # 19:05, 19:20, 19:35
-    - cron: "2,7,12 0 * * 1-5" # post-holiday morning only
-    - cron: "37 0 * * 1-5" # read-only checkpoint watch
-    - cron: "17 12 * * 1-5" # read-only checkpoint watch
+    - cron: "17 12 * * 1-5" # read-only checkpoint watch fallback (20:17 Asia/Shanghai)
   workflow_dispatch:
     inputs:
       republish_current:
@@ -14,6 +10,10 @@ on:
         default: false
       offline_smoke:
         description: Exercise runner handoff with synthetic transports and no production writes
+        type: boolean
+        default: false
+      health_only:
+        description: Run read-only checkpoint health check without collecting
         type: boolean
         default: false
 concurrency:
@@ -43,7 +43,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPUBLISH_CURRENT: ${{ inputs.republish_current && 'true' || 'false' }}
           OFFLINE_SMOKE: ${{ inputs.offline_smoke && 'true' || 'false' }}
-          HEALTH_ONLY: ${{ github.event.schedule == '37 0 * * 1-5' || github.event.schedule == '17 12 * * 1-5' }}
+          HEALTH_ONLY: ${{ github.event.schedule == '17 12 * * 1-5' || inputs.health_only }}
         run: |
           set -euo pipefail
           if [[ "$OFFLINE_SMOKE" == true && "$REPUBLISH_CURRENT" == true ]]; then exit 1; fi

@@ -12,8 +12,10 @@ export default {
     const scheduledTime = new Date(event.scheduledTime).toISOString();
     console.log(`[Cron Triggered] cron="${cron}" scheduledTime="${scheduledTime}"`);
 
+    const inputs = cron === "17 12 * * 1-5" ? { health_only: true } : undefined;
     const result = await dispatchWorkflow(env, {
       reason: `Cloudflare Cron Trigger: ${cron}`,
+      inputs,
     });
 
     if (!result.success) {
@@ -38,10 +40,9 @@ export default {
             configured_ref: env.GITHUB_REF || "main",
             has_token: Boolean(env.GH_TOKEN),
             crons: [
-              "35,50 10 * * 1-5 (18:35, 18:50 Asia/Shanghai)",
-              "5,20,35 11 * * 1-5 (19:05, 19:20, 19:35 Asia/Shanghai)",
-              "2,7,12 0 * * 1-5 (08:02, 08:07, 08:12 Asia/Shanghai)",
-              "37 0 * * 1-5 (08:37 Asia/Shanghai)",
+              "50 10 * * 1-5 (18:50 Asia/Shanghai)",
+              "25 11 * * 1-5 (19:25 Asia/Shanghai)",
+              "5 0 * * 1-5 (08:05 Asia/Shanghai)",
               "17 12 * * 1-5 (20:17 Asia/Shanghai)",
             ],
           },

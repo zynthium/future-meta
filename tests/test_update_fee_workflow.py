@@ -27,11 +27,8 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
 
     def test_lightweight_admission_and_runtime_collector(self):
         for expected in (
-            'cron: "35,50 10 * * 1-5"',
-            'cron: "5,20,35 11 * * 1-5"',
-            'cron: "2,7,12 0 * * 1-5"',
-            'cron: "37 0 * * 1-5"',
             'cron: "17 12 * * 1-5"',
+            "health_only:",
             "needs: admission",
             "scripts/update_admission.py",
             '--github-output "$GITHUB_OUTPUT"',
@@ -59,8 +56,8 @@ class UpdateFeeWorkflowTests(unittest.TestCase):
             self.assertIn(expected, self.workflow)
 
     def test_health_crons_cannot_collect_even_if_delayed_into_access_window(self):
-        self.assertIn("github.event.schedule == '37 0 * * 1-5'", self.workflow)
         self.assertIn("github.event.schedule == '17 12 * * 1-5'", self.workflow)
+        self.assertIn("inputs.health_only", self.workflow)
         self.assertIn('args+=(--health-only)', self.workflow)
 
     def test_republish_is_explicit_and_uses_same_verified_entrypoint(self):
