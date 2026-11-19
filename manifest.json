@@ -1,14 +1,14 @@
 {
   "schema_version": 4,
-  "data_version": "2026-11-18T10:50:17.194426+00:00",
-  "generated_at": "2026-11-18T10:50:17.194426+00:00",
+  "data_version": "2026-11-19T10:50:17.424255+00:00",
+  "generated_at": "2026-11-19T10:50:17.424255+00:00",
   "history_start": "2018-01-02T00:00:00+08:00",
-  "history_end": "2026-11-18T00:00:00+08:00",
-  "fee_effective_from": "2026-11-18T00:00:00+08:00",
+  "history_end": "2026-11-19T00:00:00+08:00",
+  "fee_effective_from": "2026-11-19T00:00:00+08:00",
   "artifact": "latest.fmeta.zst",
-  "sha256": "5d1ec0801bbb33a6fe0ebb2034265237173cdadae6d2476be890934a9cf9b36f",
-  "size": 271540,
+  "sha256": "f7f5c5e9ef5646f861a8f5274683b7ef8e9980f95d73ce9f8e01777ce195a7de",
+  "size": 271627,
   "mirrors": [
-    "https://github.com/zynthium/future-meta/releases/download/data-20261118T105017Z-5d1ec0801bbb/latest.fmeta.zst"
+    "https://github.com/zynthium/future-meta/releases/download/data-20261119T105017Z-f7f5c5e9ef56/latest.fmeta.zst"
   ]
 }

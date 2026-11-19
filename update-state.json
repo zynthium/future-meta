@@ -1,14 +1,14 @@
 {
-  "archive_sha256": "5d1ec0801bbb33a6fe0ebb2034265237173cdadae6d2476be890934a9cf9b36f",
+  "archive_sha256": "f7f5c5e9ef5646f861a8f5274683b7ef8e9980f95d73ce9f8e01777ce195a7de",
   "checked_through": {
-    "CFFEX": "2026-11-18",
-    "CZCE": "2026-11-18",
-    "DCE": "2026-11-18",
-    "GFEX": "2026-11-18",
-    "INE": "2026-11-18",
-    "SHFE": "2026-11-18"
+    "CFFEX": "2026-11-19",
+    "CZCE": "2026-11-19",
+    "DCE": "2026-11-19",
+    "GFEX": "2026-11-19",
+    "INE": "2026-11-19",
+    "SHFE": "2026-11-19"
   },
-  "current_release": "data-20261118T105017Z-5d1ec0801bbb",
+  "current_release": "data-20261119T105017Z-f7f5c5e9ef56",
   "exceptions": {
     "assumed_expiry": {
       "CFFEX.IC2701": "calendar-c81a8f124ba4",
@@ -586,18 +586,20 @@
     ]
   },
   "last_attempt": {
-    "slot": "2026-11-19:evening",
-    "started_at": "2026-11-19T10:50:17.424255+00:00",
-    "finished_at": null,
-    "status": "running",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/44509297125",
+    "finished_at": "2026-11-19T10:55:43.413686+00:00",
     "run_id": "44509297125",
-    "workflow_attempt": "1",
-    "source_commit": "56f62b563b0f6d619968e9f6cf58d93ef1d02ebd"
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/44509297125",
+    "slot": "2026-11-19:evening",
+    "source_commit": "56f62b563b0f6d619968e9f6cf58d93ef1d02ebd",
+    "started_at": "2026-11-19T10:50:17.424255+00:00",
+    "status": "changed",
+    "workflow_attempt": "1"
   },
-  "last_success_at": "2026-11-18T10:53:27.644619+00:00",
-  "previous_release": "data-20261117T105015Z-106060159a4b",
-  "retired_releases": [],
+  "last_success_at": "2026-11-19T10:55:43.413686+00:00",
+  "previous_release": "data-20261118T105017Z-5d1ec0801bbb",
+  "retired_releases": [
+    "data-20261117T105015Z-106060159a4b"
+  ],
   "schema": 1,
   "source_versions": {
     "cffex_snapshot": {
@@ -606,11 +608,11 @@
       "url": "http://www.cffex.com.cn/sj/jscs/202610/19/20261019_1.csv"
     },
     "contract_base_info": {
-      "report_date": "2026-11-18",
+      "report_date": "2026-11-19",
       "sources": [
         {
-          "sha256": "7564f0f191bd535206da16389462c90eab737968f2146b6f3badcc5172dbd964",
-          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261118.dat"
+          "sha256": "9263502810e73c4f7759d58b58d8a0ce3c3dbb2a3a6a5ba6ff6919df6c065027",
+          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261119.dat"
         }
       ]
     },
@@ -637,17 +639,17 @@
         "host": "cffex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 10,
+        "success": 12,
         "failure": 0,
-        "duration_seconds": 4.154014
+        "duration_seconds": 4.999253
       },
       {
         "host": "czce.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 21,
+        "success": 22,
         "failure": 0,
-        "duration_seconds": 27.388472
+        "duration_seconds": 29.831297
       },
       {
         "host": "czce.com.cn",
@@ -661,9 +663,9 @@
         "host": "dce.com.cn",
         "runner": "macos-15-intel",
         "client": "chrome",
-        "success": 23,
+        "success": 25,
         "failure": 0,
-        "duration_seconds": 143.585723
+        "duration_seconds": 189.597851
       },
       {
         "host": "gfex.com.cn",
@@ -685,9 +687,9 @@
         "host": "gfex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 20,
+        "success": 21,
         "failure": 1,
-        "duration_seconds": 72.136754
+        "duration_seconds": 72.842045
       },
       {
         "host": "gfex.com.cn",
@@ -709,9 +711,9 @@
         "host": "ine.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 20,
+        "success": 21,
         "failure": 0,
-        "duration_seconds": 15.225839
+        "duration_seconds": 16.381199
       },
       {
         "host": "ine.cn",
@@ -733,9 +735,9 @@
         "host": "shfe.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 40,
+        "success": 42,
         "failure": 0,
-        "duration_seconds": 27.288841
+        "duration_seconds": 29.033077
       },
       {
         "host": "shfe.com.cn",
