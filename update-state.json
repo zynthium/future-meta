@@ -597,9 +597,7 @@
   },
   "last_success_at": "2026-11-19T10:55:43.413686+00:00",
   "previous_release": "data-20261118T105017Z-5d1ec0801bbb",
-  "retired_releases": [
-    "data-20261117T105015Z-106060159a4b"
-  ],
+  "retired_releases": [],
   "schema": 1,
   "source_versions": {
     "cffex_snapshot": {
