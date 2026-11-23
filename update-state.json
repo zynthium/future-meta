@@ -1,14 +1,14 @@
 {
-  "archive_sha256": "f7f5c5e9ef5646f861a8f5274683b7ef8e9980f95d73ce9f8e01777ce195a7de",
+  "archive_sha256": "c4f644e955f9406d143889ee86e95477c5ed38916dcd364e47e094bd8f929f7a",
   "checked_through": {
-    "CFFEX": "2026-11-19",
-    "CZCE": "2026-11-19",
-    "DCE": "2026-11-19",
-    "GFEX": "2026-11-19",
-    "INE": "2026-11-19",
-    "SHFE": "2026-11-19"
+    "CFFEX": "2026-11-23",
+    "CZCE": "2026-11-23",
+    "DCE": "2026-11-23",
+    "GFEX": "2026-11-23",
+    "INE": "2026-11-23",
+    "SHFE": "2026-11-23"
   },
-  "current_release": "data-20261119T105017Z-f7f5c5e9ef56",
+  "current_release": "data-20261123T105016Z-c4f644e955f9",
   "exceptions": {
     "assumed_expiry": {
       "CFFEX.IC2701": "calendar-c81a8f124ba4",
@@ -571,13 +571,9 @@
       }
     },
     "without_observations": [
-      "CFFEX.IC2701",
       "CFFEX.IC2702",
-      "CFFEX.IF2701",
       "CFFEX.IF2702",
-      "CFFEX.IH2701",
       "CFFEX.IH2702",
-      "CFFEX.IM2701",
       "CFFEX.IM2702",
       "CFFEX.T2709",
       "CFFEX.TF2709",
@@ -586,31 +582,33 @@
     ]
   },
   "last_attempt": {
-    "slot": "2026-11-23:evening",
-    "started_at": "2026-11-23T10:50:16.859036+00:00",
-    "finished_at": null,
-    "status": "running",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/45159669959",
+    "finished_at": "2026-11-23T10:54:17.322084+00:00",
     "run_id": "45159669959",
-    "workflow_attempt": "1",
-    "source_commit": "56f62b563b0f6d619968e9f6cf58d93ef1d02ebd"
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/45159669959",
+    "slot": "2026-11-23:evening",
+    "source_commit": "56f62b563b0f6d619968e9f6cf58d93ef1d02ebd",
+    "started_at": "2026-11-23T10:50:16.859036+00:00",
+    "status": "changed",
+    "workflow_attempt": "1"
   },
-  "last_success_at": "2026-11-19T10:55:43.413686+00:00",
-  "previous_release": "data-20261118T105017Z-5d1ec0801bbb",
-  "retired_releases": [],
+  "last_success_at": "2026-11-23T10:54:17.322084+00:00",
+  "previous_release": "data-20261119T105017Z-f7f5c5e9ef56",
+  "retired_releases": [
+    "data-20261118T105017Z-5d1ec0801bbb"
+  ],
   "schema": 1,
   "source_versions": {
     "cffex_snapshot": {
-      "date": "2026-10-19",
-      "sha256": "6e5d46e181536f17f130e14ecf745ea0c0d17ce39d2ddad49fc814a60f03b470",
-      "url": "http://www.cffex.com.cn/sj/jscs/202610/19/20261019_1.csv"
+      "date": "2026-11-23",
+      "sha256": "50092afa098140dbccb4cbe5f63405ea7cc9ce721dd51142dc553ba0dc5d80a9",
+      "url": "http://www.cffex.com.cn/sj/jscs/202611/23/20261123_1.csv"
     },
     "contract_base_info": {
-      "report_date": "2026-11-19",
+      "report_date": "2026-11-23",
       "sources": [
         {
-          "sha256": "9263502810e73c4f7759d58b58d8a0ce3c3dbb2a3a6a5ba6ff6919df6c065027",
-          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261119.dat"
+          "sha256": "f3d249d22b390e3add2bc25332ee702c579d93bcba8709c84ec31713bd06c279",
+          "url": "https://www.shfe.com.cn/data/busiparamdata/future/ContractBaseInfo20261123.dat"
         }
       ]
     },
@@ -637,17 +635,17 @@
         "host": "cffex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 12,
+        "success": 16,
         "failure": 0,
-        "duration_seconds": 4.999253
+        "duration_seconds": 6.228781
       },
       {
         "host": "czce.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 22,
+        "success": 24,
         "failure": 0,
-        "duration_seconds": 29.831297
+        "duration_seconds": 31.737921
       },
       {
         "host": "czce.com.cn",
@@ -661,9 +659,9 @@
         "host": "dce.com.cn",
         "runner": "macos-15-intel",
         "client": "chrome",
-        "success": 25,
+        "success": 28,
         "failure": 0,
-        "duration_seconds": 189.597851
+        "duration_seconds": 214.266082
       },
       {
         "host": "gfex.com.cn",
@@ -685,9 +683,9 @@
         "host": "gfex.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 21,
+        "success": 23,
         "failure": 1,
-        "duration_seconds": 72.842045
+        "duration_seconds": 83.695929
       },
       {
         "host": "gfex.com.cn",
@@ -709,9 +707,9 @@
         "host": "ine.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 21,
+        "success": 23,
         "failure": 0,
-        "duration_seconds": 16.381199
+        "duration_seconds": 17.745804
       },
       {
         "host": "ine.cn",
@@ -733,9 +731,9 @@
         "host": "shfe.com.cn",
         "runner": "macos-15-intel",
         "client": "requests",
-        "success": 42,
+        "success": 46,
         "failure": 0,
-        "duration_seconds": 29.033077
+        "duration_seconds": 31.662825
       },
       {
         "host": "shfe.com.cn",
