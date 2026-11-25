@@ -582,14 +582,14 @@
     ]
   },
   "last_attempt": {
-    "finished_at": "2026-11-24T10:54:53.821424+00:00",
-    "run_id": "45378506845",
-    "run_url": "https://github.com/zynthium/future-meta/actions/runs/45378506845",
-    "slot": "2026-11-24:evening",
-    "source_commit": "56f62b563b0f6d619968e9f6cf58d93ef1d02ebd",
-    "started_at": "2026-11-24T10:50:28.332503+00:00",
-    "status": "changed",
-    "workflow_attempt": "1"
+    "slot": "2026-11-25:evening",
+    "started_at": "2026-11-25T10:50:16.502620+00:00",
+    "finished_at": null,
+    "status": "running",
+    "run_url": "https://github.com/zynthium/future-meta/actions/runs/45598737438",
+    "run_id": "45598737438",
+    "workflow_attempt": "1",
+    "source_commit": "56f62b563b0f6d619968e9f6cf58d93ef1d02ebd"
   },
   "last_success_at": "2026-11-24T10:54:53.821424+00:00",
   "previous_release": "data-20261123T105016Z-c4f644e955f9",
